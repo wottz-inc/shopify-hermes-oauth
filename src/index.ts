@@ -26,6 +26,15 @@ export {
 } from './storage/local-files.js';
 export type { LocalFileDependencies } from './storage/local-files.js';
 
+export { ShopDomainValidationError, normalizeShopDomain } from './shop-domain.js';
+
+export { InMemoryOAuthStateStore, OAuthStateError } from './oauth/state-store.js';
+export type {
+  CreateOAuthStateInput,
+  OAuthStateRecord,
+  OAuthStateStoreOptions,
+} from './oauth/state-store.js';
+
 export const version = '0.1.0';
 
 export function hello(): string {
