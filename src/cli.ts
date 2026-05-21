@@ -1,0 +1,490 @@
+#!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { chmod as fsChmod, mkdir as fsMkdir, readFile as fsReadFile, rename as fsRename, writeFile as fsWriteFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { resolveShopifyHermesPaths } from './hermes-home.js';
+
+const REQUIRED_CONFIG_KEYS = [
+  'SHOPIFY_HERMES_CLIENT_ID',
+  'SHOPIFY_HERMES_CLIENT_SECRET',
+  'SHOPIFY_HERMES_APP_URL',
+] as const;
+
+const INIT_ENV_KEYS = [
+  ...REQUIRED_CONFIG_KEYS,
+  'SHOPIFY_HERMES_SCOPES',
+  'SHOPIFY_HERMES_DATA_DIR',
+  'SHOPIFY_HERMES_API_VERSION',
+] as const;
+
+const DEFAULT_SHOPIFY_HERMES_APP_URL = 'https://your-public-app-url.example.com';
+const DEFAULT_SHOPIFY_HERMES_SCOPES = 'read_products,read_orders,read_inventory,read_locations,read_customers,read_discounts,read_reports';
+const DEFAULT_SHOPIFY_HERMES_API_VERSION = '2026-01';
+
+type RequiredConfigKey = (typeof REQUIRED_CONFIG_KEYS)[number];
+type InitEnvKey = (typeof INIT_ENV_KEYS)[number];
+
+export interface CliDependencies {
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly homeDir?: string;
+  readonly nodeVersion?: string;
+  readonly stdout?: (message: string) => void;
+  readonly stderr?: (message: string) => void;
+  readonly commandExists?: (command: string) => boolean | Promise<boolean>;
+  readonly readFile?: (path: string) => string | undefined | Promise<string | undefined>;
+  readonly writeFile?: (path: string, content: string, options?: { readonly mode?: number }) => void | Promise<void>;
+  readonly renameFile?: (from: string, to: string) => void | Promise<void>;
+  readonly chmod?: (path: string, mode: number) => void | Promise<void>;
+  readonly mkdir?: (path: string) => void | Promise<void>;
+}
+
+interface CliContext {
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly homeDir: string | undefined;
+  readonly nodeVersion: string;
+  readonly stdout: (message: string) => void;
+  readonly stderr: (message: string) => void;
+  readonly commandExists: (command: string) => Promise<boolean>;
+  readonly readFile: (path: string) => Promise<string | undefined>;
+  readonly writeEnvFile: (path: string, content: string) => Promise<void>;
+  readonly mkdir: (path: string) => Promise<void>;
+}
+
+class UnsafeEnvValueError extends Error {
+  public constructor(key: string) {
+    super(`${key} cannot contain newlines. Remove line breaks before running init again.`);
+  }
+}
+
+export async function runShopifyHermesOauthCli(
+  args = process.argv.slice(2),
+  dependencies: CliDependencies = {},
+): Promise<number> {
+  const context = createCliContext(dependencies);
+  const command = args[0] ?? 'help';
+
+  if (command === 'doctor') {
+    return runDoctor(context);
+  }
+
+  if (command === 'init') {
+    return runInit(context);
+  }
+
+  context.stderr(usage());
+  return command === 'help' || command === '--help' || command === '-h' ? 0 : 2;
+}
+
+async function runDoctor(context: CliContext): Promise<number> {
+  const envFileContent = await context.readFile(resolveShopifyHermesPaths({
+    env: context.env,
+    homeDir: context.homeDir,
+  }).envFile);
+  const envFileValues = parseShopifyHermesEnv(envFileContent ?? '');
+  const mergedEnv = mergeShopifyHermesEnv(envFileValues, context.env);
+  const paths = resolveShopifyHermesPaths({ env: mergedEnv, homeDir: context.homeDir });
+  const missingConfigKeys = missingRequiredConfigKeys(mergedEnv);
+  const nodeOk = getNodeMajor(context.nodeVersion) >= 20;
+  const hermesOk = await context.commandExists('hermes');
+  const cloudflaredOk = await context.commandExists('cloudflared');
+  const ngrokOk = await context.commandExists('ngrok');
+
+  context.stdout('Shopify Hermes OAuth doctor');
+  context.stdout(`Node.js >=20: ${nodeOk ? 'ok' : `missing (found ${context.nodeVersion}; install Node.js 20 or newer)`}`);
+  context.stdout(`Hermes CLI: ${hermesOk ? 'ok' : 'missing (install Hermes Agent CLI before connecting this OAuth helper)'}`);
+  context.stdout(`cloudflared: ${cloudflaredOk ? 'ok' : 'optional, not found'}`);
+  context.stdout(`ngrok: ${ngrokOk ? 'ok' : 'optional, not found'}`);
+  context.stdout(`Hermes home: ${paths.hermesHome}`);
+  context.stdout(`Data directory: ${paths.dataDir}`);
+
+  if (missingConfigKeys.length === 0) {
+    context.stdout('Required configuration: ok');
+  } else {
+    context.stdout(`Missing required configuration: ${missingConfigKeys.join(', ')}`);
+  }
+
+  if (!nodeOk || !hermesOk || missingConfigKeys.length > 0) {
+    printNextSteps(context, missingConfigKeys, { nodeOk, hermesOk, hasTunnel: cloudflaredOk || ngrokOk });
+    return 1;
+  }
+
+  if (!cloudflaredOk && !ngrokOk) {
+    context.stdout('No tunnel CLI detected. Install cloudflared or ngrok, or provide your own public HTTPS URL for SHOPIFY_HERMES_APP_URL.');
+  }
+
+  return 0;
+}
+
+async function runInit(context: CliContext): Promise<number> {
+  const initialPaths = resolveShopifyHermesPaths({ env: context.env, homeDir: context.homeDir });
+  const existingEnvFile = await context.readFile(initialPaths.envFile);
+  const envFileValues = parseShopifyHermesEnv(existingEnvFile ?? '');
+  const mergedEnv = mergeShopifyHermesEnv(envFileValues, context.env);
+  const paths = resolveShopifyHermesPaths({ env: mergedEnv, homeDir: context.homeDir });
+  const existingValues = getExistingInitEnvValues(existingEnvFile ?? '');
+  const keysNeedingWrite = INIT_ENV_KEYS.filter((key) => !isPresent(existingValues.get(key)));
+  const nodeOk = getNodeMajor(context.nodeVersion) >= 20;
+  const hermesOk = await context.commandExists('hermes');
+  const cloudflaredOk = await context.commandExists('cloudflared');
+  const ngrokOk = await context.commandExists('ngrok');
+
+  await context.mkdir(paths.dataDir);
+
+  if (keysNeedingWrite.length > 0) {
+    let updatedEnvFile: string;
+
+    try {
+      updatedEnvFile = updateMissingEnvKeys(existingEnvFile ?? '', keysNeedingWrite, mergedEnv, paths.dataDir);
+    } catch (error) {
+      if (error instanceof UnsafeEnvValueError) {
+        context.stderr(error.message);
+        return 1;
+      }
+
+      throw error;
+    }
+
+    await context.writeEnvFile(paths.envFile, updatedEnvFile);
+    context.stdout(`Updated ${paths.envFile} with missing SHOPIFY_HERMES_* keys (${keysNeedingWrite.join(', ')}).`);
+  } else {
+    context.stdout(`No .env changes needed at ${paths.envFile}.`);
+  }
+
+  context.stdout(`Created or verified data directory: ${paths.dataDir}`);
+  printSetupChecks(context, { nodeOk, hermesOk, cloudflaredOk, ngrokOk });
+  context.stdout('Manual Shopify setup is still required: create a Shopify app in your Shopify Partner dashboard, set the app URL to SHOPIFY_HERMES_APP_URL, and add the OAuth callback URL below.');
+  printCallbackInstructions(context, mergedEnv);
+  context.stdout('Next Hermes MCP step: run `shopify-hermes-oauth hermes install` to configure MCP when available.');
+  context.stdout('Run `shopify-hermes-oauth doctor` after filling in any placeholder values.');
+
+  return 0;
+}
+
+function createCliContext(dependencies: CliDependencies): CliContext {
+  return {
+    env: dependencies.env ?? process.env,
+    homeDir: dependencies.homeDir,
+    nodeVersion: dependencies.nodeVersion ?? process.version,
+    stdout: dependencies.stdout ?? ((message) => {
+      console.log(message);
+    }),
+    stderr: dependencies.stderr ?? ((message) => {
+      console.error(message);
+    }),
+    commandExists: async (command) => dependencies.commandExists?.(command) ?? defaultCommandExists(command),
+    readFile: async (path) => {
+      if (dependencies.readFile !== undefined) {
+        return dependencies.readFile(path);
+      }
+
+      if (!existsSync(path)) {
+        return undefined;
+      }
+
+      return fsReadFile(path, 'utf8');
+    },
+    writeEnvFile: async (path, content) => {
+      const directory = dirname(path);
+      const tempPath = join(directory, `.env.tmp-${String(process.pid)}-${String(Date.now())}-${Math.random().toString(36).slice(2)}`);
+      const renameFile = dependencies.renameFile ?? fsRename;
+      const chmod = dependencies.chmod ?? fsChmod;
+
+      await fsMkdir(directory, { recursive: true });
+
+      if (dependencies.writeFile !== undefined) {
+        await dependencies.writeFile(tempPath, content, { mode: 0o600 });
+      } else {
+        await fsWriteFile(tempPath, content, { encoding: 'utf8', mode: 0o600 });
+      }
+
+      await chmod(tempPath, 0o600);
+      await renameFile(tempPath, path);
+      await chmod(path, 0o600);
+    },
+    mkdir: async (path) => {
+      if (dependencies.mkdir !== undefined) {
+        await dependencies.mkdir(path);
+        return;
+      }
+
+      await fsMkdir(path, { recursive: true });
+    },
+  };
+}
+
+function usage(): string {
+  return [
+    'Usage: shopify-hermes-oauth <doctor|init>',
+    '',
+    'Commands:',
+    '  doctor  Check Node, Hermes CLI, tunnel tools, paths, and required Shopify config.',
+    '  init    Create the data directory and append missing SHOPIFY_HERMES_* .env keys.',
+  ].join('\n');
+}
+
+function defaultCommandExists(command: string): boolean {
+  const result = spawnSync('command', ['-v', command], {
+    shell: '/bin/sh',
+    stdio: 'ignore',
+  });
+  return result.status === 0;
+}
+
+function getNodeMajor(version: string): number {
+  const match = /^v?(\d+)/u.exec(version.trim());
+  return match?.[1] === undefined ? 0 : Number.parseInt(match[1], 10);
+}
+
+function missingRequiredConfigKeys(
+  values: Readonly<Record<string, string | undefined>>,
+): RequiredConfigKey[] {
+  return REQUIRED_CONFIG_KEYS.filter((key) => !isPresent(values[key]));
+}
+
+function parseShopifyHermesEnv(content: string): Record<string, string> {
+  const parsed: Record<string, string> = {};
+
+  for (const rawLine of content.split(/\r?\n/u)) {
+    const parsedLine = parseEnvLine(rawLine);
+
+    if (parsedLine !== undefined && parsedLine.key.startsWith('SHOPIFY_HERMES_') && isPresent(parsedLine.value)) {
+      parsed[parsedLine.key] = parsedLine.value;
+    }
+  }
+
+  return parsed;
+}
+
+function getExistingInitEnvValues(content: string): Map<InitEnvKey, string> {
+  const values = new Map<InitEnvKey, string>();
+
+  for (const rawLine of content.split(/\r?\n/u)) {
+    const parsedLine = parseEnvLine(rawLine);
+
+    if (parsedLine !== undefined && isInitEnvKey(parsedLine.key)) {
+      values.set(parsedLine.key, parsedLine.value);
+    }
+  }
+
+  return values;
+}
+
+function parseEnvLine(rawLine: string): { readonly key: string; readonly value: string } | undefined {
+  let line = rawLine.trim();
+
+  if (line.length === 0 || line.startsWith('#')) {
+    return undefined;
+  }
+
+  if (line.startsWith('export ')) {
+    line = line.slice('export '.length).trimStart();
+  }
+
+  const separatorIndex = line.indexOf('=');
+
+  if (separatorIndex === -1) {
+    return undefined;
+  }
+
+  const key = line.slice(0, separatorIndex).trim();
+  const rawValue = stripInlineComment(line.slice(separatorIndex + 1)).trim();
+
+  return { key, value: unquoteDotEnvValue(rawValue) };
+}
+
+function mergeShopifyHermesEnv(
+  envFileValues: Readonly<Record<string, string>>,
+  env: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  const merged: Record<string, string> = { ...envFileValues };
+
+  for (const [key, value] of Object.entries(env)) {
+    if ((key === 'HERMES_HOME' || key.startsWith('SHOPIFY_HERMES_')) && isPresent(value)) {
+      merged[key] = value;
+    }
+  }
+
+  return merged;
+}
+
+function updateMissingEnvKeys(
+  existingContent: string,
+  keysNeedingWrite: readonly InitEnvKey[],
+  mergedEnv: Readonly<Record<string, string | undefined>>,
+  dataDir: string,
+): string {
+  const remainingKeys = new Set(keysNeedingWrite);
+  const updatedLines = existingContent.split(/\r?\n/u).map((rawLine) => {
+    const parsedLine = parseEnvLine(rawLine);
+
+    if (parsedLine === undefined || !isInitEnvKey(parsedLine.key) || isPresent(parsedLine.value)) {
+      return rawLine;
+    }
+
+    remainingKeys.delete(parsedLine.key);
+    return formatDotEnvAssignment(parsedLine.key, getInitEnvValue(parsedLine.key, mergedEnv, dataDir));
+  });
+  const linesToAppend = [...remainingKeys].map((key) => formatDotEnvAssignment(key, getInitEnvValue(key, mergedEnv, dataDir)));
+
+  if (linesToAppend.length === 0) {
+    return `${updatedLines.join('\n').replace(/\n*$/u, '')}\n`;
+  }
+
+  const prefix = existingContent.length === 0 ? '' : `${updatedLines.join('\n').replace(/\n*$/u, '')}\n\n`;
+  return `${prefix}${linesToAppend.join('\n')}\n`;
+}
+
+function formatDotEnvAssignment(key: InitEnvKey, value: string): string {
+  if (/[\r\n]/u.test(value)) {
+    throw new UnsafeEnvValueError(key);
+  }
+
+  return `${key}=${quoteDotEnvValue(value)}`;
+}
+
+function quoteDotEnvValue(value: string): string {
+  if (/^[A-Za-z0-9_./:@,-]+$/u.test(value)) {
+    return value;
+  }
+
+  return `"${value.replace(/\\/gu, '\\\\').replace(/"/gu, '\\"')}"`;
+}
+
+function getInitEnvValue(
+  key: InitEnvKey,
+  mergedEnv: Readonly<Record<string, string | undefined>>,
+  dataDir: string,
+): string {
+  const configuredValue = mergedEnv[key];
+
+  if (isPresent(configuredValue)) {
+    return configuredValue;
+  }
+
+  switch (key) {
+    case 'SHOPIFY_HERMES_CLIENT_ID':
+      return 'replace-with-shopify-client-id';
+    case 'SHOPIFY_HERMES_CLIENT_SECRET':
+      return 'replace-with-shopify-client-secret';
+    case 'SHOPIFY_HERMES_APP_URL':
+      return DEFAULT_SHOPIFY_HERMES_APP_URL;
+    case 'SHOPIFY_HERMES_SCOPES':
+      return DEFAULT_SHOPIFY_HERMES_SCOPES;
+    case 'SHOPIFY_HERMES_DATA_DIR':
+      return dataDir;
+    case 'SHOPIFY_HERMES_API_VERSION':
+      return DEFAULT_SHOPIFY_HERMES_API_VERSION;
+  }
+}
+
+function printSetupChecks(
+  context: CliContext,
+  status: {
+    readonly nodeOk: boolean;
+    readonly hermesOk: boolean;
+    readonly cloudflaredOk: boolean;
+    readonly ngrokOk: boolean;
+  },
+): void {
+  context.stdout('Setup checks:');
+  context.stdout(`Node.js >=20: ${status.nodeOk ? 'ok' : `missing (found ${context.nodeVersion}; install Node.js 20 or newer)`}`);
+  context.stdout(`Hermes CLI: ${status.hermesOk ? 'ok' : 'missing (install Hermes Agent CLI before connecting this OAuth helper)'}`);
+  context.stdout(`cloudflared: ${status.cloudflaredOk ? 'ok' : 'optional, not found'}`);
+  context.stdout(`ngrok: ${status.ngrokOk ? 'ok' : 'optional, not found'}`);
+}
+
+function printCallbackInstructions(context: CliContext, mergedEnv: Readonly<Record<string, string | undefined>>): void {
+  const appUrl = mergedEnv.SHOPIFY_HERMES_APP_URL;
+
+  if (isKnownAppUrl(appUrl)) {
+    context.stdout(`OAuth callback URL: ${appUrl.replace(/\/+$/u, '')}/auth/callback`);
+    return;
+  }
+
+  context.stdout('Set SHOPIFY_HERMES_APP_URL then use <APP_URL>/auth/callback');
+}
+
+function isKnownAppUrl(value: string | undefined): value is string {
+  if (!isPresent(value)) {
+    return false;
+  }
+
+  return value !== DEFAULT_SHOPIFY_HERMES_APP_URL && !value.includes('your-public-app-url') && !value.includes('<APP_URL>');
+}
+
+function printNextSteps(
+  context: CliContext,
+  missingConfigKeys: readonly RequiredConfigKey[],
+  status: { readonly nodeOk: boolean; readonly hermesOk: boolean; readonly hasTunnel: boolean },
+): void {
+  context.stdout('Next steps:');
+
+  if (!status.nodeOk) {
+    context.stdout('- Install Node.js 20 or newer.');
+  }
+
+  if (!status.hermesOk) {
+    context.stdout('- Install the Hermes CLI and make sure `hermes` is on PATH.');
+  }
+
+  if (missingConfigKeys.length > 0) {
+    context.stdout('- Create a Shopify app in your Shopify Partner dashboard to get the client ID and client secret.');
+    context.stdout('- Run `shopify-hermes-oauth init` to create missing .env keys, then replace placeholders with Shopify app values.');
+  }
+
+  if (!status.hasTunnel) {
+    context.stdout('- Install cloudflared or ngrok, or manually provide a public HTTPS URL for SHOPIFY_HERMES_APP_URL.');
+  }
+}
+
+function isInitEnvKey(key: string): key is InitEnvKey {
+  return (INIT_ENV_KEYS as readonly string[]).includes(key);
+}
+
+function isPresent(value: string | undefined): value is string {
+  return value !== undefined && value.trim().length > 0;
+}
+
+function unquoteDotEnvValue(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+
+  return value;
+}
+
+function stripInlineComment(value: string): string {
+  let quote: '"' | "'" | undefined;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+
+    if ((character === '"' || character === "'") && value[index - 1] !== '\\') {
+      quote = quote === character ? undefined : (quote ?? character);
+      continue;
+    }
+
+    if (
+      character === '#' &&
+      quote === undefined &&
+      (index === 0 || /\s/u.test(value[index - 1] ?? ''))
+    ) {
+      return value.slice(0, index);
+    }
+  }
+
+  return value;
+}
+
+const isDirectRun = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
+
+if (isDirectRun) {
+  const exitCode = await runShopifyHermesOauthCli();
+  process.exitCode = exitCode;
+}
