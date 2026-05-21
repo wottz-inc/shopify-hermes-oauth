@@ -35,6 +35,18 @@ export type {
   OAuthStateStoreOptions,
 } from './oauth/state-store.js';
 
+export { createOAuthHttpServer } from './server.js';
+export type {
+  OAuthHttpServerConfig,
+  OAuthHttpServerDependencies,
+  OAuthStateStore,
+  OAuthStoredToken,
+  OAuthTokenExchange,
+  OAuthTokenExchangeInput,
+  OAuthTokenExchangeResult,
+  OAuthTokenStore,
+} from './server.js';
+
 export const version = '0.1.0';
 
 export function hello(): string {
