@@ -36,9 +36,13 @@ export function loadShopifyHermesConfig(
   options: LoadShopifyHermesConfigOptions = {},
 ): ShopifyHermesConfig {
   const env = options.env ?? process.env;
-  const paths = resolveShopifyHermesPaths({ env, homeDir: options.homeDir });
-  const envFileValues = parseDotEnv(readEnvFile(paths.envFile, options.readFile));
+  const initialPaths = resolveShopifyHermesPaths({ env, homeDir: options.homeDir });
+  const envFileValues = parseDotEnv(readEnvFile(initialPaths.envFile, options.readFile));
   const values = mergeShopifyHermesEnv(envFileValues, env);
+  const paths = resolveShopifyHermesPaths({
+    env: { ...env, ...values },
+    homeDir: options.homeDir,
+  });
   const missingKeys = REQUIRED_ENV_KEYS.filter((key) => !isPresent(values[key]));
 
   if (missingKeys.length > 0) {

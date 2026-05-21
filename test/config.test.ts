@@ -115,11 +115,55 @@ describe('Shopify Hermes config loading', () => {
     });
   });
 
+  it('uses SHOPIFY_HERMES_DATA_DIR from .env when resolving data paths', () => {
+    const config = loadShopifyHermesConfig({
+      env: { HERMES_HOME: '/tmp/hermes' },
+      homeDir: '/home/alice',
+      readFile: (path) => {
+        expect(path).toBe('/tmp/hermes/.env');
+        return [
+          'SHOPIFY_HERMES_CLIENT_ID=file-client-id',
+          'SHOPIFY_HERMES_CLIENT_SECRET=file-client-secret',
+          'SHOPIFY_HERMES_APP_URL=https://example.test',
+          'SHOPIFY_HERMES_DATA_DIR=/secure/from-dotenv',
+        ].join('\n');
+      },
+    });
+
+    expect(config.paths.dataDir).toBe('/secure/from-dotenv');
+    expect(config.paths.configFile).toBe('/secure/from-dotenv/config.json');
+    expect(config.paths.tokenStore).toBe('/secure/from-dotenv/tokens.json');
+    expect(config.paths.auditLog).toBe('/secure/from-dotenv/audit.jsonl');
+  });
+
+  it('preserves environment precedence for SHOPIFY_HERMES_DATA_DIR', () => {
+    const config = loadShopifyHermesConfig({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_DATA_DIR: '/secure/from-env',
+      },
+      homeDir: '/home/alice',
+      readFile: () =>
+        [
+          'SHOPIFY_HERMES_CLIENT_ID=file-client-id',
+          'SHOPIFY_HERMES_CLIENT_SECRET=file-client-secret',
+          'SHOPIFY_HERMES_APP_URL=https://example.test',
+          'SHOPIFY_HERMES_DATA_DIR=/secure/from-dotenv',
+        ].join('\n'),
+    });
+
+    expect(config.paths.dataDir).toBe('/secure/from-env');
+    expect(config.paths.configFile).toBe('/secure/from-env/config.json');
+    expect(config.paths.tokenStore).toBe('/secure/from-env/tokens.json');
+    expect(config.paths.auditLog).toBe('/secure/from-env/audit.jsonl');
+  });
+
   it('treats blank environment values as absent instead of overriding .env values', () => {
     const config = loadShopifyHermesConfig({
       env: {
         SHOPIFY_HERMES_CLIENT_SECRET: '   ',
         SHOPIFY_HERMES_SCOPES: '\t',
+        SHOPIFY_HERMES_DATA_DIR: '   ',
       },
       homeDir: '/home/alice',
       readFile: () =>
@@ -128,11 +172,13 @@ describe('Shopify Hermes config loading', () => {
           'SHOPIFY_HERMES_CLIENT_SECRET=file-client-secret',
           'SHOPIFY_HERMES_APP_URL=https://example.test',
           'SHOPIFY_HERMES_SCOPES=read_products',
+          'SHOPIFY_HERMES_DATA_DIR=/secure/from-dotenv',
         ].join('\n'),
     });
 
     expect(config.clientSecret).toBe('file-client-secret');
     expect(config.scopes).toEqual(['read_products']);
+    expect(config.paths.dataDir).toBe('/secure/from-dotenv');
   });
 
   it('supports export prefixes and inline comments in .env values', () => {
