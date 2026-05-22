@@ -5,7 +5,10 @@ import { chmod as fsChmod, mkdir as fsMkdir, readFile as fsReadFile, rename as f
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { resolveShopifyHermesPaths } from './hermes-home.js';
+import { createShopifyAdminGraphqlClient } from './shopify/admin-client.js';
+import { verifyShop, type VerifyShopResult } from './shops/verify.js';
 import { LocalJsonTokenStore, normalizeTokenStoreShopDomain, type StoredShopToken } from './tokens/local-token-store.js';
 
 const REQUIRED_CONFIG_KEYS = [
@@ -40,6 +43,8 @@ export interface CliDependencies {
   readonly renameFile?: (from: string, to: string) => void | Promise<void>;
   readonly chmod?: (path: string, mode: number) => void | Promise<void>;
   readonly mkdir?: (path: string) => void | Promise<void>;
+  readonly fetch?: typeof globalThis.fetch;
+  readonly appendAuditEvent?: (path: string, event: AuditEventInput) => void | Promise<void>;
 }
 
 interface CliContext {
@@ -55,6 +60,8 @@ interface CliContext {
   readonly renameFile: (from: string, to: string) => Promise<void>;
   readonly chmod: (path: string, mode: number) => Promise<void>;
   readonly mkdir: (path: string) => Promise<void>;
+  readonly fetch: typeof globalThis.fetch;
+  readonly appendAuditEvent: (path: string, event: AuditEventInput) => Promise<void>;
 }
 
 class UnsafeEnvValueError extends Error {
@@ -130,6 +137,45 @@ async function runShops(args: readonly string[], context: CliContext): Promise<n
       return 0;
     } catch {
       context.stderr('Could not update token store. Check local token storage and try again.');
+      return 1;
+    }
+  }
+
+  if (subcommand === 'verify') {
+    const shop = args[1];
+
+    if (!isPresent(shop)) {
+      context.stderr(shopsUsage());
+      return 2;
+    }
+
+    let normalizedShop: string;
+
+    try {
+      normalizedShop = normalizeTokenStoreShopDomain(shop);
+    } catch {
+      context.stderr('Invalid Shopify shop domain.');
+      return 2;
+    }
+
+    try {
+      const runtime = await resolveRuntimeConfiguration(context);
+      const store = createTokenStoreForPath(runtime.paths.tokenStore, context);
+      const adminClient = createShopifyAdminGraphqlClient({
+        apiVersion: runtime.mergedEnv.SHOPIFY_HERMES_API_VERSION ?? DEFAULT_SHOPIFY_HERMES_API_VERSION,
+        fetch: context.fetch,
+      });
+      const result = await verifyShop({
+        shop: normalizedShop,
+        tokenStore: store,
+        adminClient,
+        appendAuditEvent: async (event) => context.appendAuditEvent(runtime.paths.auditLog, event),
+      });
+
+      context.stdout(formatShopVerificationResult(result));
+      return 0;
+    } catch (error) {
+      context.stderr(error instanceof Error ? error.message : 'Could not verify shop.');
       return 1;
     }
   }
@@ -287,6 +333,15 @@ function createCliContext(dependencies: CliDependencies): CliContext {
 
       await fsMkdir(path, { recursive: true });
     },
+    fetch: dependencies.fetch ?? globalThis.fetch,
+    appendAuditEvent: async (path, event) => {
+      if (dependencies.appendAuditEvent !== undefined) {
+        await dependencies.appendAuditEvent(path, event);
+        return;
+      }
+
+      await appendAuditEvent(path, event);
+    },
   };
 }
 
@@ -303,23 +358,36 @@ function usage(): string {
 
 function shopsUsage(): string {
   return [
-    'Usage: shopify-hermes-oauth shops <list|remove>',
+    'Usage: shopify-hermes-oauth shops <list|remove|verify>',
     '',
     'Commands:',
     '  shops list           List installed shop domains and non-secret metadata.',
     '  shops remove <shop>  Delete the local OAuth token for a shop.',
+    '  shops verify <shop>  Verify a stored shop token with safe Admin GraphQL metadata.',
   ].join('\n');
 }
 
 async function createTokenStore(context: CliContext): Promise<LocalJsonTokenStore> {
+  const { paths } = await resolveRuntimeConfiguration(context);
+  return createTokenStoreForPath(paths.tokenStore, context);
+}
+
+async function resolveRuntimeConfiguration(context: CliContext): Promise<{
+  readonly mergedEnv: Record<string, string>;
+  readonly paths: ReturnType<typeof resolveShopifyHermesPaths>;
+}> {
   const initialPaths = resolveShopifyHermesPaths({ env: context.env, homeDir: context.homeDir });
   const envFileContent = await context.readFile(initialPaths.envFile);
   const envFileValues = parseShopifyHermesEnv(envFileContent ?? '');
   const mergedEnv = mergeShopifyHermesEnv(envFileValues, context.env);
   const paths = resolveShopifyHermesPaths({ env: mergedEnv, homeDir: context.homeDir });
 
+  return { mergedEnv, paths };
+}
+
+function createTokenStoreForPath(path: string, context: CliContext): LocalJsonTokenStore {
   return new LocalJsonTokenStore({
-    path: paths.tokenStore,
+    path,
     fileDependencies: {
       readFile: async (path) => {
         const content = await context.readFile(path);
@@ -342,6 +410,15 @@ async function createTokenStore(context: CliContext): Promise<LocalJsonTokenStor
       },
     },
   });
+}
+
+function formatShopVerificationResult(result: VerifyShopResult): string {
+  return [
+    `Verified ${sanitizeCliField(result.shop)}`,
+    `name=${sanitizeCliField(result.metadata.name)}`,
+    `myshopifyDomain=${sanitizeCliField(result.metadata.myshopifyDomain)}`,
+    `currencyCode=${sanitizeCliField(result.metadata.currencyCode)}`,
+  ].join(' ');
 }
 
 function formatShopListEntry(token: StoredShopToken): string {

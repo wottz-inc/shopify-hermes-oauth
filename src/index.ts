@@ -44,6 +44,22 @@ export type {
   TokenStore,
 } from './tokens/local-token-store.js';
 
+export {
+  SHOP_METADATA_QUERY,
+  ShopifyAdminGraphqlError,
+  createShopifyAdminGraphqlClient,
+  redactSensitiveText,
+} from './shopify/admin-client.js';
+export type {
+  AdminShopMetadata,
+  AdminShopMetadataInput,
+  ShopifyAdminClient,
+  ShopifyAdminGraphqlClientOptions,
+} from './shopify/admin-client.js';
+
+export { ShopVerificationError, verifyShop } from './shops/verify.js';
+export type { VerifyShopOptions, VerifyShopResult } from './shops/verify.js';
+
 export { createOAuthHttpServer } from './server.js';
 export type {
   OAuthHttpServerConfig,

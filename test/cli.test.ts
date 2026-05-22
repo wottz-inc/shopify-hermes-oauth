@@ -385,6 +385,158 @@ describe('CLI shops', () => {
     expect(output).not.toContain('shpat_never_print_me');
   });
 
+  it('verifies an installed shop via fake Admin GraphQL, audits success, and never prints token values', async () => {
+    const accessToken = 'shpat_never_print_me';
+    const auditEvents: unknown[] = [];
+    const harness = createHarness({
+      appendAuditEvent: (_path, event) => {
+        auditEvents.push(event);
+      },
+      fetch: () => Promise.resolve(new Response(JSON.stringify({
+        data: {
+          shop: {
+            name: 'Example Shop',
+            myshopifyDomain: 'example.myshopify.com',
+            currencyCode: 'USD',
+          },
+        },
+      }), { headers: { 'content-type': 'application/json' } })),
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken,
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'verify', 'EXAMPLE'], harness.deps);
+    const output = harness.stdout.join('\n');
+    const updatedStore = harness.files.get('/tmp/hermes/shopify-hermes-oauth/tokens.json') ?? '';
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('example.myshopify.com');
+    expect(output).toContain('Example Shop');
+    expect(output).toContain('USD');
+    expect(output).not.toContain(accessToken);
+    expect(updatedStore).toContain('Example Shop');
+    expect(updatedStore).toContain('USD');
+    expect(auditEvents).toEqual([{
+      action: 'shops.verify',
+      shop: 'example.myshopify.com',
+      result: 'success',
+      metadata: {
+        shopName: 'Example Shop',
+        myshopifyDomain: 'example.myshopify.com',
+        currencyCode: 'USD',
+      },
+    }]);
+    expect(JSON.stringify(auditEvents)).not.toContain(accessToken);
+  });
+
+  it('fails safely when verifying a shop with no stored token', async () => {
+    const auditEvents: unknown[] = [];
+    const harness = createHarness({
+      appendAuditEvent: (_path, event) => {
+        auditEvents.push(event);
+      },
+      fetch: () => Promise.reject(new Error('Admin GraphQL should not be called')),
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'verify', 'missing'], harness.deps);
+
+    expect(exitCode).toBe(1);
+    expect(harness.stderr.join('\n')).toContain('No stored OAuth token found for missing.myshopify.com.');
+    expect(harness.stderr.join('\n')).not.toContain('shpat_');
+    expect(auditEvents).toEqual([{
+      action: 'shops.verify',
+      shop: 'missing.myshopify.com',
+      result: 'failure',
+      metadata: { reason: 'missing_oauth_record' },
+    }]);
+  });
+
+  it('prints redacted Admin GraphQL verification errors', async () => {
+    const accessToken = 'shpat_never_print_me';
+    const auditEvents: unknown[] = [];
+    const harness = createHarness({
+      appendAuditEvent: (_path, event) => {
+        auditEvents.push(event);
+      },
+      fetch: () => Promise.resolve(new Response(JSON.stringify({
+        errors: [{ message: `Denied for X-Shopify-Access-Token: ${accessToken}` }],
+      }), { headers: { 'content-type': 'application/json' } })),
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken,
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'verify', 'example'], harness.deps);
+    const errorOutput = harness.stderr.join('\n');
+
+    expect(exitCode).toBe(1);
+    expect(errorOutput).toContain('[REDACTED]');
+    expect(errorOutput).not.toContain(accessToken);
+    expect(errorOutput).not.toContain('X-Shopify-Access-Token');
+    expect(JSON.stringify(auditEvents)).not.toContain(accessToken);
+  });
+
+  it('prints redacted arbitrary HTTP verification secrets from injected responses', async () => {
+    const accessToken = 'shpat_never_print_me';
+    const plainSecret = 'plain_access_secret';
+    const bearerSecret = 'plain_bearer_secret';
+    const headerSecret = 'plain_header_secret';
+    const auditEvents: unknown[] = [];
+    const harness = createHarness({
+      appendAuditEvent: (_path, event) => {
+        auditEvents.push(event);
+      },
+      fetch: () => Promise.resolve(new Response(JSON.stringify({
+        access_token: plainSecret,
+        authorization: `Bearer ${bearerSecret}`,
+        headers: { 'X-Shopify-Access-Token': headerSecret },
+      }), { status: 401, headers: { 'content-type': 'application/json' } })),
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken,
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'verify', 'example'], harness.deps);
+    const errorOutput = harness.stderr.join('\n');
+    const serializedAudit = JSON.stringify(auditEvents);
+
+    expect(exitCode).toBe(1);
+    expect(errorOutput).toContain('[REDACTED]');
+    expect(serializedAudit).toContain('[REDACTED]');
+    for (const secret of [accessToken, plainSecret, bearerSecret, headerSecret]) {
+      expect(errorOutput).not.toContain(secret);
+      expect(serializedAudit).not.toContain(secret);
+    }
+  });
+
   it('returns usage-ish errors for missing or unknown shop subcommands', async () => {
     const missingHarness = createHarness();
     const unknownHarness = createHarness();
@@ -392,7 +544,7 @@ describe('CLI shops', () => {
     await expect(runShopifyHermesOauthCli(['shops'], missingHarness.deps)).resolves.toBe(2);
     await expect(runShopifyHermesOauthCli(['shops', 'wat'], unknownHarness.deps)).resolves.toBe(2);
 
-    expect(missingHarness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth shops <list|remove>');
-    expect(unknownHarness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth shops <list|remove>');
+    expect(missingHarness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth shops <list|remove|verify>');
+    expect(unknownHarness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth shops <list|remove|verify>');
   });
 });
