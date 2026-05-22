@@ -10,6 +10,7 @@ function createHarness(overrides: Partial<CliDependencies> = {}) {
   const renamedFiles: { readonly from: string; readonly to: string }[] = [];
   const madeDirs: string[] = [];
   const commands = new Set<string>();
+  const executedCommands: { readonly command: string; readonly args: readonly string[] }[] = [];
 
   const deps: CliDependencies = {
     env: { HERMES_HOME: '/tmp/hermes' },
@@ -18,6 +19,10 @@ function createHarness(overrides: Partial<CliDependencies> = {}) {
     stdout: (message) => stdout.push(message),
     stderr: (message) => stderr.push(message),
     commandExists: (command) => commands.has(command),
+    executeCommand: (command, args) => {
+      executedCommands.push({ command, args });
+      return { status: 0 };
+    },
     readFile: (path) => files.get(path),
     writeFile: (path, content, options) => {
       files.set(path, content);
@@ -47,7 +52,7 @@ function createHarness(overrides: Partial<CliDependencies> = {}) {
     ...overrides,
   };
 
-  return { commands, deps, fileModes, files, madeDirs, renamedFiles, stderr, stdout };
+  return { commands, deps, executedCommands, fileModes, files, madeDirs, renamedFiles, stderr, stdout };
 }
 
 describe('CLI doctor', () => {
@@ -232,7 +237,7 @@ describe('CLI init', () => {
     const exitCode = await runShopifyHermesOauthCli(['wat'], harness.deps);
 
     expect(exitCode).toBe(2);
-    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|shops|report|mcp>');
+    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|shops|report|mcp|hermes>');
   });
 
   it('recognizes the mcp serve command', async () => {
@@ -242,6 +247,129 @@ describe('CLI init', () => {
 
     expect(exitCode).toBe(2);
     expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth mcp serve');
+  });
+});
+
+describe('CLI hermes install', () => {
+  it('runs Hermes MCP add when Hermes CLI is available and installs a safe local skill', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+      },
+    });
+    harness.commands.add('hermes');
+
+    const exitCode = await runShopifyHermesOauthCli(['hermes', 'install'], harness.deps);
+    const output = harness.stdout.join('\n');
+    const skillPath = '/tmp/hermes/skills/productivity/shopify-hermes-oauth/SKILL.md';
+    const skill = harness.files.get(skillPath) ?? '';
+
+    expect(exitCode).toBe(0);
+    expect(harness.executedCommands).toEqual([{
+      command: 'hermes',
+      args: ['mcp', 'add', 'shopify-hermes-oauth', '--command', 'shopify-hermes-oauth', '--args', 'mcp', 'serve'],
+    }]);
+    expect(harness.madeDirs).toContain('/tmp/hermes/skills/productivity/shopify-hermes-oauth');
+    expect(skill).toContain('shopify-hermes-oauth');
+    expect(skill).toContain('shops verify');
+    expect(skill).not.toContain('super-secret-value');
+    expect(output).toContain('Configured Hermes MCP server: shopify-hermes-oauth.');
+    expect(output).toContain('Installed local Hermes skill: /tmp/hermes/skills/productivity/shopify-hermes-oauth/SKILL.md');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('prints exact copy-pasteable manual fallback when Hermes CLI is unavailable', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['hermes', 'install'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(harness.executedCommands).toEqual([]);
+    expect(output).toContain('Hermes CLI not found. Run this command after installing Hermes:');
+    expect(output).toContain('hermes mcp add shopify-hermes-oauth --command "shopify-hermes-oauth" --args mcp serve');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('is idempotent when existing Hermes MCP config already names this server', async () => {
+    const harness = createHarness({ commandExists: (command) => command === 'hermes' });
+    harness.files.set('/tmp/hermes/mcp.json', JSON.stringify({
+      servers: {
+        'shopify-hermes-oauth': {
+          command: 'shopify-hermes-oauth',
+          args: ['mcp', 'serve'],
+        },
+      },
+    }));
+
+    await expect(runShopifyHermesOauthCli(['hermes', 'install'], harness.deps)).resolves.toBe(0);
+    await expect(runShopifyHermesOauthCli(['hermes', 'install'], harness.deps)).resolves.toBe(0);
+
+    expect(harness.executedCommands).toEqual([]);
+    expect(harness.stdout.join('\n')).toContain('Hermes MCP server already configured: shopify-hermes-oauth.');
+  });
+
+  it('is idempotent when Hermes config.yaml already names this server under mcp_servers', async () => {
+    const harness = createHarness({ commandExists: (command) => command === 'hermes' });
+    harness.files.set('/tmp/hermes/config.yaml', [
+      'mcp_servers:',
+      '  shopify-hermes-oauth:',
+      '    command: shopify-hermes-oauth',
+      '    args:',
+      '      - mcp',
+      '      - serve',
+      '    env:',
+      '      SHOPIFY_HERMES_CLIENT_SECRET: super-secret-value',
+      '',
+    ].join('\n'));
+
+    const exitCode = await runShopifyHermesOauthCli(['hermes', 'install'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(harness.executedCommands).toEqual([]);
+    expect(output).toContain('Hermes MCP server already configured: shopify-hermes-oauth.');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('returns failure with sanitized manual fallback when Hermes MCP add fails', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+      },
+      commandExists: (command) => command === 'hermes',
+      executeCommand: (command, args) => {
+        harness.executedCommands.push({ command, args });
+        return { status: 1 };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['hermes', 'install'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(harness.executedCommands).toEqual([{
+      command: 'hermes',
+      args: ['mcp', 'add', 'shopify-hermes-oauth', '--command', 'shopify-hermes-oauth', '--args', 'mcp', 'serve'],
+    }]);
+    expect(harness.stderr.join('\n')).toContain('Hermes MCP configuration failed. Run manually: hermes mcp add shopify-hermes-oauth --command "shopify-hermes-oauth" --args mcp serve');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('prints usage for unknown hermes subcommands', async () => {
+    const harness = createHarness();
+
+    const exitCode = await runShopifyHermesOauthCli(['hermes'], harness.deps);
+
+    expect(exitCode).toBe(2);
+    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth hermes install');
   });
 });
 

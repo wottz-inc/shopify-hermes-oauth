@@ -42,6 +42,7 @@ export interface CliDependencies {
   readonly stdout?: (message: string) => void;
   readonly stderr?: (message: string) => void;
   readonly commandExists?: (command: string) => boolean | Promise<boolean>;
+  readonly executeCommand?: (command: string, args: readonly string[]) => { readonly status: number | null } | Promise<{ readonly status: number | null }>;
   readonly readFile?: (path: string) => string | undefined | Promise<string | undefined>;
   readonly writeFile?: (path: string, content: string, options?: { readonly mode?: number }) => void | Promise<void>;
   readonly renameFile?: (from: string, to: string) => void | Promise<void>;
@@ -58,6 +59,7 @@ interface CliContext {
   readonly stdout: (message: string) => void;
   readonly stderr: (message: string) => void;
   readonly commandExists: (command: string) => Promise<boolean>;
+  readonly executeCommand: (command: string, args: readonly string[]) => Promise<{ readonly status: number | null }>;
   readonly readFile: (path: string) => Promise<string | undefined>;
   readonly writeEnvFile: (path: string, content: string) => Promise<void>;
   readonly writeJsonFile: (path: string, content: string) => Promise<void>;
@@ -99,6 +101,10 @@ export async function runShopifyHermesOauthCli(
 
   if (command === 'mcp') {
     return runMcp(args.slice(1), context);
+  }
+
+  if (command === 'hermes') {
+    return runHermes(args.slice(1), context);
   }
 
   context.stderr(usage());
@@ -445,6 +451,91 @@ async function runMcp(args: readonly string[], context: CliContext): Promise<num
   }
 }
 
+async function runHermes(args: readonly string[], context: CliContext): Promise<number> {
+  if (args[0] !== 'install') {
+    context.stderr(hermesUsage());
+    return 2;
+  }
+
+  return runHermesInstall(context);
+}
+
+const HERMES_MCP_SERVER_NAME = 'shopify-hermes-oauth';
+const HERMES_MCP_COMMAND = 'hermes mcp add shopify-hermes-oauth --command "shopify-hermes-oauth" --args mcp serve';
+const HERMES_MCP_ARGS = ['mcp', 'add', HERMES_MCP_SERVER_NAME, '--command', 'shopify-hermes-oauth', '--args', 'mcp', 'serve'] as const;
+
+async function runHermesInstall(context: CliContext): Promise<number> {
+  const paths = resolveShopifyHermesPaths({ env: context.env, homeDir: context.homeDir });
+  const skillDir = join(paths.hermesHome, 'skills', 'productivity', HERMES_MCP_SERVER_NAME);
+  const skillPath = join(skillDir, 'SKILL.md');
+  const hermesOk = await context.commandExists('hermes');
+  const alreadyConfigured = await hasDetectableHermesMcpConfig(context, paths.hermesHome);
+
+  await context.mkdir(skillDir);
+  await context.writeJsonFile(skillPath, localHermesSkillContent());
+
+  if (alreadyConfigured) {
+    context.stdout('Hermes MCP server already configured: shopify-hermes-oauth.');
+  } else if (hermesOk) {
+    const result = await context.executeCommand('hermes', HERMES_MCP_ARGS);
+
+    if (result.status !== 0) {
+      context.stderr(`Hermes MCP configuration failed. Run manually: ${HERMES_MCP_COMMAND}`);
+      return 1;
+    }
+
+    context.stdout('Configured Hermes MCP server: shopify-hermes-oauth.');
+  } else {
+    context.stdout('Hermes CLI not found. Run this command after installing Hermes:');
+    context.stdout(HERMES_MCP_COMMAND);
+  }
+
+  context.stdout(`Installed local Hermes skill: ${skillPath}`);
+  return 0;
+}
+
+async function hasDetectableHermesMcpConfig(context: CliContext, hermesHome: string): Promise<boolean> {
+  const candidatePaths = [
+    join(hermesHome, 'config.yaml'),
+    join(hermesHome, 'mcp.json'),
+    join(hermesHome, 'mcp_servers.json'),
+    join(hermesHome, 'config', 'mcp.json'),
+    join(hermesHome, 'config.json'),
+  ];
+
+  for (const candidatePath of candidatePaths) {
+    const content = await context.readFile(candidatePath);
+    if (content?.includes(HERMES_MCP_SERVER_NAME) === true) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function localHermesSkillContent(): string {
+  return [
+    '# Shopify Hermes OAuth',
+    '',
+    'Use `shopify-hermes-oauth` for durable, multi-store Shopify OAuth access through Hermes MCP.',
+    '',
+    '## Setup checks',
+    '',
+    '- Run `shopify-hermes-oauth doctor` before using the connector.',
+    '- Use `shopify-hermes-oauth shops list` to see installed shops.',
+    '- Use `shopify-hermes-oauth shops verify <shop>` to verify a stored OAuth installation.',
+    '',
+    '## Read-only reports',
+    '',
+    '- Products: `shopify-hermes-oauth report products <shop> --format markdown`',
+    '- Orders: `shopify-hermes-oauth report orders <shop> --since 30d --format markdown`',
+    '- Inventory: `shopify-hermes-oauth report inventory <shop> --format markdown`',
+    '',
+    'Do not ask users to paste Shopify access tokens into chat. This skill contains no secrets.',
+    '',
+  ].join('\n');
+}
+
 async function runDoctor(context: CliContext): Promise<number> {
   const envFileContent = await context.readFile(resolveShopifyHermesPaths({
     env: context.env,
@@ -545,6 +636,7 @@ function createCliContext(dependencies: CliDependencies): CliContext {
       console.error(message);
     }),
     commandExists: async (command) => dependencies.commandExists?.(command) ?? defaultCommandExists(command),
+    executeCommand: async (command, args) => dependencies.executeCommand?.(command, args) ?? defaultExecuteCommand(command, args),
     readFile: async (path) => {
       if (dependencies.readFile !== undefined) {
         return dependencies.readFile(path);
@@ -608,7 +700,7 @@ function createCliContext(dependencies: CliDependencies): CliContext {
 
 function usage(): string {
   return [
-    'Usage: shopify-hermes-oauth <doctor|init|shops|report|mcp>',
+    'Usage: shopify-hermes-oauth <doctor|init|shops|report|mcp|hermes>',
     '',
     'Commands:',
     '  doctor  Check Node, Hermes CLI, tunnel tools, paths, and required Shopify config.',
@@ -616,6 +708,16 @@ function usage(): string {
     '  shops   List or remove locally stored shop OAuth tokens (never prints token values).',
     '  report  Generate read-only Shopify reports.',
     '  mcp     Serve curated read-only Shopify MCP tools over stdio.',
+    '  hermes  Configure Hermes MCP and optional local skill integration.',
+  ].join('\n');
+}
+
+function hermesUsage(): string {
+  return [
+    'Usage: shopify-hermes-oauth hermes install',
+    '',
+    'Commands:',
+    '  hermes install  Configure Hermes MCP and install/update the local Hermes skill.',
   ].join('\n');
 }
 
@@ -914,6 +1016,11 @@ function defaultCommandExists(command: string): boolean {
     stdio: 'ignore',
   });
   return result.status === 0;
+}
+
+function defaultExecuteCommand(command: string, args: readonly string[]): { readonly status: number | null } {
+  const result = spawnSync(command, [...args], { stdio: 'inherit' });
+  return { status: result.status };
 }
 
 function getNodeMajor(version: string): number {
