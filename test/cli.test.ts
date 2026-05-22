@@ -634,6 +634,127 @@ describe('CLI report products', () => {
   });
 });
 
+describe('CLI report inventory', () => {
+  it('prints a markdown inventory report for an installed shop without exposing tokens and audits success', async () => {
+    const accessToken = 'shpat_never_print_me';
+    const audits: unknown[] = [];
+    const requests: unknown[] = [];
+    const harness = createHarness({
+      fetch: (_url, init) => {
+        const body = typeof init?.body === 'string' ? init.body : '';
+        requests.push(JSON.parse(body) as unknown);
+        return Promise.resolve(new Response(JSON.stringify({
+          data: {
+            products: {
+              edges: [{ cursor: 'cursor-1', node: cliInventoryProductNode() }],
+              pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+            },
+          },
+        }), { headers: { 'content-type': 'application/json' } }));
+      },
+      appendAuditEvent: (_path, event) => {
+        audits.push(event);
+      },
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken,
+          scopes: ['read_products', 'read_inventory'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['report', 'inventory', 'example', '--format', 'markdown', '--low-stock-threshold', '4'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('| Product ID | Product GID | Product | Variant ID | Variant GID | Variant | SKU | Inventory Item GID | Location | Available | On Hand | Committed | Low Stock |');
+    expect(output).toContain('| 1001 | gid://shopify/Product/1001 | A Shirt | 2001 | gid://shopify/ProductVariant/2001 | Red / S | SKU-RED-S | gid://shopify/InventoryItem/3001 | Main Warehouse | 3 | 7 | 4 | yes |');
+    expect(JSON.stringify(requests)).toContain('inventoryLevels');
+    expect(output).not.toContain(accessToken);
+    expect(JSON.stringify(audits)).not.toContain(accessToken);
+    expect(JSON.stringify(audits)).toContain('"action":"report.inventory"');
+    expect(JSON.stringify(audits)).toContain('"shop":"example.myshopify.com"');
+    expect(JSON.stringify(audits)).toContain('"rowCount":1');
+    expect(JSON.stringify(audits)).toContain('"threshold":4');
+  });
+
+  it('prints json and csv inventory reports and validates threshold safely', async () => {
+    const harness = createHarness({
+      fetch: () => Promise.resolve(new Response(JSON.stringify({
+        data: { products: { edges: [{ cursor: 'cursor-1', node: cliInventoryProductNode({ sku: null }) }], pageInfo: { hasNextPage: false, endCursor: 'cursor-1' } } },
+      }), { headers: { 'content-type': 'application/json' } })),
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'shpat_never_print_me',
+          scopes: ['read_products', 'read_inventory'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    await expect(runShopifyHermesOauthCli(['report', 'inventory', 'example', '--format', 'json'], harness.deps)).resolves.toBe(0);
+    expect(JSON.parse(harness.stdout.join('\n'))).toEqual(expect.objectContaining({ rows: [expect.objectContaining({ sku: '', locationName: 'Main Warehouse' })] }));
+
+    harness.stdout.length = 0;
+    await expect(runShopifyHermesOauthCli(['report', 'inventory', 'example', '--format', 'csv'], harness.deps)).resolves.toBe(0);
+    expect(harness.stdout.join('\n')).toContain('productId,productGid,productTitle,variantId,variantGid,variantTitle,sku,inventoryItemGid,locationName,available,onHand,committed,lowStock');
+    expect(harness.stdout.join('\n')).toContain('"1001","gid://shopify/Product/1001","A Shirt"');
+
+    const invalidHarness = createHarness({ fetch: () => Promise.reject(new Error('Admin GraphQL should not be called')) });
+    await expect(runShopifyHermesOauthCli(['report', 'inventory', 'example', '--low-stock-threshold', '-1'], invalidHarness.deps)).resolves.toBe(2);
+    expect(invalidHarness.stderr.join('\n')).toContain('Inventory report low-stock threshold must be a non-negative integer.');
+
+    const decimalHarness = createHarness({ fetch: () => Promise.reject(new Error('Admin GraphQL should not be called')) });
+    await expect(runShopifyHermesOauthCli(['report', 'inventory', 'example', '--low-stock-threshold', '4.0'], decimalHarness.deps)).resolves.toBe(2);
+    expect(decimalHarness.stderr.join('\n')).toContain('Inventory report low-stock threshold must be a non-negative integer.');
+  });
+
+  it('fails before fetching when stored token lacks read_inventory or read_products and audits safely', async () => {
+    const accessToken = 'shpat_never_print_me';
+    const audits: unknown[] = [];
+    const harness = createHarness({
+      fetch: () => Promise.reject(new Error('Admin GraphQL should not be called')),
+      appendAuditEvent: (_path, event) => {
+        audits.push(event);
+      },
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken,
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['report', 'inventory', 'example'], harness.deps);
+    const errorOutput = harness.stderr.join('\n');
+
+    expect(exitCode).toBe(1);
+    expect(errorOutput).toContain('Stored OAuth token for example.myshopify.com is missing required scope: read_inventory.');
+    expect(errorOutput).not.toContain(accessToken);
+    expect(JSON.stringify(audits)).not.toContain(accessToken);
+    expect(JSON.stringify(audits)).toContain('"action":"report.inventory"');
+    expect(JSON.stringify(audits)).toContain('"result":"failure"');
+    expect(JSON.stringify(audits)).toContain('read_inventory');
+  });
+});
+
 describe('CLI report orders', () => {
   it('prints an orders report for --since without exposing tokens and audits success', async () => {
     const accessToken = 'shpat_never_print_me';
@@ -757,6 +878,33 @@ function cliProductNode() {
     totalInventory: 7,
     variants: {
       edges: [{ node: { title: 'Red / S', sku: 'SKU-RED-S', inventoryQuantity: 7 } }],
+    },
+  };
+}
+
+function cliInventoryProductNode(overrides: Partial<{ readonly sku: string | null }> = {}) {
+  return {
+    id: 'gid://shopify/Product/1001',
+    title: 'A Shirt',
+    variants: {
+      edges: [{
+        node: {
+          id: 'gid://shopify/ProductVariant/2001',
+          title: 'Red / S',
+          sku: Object.hasOwn(overrides, 'sku') ? overrides.sku : 'SKU-RED-S',
+          inventoryItem: {
+            id: 'gid://shopify/InventoryItem/3001',
+            inventoryLevels: {
+              edges: [{
+                node: {
+                  location: { name: 'Main Warehouse' },
+                  quantities: [{ name: 'available', quantity: 3 }, { name: 'on_hand', quantity: 7 }, { name: 'committed', quantity: 4 }],
+                },
+              }],
+            },
+          },
+        },
+      }],
     },
   };
 }

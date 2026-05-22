@@ -73,6 +73,21 @@ export type {
   ProductsReportVariables,
 } from './reports/products.js';
 
+export {
+  INVENTORY_REPORT_QUERY,
+  InventoryReportError,
+  formatInventoryReport,
+  generateInventoryReport,
+} from './reports/inventory.js';
+export type {
+  InventoryReport,
+  InventoryReportFormat,
+  InventoryReportGraphqlClient,
+  InventoryReportOptions,
+  InventoryReportRow,
+  InventoryReportVariables,
+} from './reports/inventory.js';
+
 export { ShopVerificationError, verifyShop } from './shops/verify.js';
 export type { VerifyShopOptions, VerifyShopResult } from './shops/verify.js';
 

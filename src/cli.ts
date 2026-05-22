@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { resolveShopifyHermesPaths } from './hermes-home.js';
+import { formatInventoryReport, generateInventoryReport, InventoryReportError } from './reports/inventory.js';
 import { formatOrdersReport, generateOrdersReport, parseOrdersReportWindow, type OrdersReportWindowInput } from './reports/orders.js';
 import { formatProductsReport, generateProductsReport, type ProductsReportFormat } from './reports/products.js';
 import { createShopifyAdminGraphqlClient, redactSensitiveErrorMessage } from './shopify/admin-client.js';
@@ -193,7 +194,7 @@ async function runShops(args: readonly string[], context: CliContext): Promise<n
 async function runReport(args: readonly string[], context: CliContext): Promise<number> {
   const subcommand = args[0];
 
-  if (subcommand !== 'products' && subcommand !== 'orders') {
+  if (subcommand !== 'products' && subcommand !== 'orders' && subcommand !== 'inventory') {
     context.stderr(reportUsage());
     return 2;
   }
@@ -206,7 +207,7 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
   }
 
   const reportArgs = args.slice(2);
-  const parsedFormat = parseReportFormat(reportArgs.filter((arg, index) => reportArgs[index - 1] !== '--since' && reportArgs[index - 1] !== '--from' && reportArgs[index - 1] !== '--to' && arg !== '--since' && arg !== '--from' && arg !== '--to'));
+  const parsedFormat = parseReportFormat(reportArgs.filter((arg, index) => reportArgs[index - 1] !== '--since' && reportArgs[index - 1] !== '--from' && reportArgs[index - 1] !== '--to' && reportArgs[index - 1] !== '--low-stock-threshold' && arg !== '--since' && arg !== '--from' && arg !== '--to' && arg !== '--low-stock-threshold'));
 
   if (parsedFormat === undefined) {
     context.stderr('Invalid report format. Use markdown, json, or csv.');
@@ -214,6 +215,7 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
   }
 
   let ordersWindowInput: OrdersReportWindowInput | undefined;
+  let lowStockThreshold = 5;
   if (subcommand === 'orders') {
     const parsedOrdersArgs = parseOrdersReportArgs(reportArgs);
     if (parsedOrdersArgs === undefined) {
@@ -227,6 +229,25 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
       return 2;
     }
     ordersWindowInput = parsedOrdersArgs;
+  }
+
+  if (subcommand === 'inventory') {
+    let parsedInventoryArgs: InventoryReportArgs | undefined;
+    try {
+      parsedInventoryArgs = parseInventoryReportArgs(reportArgs);
+    } catch (error) {
+      context.stderr(error instanceof Error ? error.message : 'Invalid inventory report options.');
+      return 2;
+    }
+
+    if (parsedInventoryArgs === undefined) {
+      context.stderr(reportUsage());
+      return 2;
+    }
+
+    if (parsedInventoryArgs.lowStockThreshold !== undefined) {
+      lowStockThreshold = parsedInventoryArgs.lowStockThreshold;
+    }
   }
 
   let normalizedShop: string;
@@ -253,6 +274,16 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
       throw new Error(`Stored OAuth token for ${normalizedShop} is missing required scope: read_orders.`);
     }
 
+    if (subcommand === 'inventory') {
+      if (!token.scopes.includes('read_inventory')) {
+        throw new Error(`Stored OAuth token for ${normalizedShop} is missing required scope: read_inventory.`);
+      }
+
+      if (!token.scopes.includes('read_products')) {
+        throw new Error(`Stored OAuth token for ${normalizedShop} is missing required scope: read_products.`);
+      }
+    }
+
     const adminClient = createShopifyAdminGraphqlClient({
       apiVersion: runtime.mergedEnv.SHOPIFY_HERMES_API_VERSION ?? DEFAULT_SHOPIFY_HERMES_API_VERSION,
       fetch: context.fetch,
@@ -271,6 +302,29 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
       });
 
       context.stdout(formatProductsReport(report, parsedFormat));
+      return 0;
+    }
+
+    if (subcommand === 'inventory') {
+      const report = await generateInventoryReport({
+        client: {
+          query: (query, variables) => adminClient.query({
+            shop: normalizedShop,
+            accessToken: token.accessToken,
+            query,
+            variables,
+          }),
+        },
+        lowStockThreshold,
+      });
+
+      await context.appendAuditEvent(runtime.paths.auditLog, {
+        action: 'report.inventory',
+        shop: normalizedShop,
+        result: 'success',
+        metadata: { format: parsedFormat, rowCount: report.rows.length, threshold: lowStockThreshold },
+      });
+      context.stdout(formatInventoryReport(report, parsedFormat));
       return 0;
     }
 
@@ -296,13 +350,13 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
     return 0;
   } catch (error) {
     const message = error instanceof Error ? redactSensitiveErrorMessage(error.message) : `Could not generate ${subcommand} report.`;
-    if (subcommand === 'orders') {
+    if (subcommand === 'orders' || subcommand === 'inventory') {
       try {
         await context.appendAuditEvent(runtime.paths.auditLog, {
-          action: 'report.orders',
+          action: subcommand === 'orders' ? 'report.orders' : 'report.inventory',
           shop: normalizedShop,
           result: 'failure',
-          metadata: { reason: message },
+          metadata: subcommand === 'inventory' ? { reason: message, threshold: lowStockThreshold } : { reason: message },
         });
       } catch {
         // Preserve the original report error; audit logging must not expose or mask it.
@@ -489,11 +543,13 @@ function usage(): string {
 function reportUsage(): string {
   return [
     'Usage: shopify-hermes-oauth report products <shop> [--format markdown|json|csv]',
+    '       shopify-hermes-oauth report inventory <shop> [--format markdown|json|csv] [--low-stock-threshold N]',
     '       shopify-hermes-oauth report orders <shop> (--since 30d | --from YYYY-MM-DD --to YYYY-MM-DD) [--format markdown|json|csv]',
     '',
     'Commands:',
-    '  report products <shop>  Generate a read-only products report. Defaults to markdown.',
-    '  report orders <shop>    Generate a read-only orders report. Defaults to markdown.',
+    '  report products <shop>   Generate a read-only products report. Defaults to markdown.',
+    '  report inventory <shop>  Generate a read-only inventory report. Defaults to markdown.',
+    '  report orders <shop>     Generate a read-only orders report. Defaults to markdown.',
   ].join('\n');
 }
 
@@ -552,6 +608,44 @@ function parseOrdersReportArgs(args: readonly string[]): OrdersReportWindowInput
   }
 
   return window;
+}
+
+interface InventoryReportArgs {
+  readonly lowStockThreshold?: number;
+}
+
+function parseInventoryReportArgs(args: readonly string[]): InventoryReportArgs | undefined {
+  const parsed: { lowStockThreshold?: number } = {};
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === '--format') {
+      index += 1;
+      continue;
+    }
+
+    if (arg === '--low-stock-threshold') {
+      const value = args[index + 1];
+      if (!isPresent(value) || value.startsWith('--')) {
+        return undefined;
+      }
+
+      if (!/^\d+$/u.test(value)) {
+        throw new InventoryReportError('Inventory report low-stock threshold must be a non-negative integer.');
+      }
+
+      const threshold = Number(value);
+
+      parsed.lowStockThreshold = threshold;
+      index += 1;
+      continue;
+    }
+
+    return undefined;
+  }
+
+  return parsed;
 }
 
 function shopsUsage(): string {
