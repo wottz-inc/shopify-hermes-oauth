@@ -4,6 +4,23 @@ Hermes-first Shopify OAuth connector for agent-safe multi-store access, read-onl
 
 This repository is being planned as the native Shopify OAuth access layer for Hermes agents. See [`docs/PRD.md`](docs/PRD.md) for the product requirements, implementation specification, milestones, and v0.1 acceptance criteria.
 
+For practical setup, see [`docs/shopify-app-setup.md`](docs/shopify-app-setup.md). It separates automated CLI/Hermes steps from unavoidable Shopify dashboard and store approval steps.
+
+Quick dev tunnel helper:
+
+```bash
+shopify-hermes-oauth dev --tunnel
+```
+
+When `cloudflared` or `ngrok` is available, the helper starts the tunnel first, extracts its public HTTPS URL, then starts the local callback server with that public URL as `--app-url`. It prints the exact Shopify values to copy:
+
+```text
+Application URL: <public-url>
+Allowed redirection URL: <public-url>/auth/callback
+```
+
+If neither tunnel tool is installed, it does not start a misleading local-only OAuth server; it prints the manual `serve --app-url <your-public-https-url>` command to run after exposing the local port.
+
 ## Intended positioning
 
 - Use the upstream Hermes `shopify` skill for direct one-store token/curl GraphQL operations.

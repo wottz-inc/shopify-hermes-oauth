@@ -1,3 +1,7 @@
+import { createHmac } from 'node:crypto';
+import { type Server } from 'node:http';
+import { type AddressInfo } from 'node:net';
+
 import { describe, expect, it } from 'vitest';
 
 import { runShopifyHermesOauthCli, type CliDependencies } from '../src/cli.js';
@@ -11,6 +15,8 @@ function createHarness(overrides: Partial<CliDependencies> = {}) {
   const madeDirs: string[] = [];
   const commands = new Set<string>();
   const executedCommands: { readonly command: string; readonly args: readonly string[] }[] = [];
+  const startedProcesses: { readonly command: string; readonly args: readonly string[] }[] = [];
+  const listenedServers: { readonly host: string; readonly port: number }[] = [];
 
   const deps: CliDependencies = {
     env: { HERMES_HOME: '/tmp/hermes' },
@@ -22,6 +28,13 @@ function createHarness(overrides: Partial<CliDependencies> = {}) {
     executeCommand: (command, args) => {
       executedCommands.push({ command, args });
       return { status: 0 };
+    },
+    startProcess: (command, args) => {
+      startedProcesses.push({ command, args });
+      return { stdout: '' };
+    },
+    listenServer: (_server, options) => {
+      listenedServers.push(options);
     },
     readFile: (path) => files.get(path),
     writeFile: (path, content, options) => {
@@ -52,8 +65,340 @@ function createHarness(overrides: Partial<CliDependencies> = {}) {
     ...overrides,
   };
 
-  return { commands, deps, executedCommands, fileModes, files, madeDirs, renamedFiles, stderr, stdout };
+  return { commands, deps, executedCommands, fileModes, files, listenedServers, madeDirs, renamedFiles, startedProcesses, stderr, stdout };
 }
+
+function signedCliCallbackUrl(
+  baseUrl: string,
+  clientSecret: string,
+  params: Record<'shop' | 'code' | 'state' | 'timestamp', string>,
+): string {
+  const searchParams = new URLSearchParams(params);
+  searchParams.set('hmac', signCliCallbackParams(searchParams, clientSecret));
+
+  return `${baseUrl}/auth/callback?${searchParams.toString()}`;
+}
+
+function signCliCallbackParams(params: URLSearchParams, clientSecret: string): string {
+  const message = [...params.entries()]
+    .filter(([key]) => key !== 'hmac' && key !== 'signature')
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('&');
+
+  return createHmac('sha256', clientSecret).update(message).digest('hex');
+}
+
+async function closeServer(server: Server | undefined): Promise<void> {
+  if (server === undefined) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    server.close((error: Error | undefined) => {
+      if (error === undefined) {
+        resolve();
+        return;
+      }
+
+      reject(error);
+    });
+  });
+}
+
+describe('CLI dev tunnel', () => {
+  it('starts cloudflared before serve and passes the public app URL to serve', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+      },
+      commandExists: (command) => command === 'cloudflared' || command === 'ngrok',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return { stdout: command === 'cloudflared' ? 'INF Requesting new quick Tunnel on trycloudflare.com... https://hermes-shopify.trycloudflare.com' : '' };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(harness.startedProcesses).toEqual([
+      { command: 'cloudflared', args: ['tunnel', '--url', 'http://127.0.0.1:3456'] },
+      { command: 'shopify-hermes-oauth', args: ['serve', '--host', '127.0.0.1', '--port', '3456', '--app-url', 'https://hermes-shopify.trycloudflare.com'] },
+    ]);
+    expect(output).toContain('Tunnel provider: cloudflared');
+    expect(output).toContain('Application URL: https://hermes-shopify.trycloudflare.com');
+    expect(output).toContain('Allowed redirection URL: https://hermes-shopify.trycloudflare.com/auth/callback');
+    expect(output).toContain('Keep this command running while completing the Shopify install.');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('starts ngrok before serve and passes the public app URL to serve', async () => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'ngrok',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return { stdout: command === 'ngrok' ? 'Forwarding https://hermes-shopify.ngrok-free.app -> http://127.0.0.1:3456' : '' };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(harness.startedProcesses).toEqual([
+      { command: 'ngrok', args: ['http', 'http://127.0.0.1:3456'] },
+      { command: 'shopify-hermes-oauth', args: ['serve', '--host', '127.0.0.1', '--port', '3456', '--app-url', 'https://hermes-shopify.ngrok-free.app'] },
+    ]);
+    expect(output).toContain('Tunnel provider: ngrok');
+    expect(output).toContain('Application URL: https://hermes-shopify.ngrok-free.app');
+    expect(output).toContain('Allowed redirection URL: https://hermes-shopify.ngrok-free.app/auth/callback');
+  });
+
+  it('ignores non-cloudflared HTTPS URLs when extracting the cloudflared tunnel URL', async () => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'cloudflared',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return {
+          stdout: command === 'cloudflared'
+            ? 'Docs: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/ Try: https://hermes-shopify.trycloudflare.com'
+            : '',
+        };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.startedProcesses[1]).toEqual({
+      command: 'shopify-hermes-oauth',
+      args: ['serve', '--host', '127.0.0.1', '--port', '3456', '--app-url', 'https://hermes-shopify.trycloudflare.com'],
+    });
+  });
+
+  it('ignores ngrok dashboard URLs and extracts the forwarding ngrok app URL', async () => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'ngrok',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return {
+          stdout: command === 'ngrok'
+            ? 'Inspect traffic at https://dashboard.ngrok.com Forwarding https://hermes-shopify.ngrok.app -> http://127.0.0.1:3456'
+            : '',
+        };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.startedProcesses[1]).toEqual({
+      command: 'shopify-hermes-oauth',
+      args: ['serve', '--host', '127.0.0.1', '--port', '3456', '--app-url', 'https://hermes-shopify.ngrok.app'],
+    });
+  });
+
+  it('prints manual fallback instructions without starting a local server when no tunnel tool is installed', async () => {
+    const harness = createHarness();
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(harness.startedProcesses).toEqual([]);
+    expect(output).toContain('No tunnel tool detected.');
+    expect(output).toContain('Install cloudflared or ngrok, then run `shopify-hermes-oauth dev --tunnel` again.');
+    expect(output).toContain('Or expose http://127.0.0.1:3456 with your own HTTPS tunnel, then run:');
+    expect(output).toContain('shopify-hermes-oauth serve --host 127.0.0.1 --port 3456 --app-url <your-public-https-url>');
+    expect(output).toContain('Application URL: <your-public-https-url>');
+    expect(output).toContain('Allowed redirection URL: <your-public-https-url>/auth/callback');
+  });
+
+  it('fails safely when the tunnel exits before printing a public URL', async () => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'cloudflared',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return command === 'cloudflared' ? { stdout: 'error', status: 2 } : { stdout: '' };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(1);
+    expect(harness.startedProcesses).toEqual([
+      { command: 'cloudflared', args: ['tunnel', '--url', 'http://127.0.0.1:3456'] },
+    ]);
+    expect(harness.stderr.join('\n')).toContain('cloudflared failed before printing a public HTTPS URL.');
+  });
+
+  it('fails safely when the tunnel exits by signal before printing a public URL', async () => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'ngrok',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return command === 'ngrok' ? { stdout: 'terminated', status: null } : { stdout: '' };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(1);
+    expect(harness.startedProcesses).toEqual([
+      { command: 'ngrok', args: ['http', 'http://127.0.0.1:3456'] },
+    ]);
+    expect(harness.stderr.join('\n')).toContain('ngrok failed before printing a public HTTPS URL.');
+  });
+
+  it('fails safely when an installed tunnel tool does not print a public URL during startup', async () => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'cloudflared',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return { stdout: 'still starting' };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(1);
+    expect(harness.startedProcesses).toEqual([
+      { command: 'cloudflared', args: ['tunnel', '--url', 'http://127.0.0.1:3456'] },
+    ]);
+    expect(harness.stderr.join('\n')).toContain('cloudflared did not print a public HTTPS URL during startup.');
+    expect(harness.stderr.join('\n')).toContain('shopify-hermes-oauth serve --host 127.0.0.1 --port 3456 --app-url <your-public-https-url>');
+  });
+
+  it('fails safely when the public-url-aligned local server exits immediately', async () => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'cloudflared',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return command === 'cloudflared'
+          ? { stdout: 'https://hermes-shopify.trycloudflare.com' }
+          : { stdout: 'usage', status: 2 };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(1);
+    expect(harness.startedProcesses).toEqual([
+      { command: 'cloudflared', args: ['tunnel', '--url', 'http://127.0.0.1:3456'] },
+      { command: 'shopify-hermes-oauth', args: ['serve', '--host', '127.0.0.1', '--port', '3456', '--app-url', 'https://hermes-shopify.trycloudflare.com'] },
+    ]);
+    expect(harness.stderr.join('\n')).toContain('Local OAuth callback server failed to start.');
+  });
+
+  it('prints dev usage for missing tunnel flag', async () => {
+    const harness = createHarness();
+
+    const exitCode = await runShopifyHermesOauthCli(['dev'], harness.deps);
+
+    expect(exitCode).toBe(2);
+    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth dev --tunnel');
+  });
+});
+
+describe('CLI serve', () => {
+  it('recognizes serve and listens through the injected server path without printing secrets', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://configured.example.test',
+        SHOPIFY_HERMES_SCOPES: 'read_products, read_orders',
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['serve', '--host', '127.0.0.1', '--port', '3456', '--app-url', 'http://127.0.0.1:3456'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(harness.listenedServers).toEqual([{ host: '127.0.0.1', port: 3456 }]);
+    expect(output).toContain('OAuth callback server listening: http://127.0.0.1:3456');
+    expect(output).toContain('OAuth callback URL: http://127.0.0.1:3456/auth/callback');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('prints serve usage for invalid arguments before listening', async () => {
+    const harness = createHarness();
+
+    const exitCode = await runShopifyHermesOauthCli(['serve', '--host', '127.0.0.1', '--port', 'nope'], harness.deps);
+
+    expect(exitCode).toBe(2);
+    expect(harness.listenedServers).toEqual([]);
+    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth serve --host 127.0.0.1 --port 3456 [--app-url URL]');
+  });
+
+  it('includes the public callback redirect_uri in the Shopify token exchange request', async () => {
+    const appUrl = 'https://public-app.example.test';
+    const clientSecret = 'super-secret-value';
+    const tokenRequests: { readonly url: string; readonly init?: RequestInit }[] = [];
+    let server: Server | undefined;
+    let baseUrl = '';
+    const tokenFetch: typeof globalThis.fetch = (url, init) => {
+      const requestUrl = typeof url === 'string' || url instanceof URL ? url.toString() : url.url;
+      tokenRequests.push({ url: requestUrl, init });
+      return Promise.resolve(new Response(JSON.stringify({ access_token: 'shpat_mocked_access_token', scope: 'read_products,write_orders' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    };
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: clientSecret,
+        SHOPIFY_HERMES_APP_URL: appUrl,
+        SHOPIFY_HERMES_SCOPES: 'read_products,write_orders',
+      },
+      fetch: tokenFetch,
+      listenServer: async (createdServer) => {
+        server = createdServer;
+        await new Promise<void>((resolve) => createdServer.listen(0, '127.0.0.1', resolve));
+        const address = createdServer.address() as AddressInfo;
+        baseUrl = `http://127.0.0.1:${address.port.toString(10)}`;
+      },
+    });
+
+    try {
+      const exitCode = await runShopifyHermesOauthCli(['serve', '--host', '127.0.0.1', '--port', '3456', '--app-url', appUrl], harness.deps);
+      expect(exitCode).toBe(0);
+
+      const startResponse = await fetch(`${baseUrl}/auth/start?shop=Example.myshopify.com`, { redirect: 'manual' });
+      const location = startResponse.headers.get('location');
+      expect(location).not.toBeNull();
+      const state = new URL(location ?? '').searchParams.get('state');
+      expect(state).not.toBeNull();
+
+      const callbackUrl = signedCliCallbackUrl(baseUrl, clientSecret, {
+        shop: 'Example.myshopify.com',
+        code: 'oauth-code',
+        state: state ?? '',
+        timestamp: String(Math.floor(Date.now() / 1000)),
+      });
+      const callbackResponse = await fetch(callbackUrl);
+
+      expect(callbackResponse.status).toBe(200);
+      expect(tokenRequests).toHaveLength(1);
+      expect(tokenRequests[0]?.url).toBe('https://example.myshopify.com/admin/oauth/access_token');
+      expect(typeof tokenRequests[0]?.init?.body).toBe('string');
+      expect(JSON.parse(tokenRequests[0]?.init?.body as string)).toEqual({
+        client_id: 'client-id',
+        client_secret: clientSecret,
+        code: 'oauth-code',
+        redirect_uri: `${appUrl}/auth/callback`,
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+});
 
 describe('CLI doctor', () => {
   it('reports actionable setup status without invoking real commands', async () => {
@@ -237,7 +582,7 @@ describe('CLI init', () => {
     const exitCode = await runShopifyHermesOauthCli(['wat'], harness.deps);
 
     expect(exitCode).toBe(2);
-    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|shops|report|mcp|hermes>');
+    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|dev|serve|shops|report|mcp|hermes>');
   });
 
   it('recognizes the mcp serve command', async () => {

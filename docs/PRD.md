@@ -165,10 +165,10 @@ Some human setup is unavoidable because Shopify requires app ownership and store
 
 `shopify-hermes-oauth dev --tunnel` should:
 
-- start the local callback server;
-- if `cloudflared` is installed, create a temporary tunnel to the local server;
-- otherwise detect `ngrok` if installed;
-- otherwise run without tunnel and print manual tunnel instructions;
+- if `cloudflared` is installed, create a temporary tunnel to `http://127.0.0.1:3456`, extract its public HTTPS URL, then start the local callback server with `--app-url <public-url>`;
+- otherwise detect `ngrok` if installed, create a temporary tunnel to `http://127.0.0.1:3456`, extract its public HTTPS URL, then start the local callback server with `--app-url <public-url>`;
+- fail safely without starting the local callback server if an installed tunnel tool exits or does not print a public HTTPS URL during startup;
+- otherwise print manual tunnel instructions and the `serve --app-url <your-public-https-url>` command without claiming local-only OAuth is ready;
 - print the exact Shopify app URLs to set:
 
 ```text

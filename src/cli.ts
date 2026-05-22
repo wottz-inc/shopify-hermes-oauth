@@ -1,16 +1,19 @@
 #!/usr/bin/env node
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { chmod as fsChmod, mkdir as fsMkdir, readFile as fsReadFile, rename as fsRename, writeFile as fsWriteFile } from 'node:fs/promises';
+import { type Server } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { resolveShopifyHermesPaths } from './hermes-home.js';
 import { startStdioMcpServer, type McpServerDependencies } from './mcp/server.js';
+import { InMemoryOAuthStateStore } from './oauth/state-store.js';
 import { formatInventoryReport, generateInventoryReport, InventoryReportError } from './reports/inventory.js';
 import { formatOrdersReport, generateOrdersReport, parseOrdersReportWindow, type OrdersReportWindowInput } from './reports/orders.js';
 import { formatProductsReport, generateProductsReport, type ProductsReportFormat } from './reports/products.js';
+import { createOAuthHttpServer } from './server.js';
 import { createShopifyAdminGraphqlClient, redactSensitiveErrorMessage } from './shopify/admin-client.js';
 import { verifyShop, type VerifyShopResult } from './shops/verify.js';
 import { LocalJsonTokenStore, normalizeTokenStoreShopDomain, type StoredShopToken } from './tokens/local-token-store.js';
@@ -34,6 +37,10 @@ const DEFAULT_SHOPIFY_HERMES_API_VERSION = '2026-01';
 
 type RequiredConfigKey = (typeof REQUIRED_CONFIG_KEYS)[number];
 type InitEnvKey = (typeof INIT_ENV_KEYS)[number];
+interface StartedProcessResult {
+  readonly stdout?: string;
+  readonly status?: number | null;
+}
 
 export interface CliDependencies {
   readonly env?: Readonly<Record<string, string | undefined>>;
@@ -43,6 +50,8 @@ export interface CliDependencies {
   readonly stderr?: (message: string) => void;
   readonly commandExists?: (command: string) => boolean | Promise<boolean>;
   readonly executeCommand?: (command: string, args: readonly string[]) => { readonly status: number | null } | Promise<{ readonly status: number | null }>;
+  readonly startProcess?: (command: string, args: readonly string[]) => StartedProcessResult | Promise<StartedProcessResult>;
+  readonly listenServer?: (server: Server, options: { readonly host: string; readonly port: number }) => void | Promise<void>;
   readonly readFile?: (path: string) => string | undefined | Promise<string | undefined>;
   readonly writeFile?: (path: string, content: string, options?: { readonly mode?: number }) => void | Promise<void>;
   readonly renameFile?: (from: string, to: string) => void | Promise<void>;
@@ -60,6 +69,8 @@ interface CliContext {
   readonly stderr: (message: string) => void;
   readonly commandExists: (command: string) => Promise<boolean>;
   readonly executeCommand: (command: string, args: readonly string[]) => Promise<{ readonly status: number | null }>;
+  readonly startProcess: (command: string, args: readonly string[]) => Promise<StartedProcessResult>;
+  readonly listenServer: (server: Server, options: { readonly host: string; readonly port: number }) => Promise<void>;
   readonly readFile: (path: string) => Promise<string | undefined>;
   readonly writeEnvFile: (path: string, content: string) => Promise<void>;
   readonly writeJsonFile: (path: string, content: string) => Promise<void>;
@@ -105,6 +116,14 @@ export async function runShopifyHermesOauthCli(
 
   if (command === 'hermes') {
     return runHermes(args.slice(1), context);
+  }
+
+  if (command === 'dev') {
+    return runDev(args.slice(1), context);
+  }
+
+  if (command === 'serve') {
+    return runServe(args.slice(1), context);
   }
 
   context.stderr(usage());
@@ -451,6 +470,272 @@ async function runMcp(args: readonly string[], context: CliContext): Promise<num
   }
 }
 
+const DEV_HOST = '127.0.0.1';
+const DEV_PORT = '3456';
+const DEV_LOCAL_URL = `http://${DEV_HOST}:${DEV_PORT}`;
+
+async function runDev(args: readonly string[], context: CliContext): Promise<number> {
+  if (args.length !== 1 || args[0] !== '--tunnel') {
+    context.stderr(devUsage());
+    return 2;
+  }
+
+  const cloudflaredOk = await context.commandExists('cloudflared');
+  const ngrokOk = await context.commandExists('ngrok');
+
+  if (cloudflaredOk) {
+    return startTunnelBackedDevServer(context, 'cloudflared', ['tunnel', '--url', DEV_LOCAL_URL]);
+  }
+
+  if (ngrokOk) {
+    return startTunnelBackedDevServer(context, 'ngrok', ['http', DEV_LOCAL_URL]);
+  }
+
+  printManualTunnelInstructions(context);
+  return 0;
+}
+
+async function startTunnelBackedDevServer(context: CliContext, provider: string, tunnelArgs: readonly string[]): Promise<number> {
+  const tunnel = await context.startProcess(provider, tunnelArgs);
+  const publicUrl = extractPublicHttpsUrl(tunnel.stdout ?? '', provider);
+
+  if (publicUrl === undefined) {
+    if (processExitedUnsuccessfully(tunnel)) {
+      context.stderr(`${provider} failed before printing a public HTTPS URL. Check ${provider} setup, then rerun \`shopify-hermes-oauth dev --tunnel\`.`);
+      return 1;
+    }
+
+    context.stderr(`${provider} did not print a public HTTPS URL during startup. Rerun \`shopify-hermes-oauth dev --tunnel\`, or expose ${DEV_LOCAL_URL} yourself and run \`shopify-hermes-oauth serve --host ${DEV_HOST} --port ${DEV_PORT} --app-url <your-public-https-url>\`.`);
+    return 1;
+  }
+
+  context.stdout(`Tunnel provider: ${provider}`);
+  context.stdout(`Starting local OAuth callback server at ${DEV_LOCAL_URL} with app URL ${publicUrl}`);
+  const server = await context.startProcess('shopify-hermes-oauth', devServerArgs(publicUrl));
+
+  if (processExitedUnsuccessfully(server)) {
+    context.stderr(`Local OAuth callback server failed to start. Run \`shopify-hermes-oauth serve --host ${DEV_HOST} --port ${DEV_PORT} --app-url ${publicUrl}\` for details.`);
+    return 1;
+  }
+
+  printTunnelUrls(context, publicUrl);
+  return 0;
+}
+
+function devServerArgs(publicUrl: string): readonly string[] {
+  return ['serve', '--host', DEV_HOST, '--port', DEV_PORT, '--app-url', publicUrl];
+}
+
+function processExitedUnsuccessfully(process: StartedProcessResult): boolean {
+  return process.status !== undefined && process.status !== 0;
+}
+
+function printManualTunnelInstructions(context: CliContext): void {
+  context.stdout('No tunnel tool detected.');
+  context.stdout('Install cloudflared or ngrok, then run `shopify-hermes-oauth dev --tunnel` again.');
+  context.stdout(`Or expose ${DEV_LOCAL_URL} with your own HTTPS tunnel, then run:`);
+  context.stdout(`shopify-hermes-oauth serve --host ${DEV_HOST} --port ${DEV_PORT} --app-url <your-public-https-url>`);
+  context.stdout('Use this in Shopify:');
+  context.stdout('Application URL: <your-public-https-url>');
+  context.stdout('Allowed redirection URL: <your-public-https-url>/auth/callback');
+}
+
+interface ServeArgs {
+  readonly host: string;
+  readonly port: number;
+  readonly appUrl?: string;
+}
+
+async function runServe(args: readonly string[], context: CliContext): Promise<number> {
+  const parsedArgs = parseServeArgs(args);
+
+  if (parsedArgs === undefined) {
+    context.stderr(serveUsage());
+    return 2;
+  }
+
+  try {
+    const runtime = await resolveRuntimeConfiguration(context);
+    const appUrl = parsedArgs.appUrl ?? runtime.mergedEnv.SHOPIFY_HERMES_APP_URL;
+    const clientId = runtime.mergedEnv.SHOPIFY_HERMES_CLIENT_ID;
+    const clientSecret = runtime.mergedEnv.SHOPIFY_HERMES_CLIENT_SECRET;
+
+    if (!isPresent(clientId) || !isPresent(clientSecret) || !isPresent(appUrl)) {
+      context.stderr('Missing required configuration. Set SHOPIFY_HERMES_CLIENT_ID, SHOPIFY_HERMES_CLIENT_SECRET, and SHOPIFY_HERMES_APP_URL or pass --app-url.');
+      return 1;
+    }
+
+    const localUrl = `http://${parsedArgs.host}:${String(parsedArgs.port)}`;
+    const callback = new URL('/auth/callback', ensureTrailingSlash(appUrl)).toString();
+    const scopes = parseScopeList(runtime.mergedEnv.SHOPIFY_HERMES_SCOPES ?? DEFAULT_SHOPIFY_HERMES_SCOPES);
+    const tokenStore = createTokenStoreForPath(runtime.paths.tokenStore, context);
+    const server = createOAuthHttpServer({
+      config: { clientId, clientSecret, appUrl, scopes },
+      stateStore: new InMemoryOAuthStateStore(),
+      tokenStore,
+      tokenExchange: async ({ shop, code, redirectUri }) => exchangeShopifyOAuthToken({
+        fetch: context.fetch,
+        shop,
+        code,
+        redirectUri,
+        clientId,
+        clientSecret,
+      }),
+    });
+
+    await context.listenServer(server, { host: parsedArgs.host, port: parsedArgs.port });
+    context.stdout(`OAuth callback server listening: ${localUrl}`);
+    context.stdout(`OAuth callback URL: ${callback}`);
+    return 0;
+  } catch (error) {
+    context.stderr(error instanceof Error ? redactSensitiveErrorMessage(error.message) : 'OAuth callback server failed.');
+    return 1;
+  }
+}
+
+function printTunnelUrls(context: CliContext, publicUrl: string): void {
+  context.stdout(`Application URL: ${publicUrl}`);
+  context.stdout(`Allowed redirection URL: ${new URL('/auth/callback', ensureTrailingSlash(publicUrl)).toString()}`);
+  context.stdout('Keep this command running while completing the Shopify install.');
+}
+
+function extractPublicHttpsUrl(output: string, provider: string): string | undefined {
+  const matches = output.matchAll(/https:\/\/[^\s"'<>]+/gu);
+
+  for (const match of matches) {
+    const candidate = match[0].replace(/[).,;]+$/u, '');
+
+    try {
+      const url = new URL(candidate);
+      if (url.protocol === 'https:' && isProviderPublicTunnelUrl(url, provider)) {
+        return url.toString().replace(/\/$/u, '');
+      }
+    } catch {
+      // Ignore malformed URLs and continue looking for a provider public URL.
+    }
+  }
+
+  return undefined;
+}
+
+function isProviderPublicTunnelUrl(url: URL, provider: string): boolean {
+  const hostname = url.hostname.toLowerCase();
+
+  if (provider === 'cloudflared') {
+    return hostname === 'trycloudflare.com' || hostname.endsWith('.trycloudflare.com');
+  }
+
+  if (provider === 'ngrok') {
+    return hostname === 'ngrok-free.app'
+      || hostname.endsWith('.ngrok-free.app')
+      || hostname === 'ngrok.app'
+      || hostname.endsWith('.ngrok.app')
+      || hostname === 'ngrok.io'
+      || hostname.endsWith('.ngrok.io');
+  }
+
+  return false;
+}
+
+function ensureTrailingSlash(value: string): string {
+  return value.endsWith('/') ? value : `${value}/`;
+}
+
+function parseServeArgs(args: readonly string[]): ServeArgs | undefined {
+  let host: string | undefined;
+  let port: number | undefined;
+  let appUrl: string | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const value = args[index + 1];
+
+    if ((arg === '--host' || arg === '--port' || arg === '--app-url') && (!isPresent(value) || value.startsWith('--'))) {
+      return undefined;
+    }
+
+    if (arg === '--host') {
+      host = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg === '--port') {
+      if (!/^\d+$/u.test(value ?? '')) {
+        return undefined;
+      }
+
+      const parsedPort = Number(value);
+      if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65_535) {
+        return undefined;
+      }
+
+      port = parsedPort;
+      index += 1;
+      continue;
+    }
+
+    if (arg === '--app-url') {
+      try {
+        appUrl = new URL(value ?? '').toString().replace(/\/$/u, '');
+      } catch {
+        return undefined;
+      }
+      index += 1;
+      continue;
+    }
+
+    return undefined;
+  }
+
+  if (!isPresent(host) || port === undefined) {
+    return undefined;
+  }
+
+  return appUrl === undefined ? { host, port } : { host, port, appUrl };
+}
+
+function parseScopeList(value: string): readonly string[] {
+  return value.split(',').map((scope) => scope.trim()).filter((scope) => scope.length > 0);
+}
+
+interface ShopifyOAuthExchangeInput {
+  readonly fetch: typeof globalThis.fetch;
+  readonly shop: string;
+  readonly code: string;
+  readonly redirectUri: string;
+  readonly clientId: string;
+  readonly clientSecret: string;
+}
+
+async function exchangeShopifyOAuthToken(input: ShopifyOAuthExchangeInput): Promise<{ readonly accessToken: string; readonly scopes?: string }> {
+  const response = await input.fetch(`https://${input.shop}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      client_id: input.clientId,
+      client_secret: input.clientSecret,
+      code: input.code,
+      redirect_uri: input.redirectUri,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Shopify OAuth token exchange failed with HTTP ${String(response.status)}.`);
+  }
+
+  const payload = await response.json() as { readonly access_token?: unknown; readonly scope?: unknown };
+
+  if (typeof payload.access_token !== 'string' || payload.access_token.length === 0) {
+    throw new Error('Shopify OAuth token exchange response did not include an access token.');
+  }
+
+  return {
+    accessToken: payload.access_token,
+    ...(typeof payload.scope === 'string' ? { scopes: payload.scope } : {}),
+  };
+}
+
 async function runHermes(args: readonly string[], context: CliContext): Promise<number> {
   if (args[0] !== 'install') {
     context.stderr(hermesUsage());
@@ -637,6 +922,8 @@ function createCliContext(dependencies: CliDependencies): CliContext {
     }),
     commandExists: async (command) => dependencies.commandExists?.(command) ?? defaultCommandExists(command),
     executeCommand: async (command, args) => dependencies.executeCommand?.(command, args) ?? defaultExecuteCommand(command, args),
+    startProcess: async (command, args) => dependencies.startProcess?.(command, args) ?? defaultStartProcess(command, args),
+    listenServer: async (server, options) => dependencies.listenServer?.(server, options) ?? defaultListenServer(server, options),
     readFile: async (path) => {
       if (dependencies.readFile !== undefined) {
         return dependencies.readFile(path);
@@ -700,15 +987,35 @@ function createCliContext(dependencies: CliDependencies): CliContext {
 
 function usage(): string {
   return [
-    'Usage: shopify-hermes-oauth <doctor|init|shops|report|mcp|hermes>',
+    'Usage: shopify-hermes-oauth <doctor|init|dev|serve|shops|report|mcp|hermes>',
     '',
     'Commands:',
     '  doctor  Check Node, Hermes CLI, tunnel tools, paths, and required Shopify config.',
     '  init    Create the data directory and append missing SHOPIFY_HERMES_* .env keys.',
+    '  dev     Start a local callback server and optional dev tunnel.',
+    '  serve   Listen for Shopify OAuth start/callback HTTP requests.',
     '  shops   List or remove locally stored shop OAuth tokens (never prints token values).',
     '  report  Generate read-only Shopify reports.',
     '  mcp     Serve curated read-only Shopify MCP tools over stdio.',
     '  hermes  Configure Hermes MCP and optional local skill integration.',
+  ].join('\n');
+}
+
+function devUsage(): string {
+  return [
+    'Usage: shopify-hermes-oauth dev --tunnel',
+    '',
+    'Commands:',
+    '  dev --tunnel  Start the local OAuth callback server and a cloudflared/ngrok tunnel when available.',
+  ].join('\n');
+}
+
+function serveUsage(): string {
+  return [
+    'Usage: shopify-hermes-oauth serve --host 127.0.0.1 --port 3456 [--app-url URL]',
+    '',
+    'Commands:',
+    '  serve  Listen for Shopify OAuth start/callback HTTP requests and store local OAuth tokens.',
   ].join('\n');
 }
 
@@ -1021,6 +1328,76 @@ function defaultCommandExists(command: string): boolean {
 function defaultExecuteCommand(command: string, args: readonly string[]): { readonly status: number | null } {
   const result = spawnSync(command, [...args], { stdio: 'inherit' });
   return { status: result.status };
+}
+
+async function defaultStartProcess(command: string, args: readonly string[]): Promise<StartedProcessResult> {
+  const child = spawn(command, [...args], {
+    detached: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let output = '';
+
+  child.stdout.on('data', (chunk: Buffer) => {
+    const text = chunk.toString('utf8');
+    output += text;
+    process.stdout.write(text);
+  });
+  child.stderr.on('data', (chunk: Buffer) => {
+    const text = chunk.toString('utf8');
+    output += text;
+    process.stderr.write(text);
+  });
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (result: StartedProcessResult): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeout);
+      resolve(result);
+    };
+    const timeout = setTimeout(() => {
+      settle({ stdout: output });
+    }, command === 'shopify-hermes-oauth' ? 500 : 5_000);
+
+    child.on('error', () => {
+      settle({ stdout: output, status: 1 });
+    });
+    child.on('exit', (status) => {
+      settle({ stdout: output, status });
+    });
+    child.stdout.on('data', () => {
+      if (extractPublicHttpsUrl(output, command) !== undefined) {
+        settle({ stdout: output });
+      }
+    });
+    child.stderr.on('data', () => {
+      if (extractPublicHttpsUrl(output, command) !== undefined) {
+        settle({ stdout: output });
+      }
+    });
+  });
+}
+
+function defaultListenServer(server: Server, options: { readonly host: string; readonly port: number }): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error): void => {
+      server.off('listening', onListening);
+      reject(error);
+    };
+    const onListening = (): void => {
+      server.off('error', onError);
+      resolve();
+    };
+
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(options.port, options.host);
+  });
 }
 
 function getNodeMajor(version: string): number {
