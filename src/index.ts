@@ -35,6 +35,15 @@ export type {
   OAuthStateStoreOptions,
 } from './oauth/state-store.js';
 
+export { LocalJsonTokenStore, createLocalJsonTokenStore, normalizeTokenStoreShopDomain } from './tokens/local-token-store.js';
+export type {
+  LocalJsonTokenStoreOptions,
+  StoredShopToken,
+  StoreShopTokenInput,
+  TokenMetadata,
+  TokenStore,
+} from './tokens/local-token-store.js';
+
 export { createOAuthHttpServer } from './server.js';
 export type {
   OAuthHttpServerConfig,

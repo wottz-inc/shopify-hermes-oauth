@@ -232,6 +232,167 @@ describe('CLI init', () => {
     const exitCode = await runShopifyHermesOauthCli(['wat'], harness.deps);
 
     expect(exitCode).toBe(2);
-    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init>');
+    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|shops>');
+  });
+});
+
+describe('CLI shops', () => {
+  it('lists shop domains and non-secret metadata without token values', async () => {
+    const harness = createHarness();
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'shpat_never_print_me',
+          scopes: ['read_products', 'read_orders'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:05:00.000Z',
+          metadata: { shopName: 'Example Shop', currencyCode: 'USD' },
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'list'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('example.myshopify.com');
+    expect(output).toContain('Example Shop');
+    expect(output).toContain('USD');
+    expect(output).toContain('read_products,read_orders');
+    expect(output).toContain('2026-05-22T12:05:00.000Z');
+    expect(output).not.toContain('shpat_never_print_me');
+  });
+
+  it('removes a normalized shop and never prints token values', async () => {
+    const harness = createHarness();
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'secret-token-value',
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'remove', 'EXAMPLE'], harness.deps);
+    const output = harness.stdout.join('\n');
+    const updated = harness.files.get('/tmp/hermes/shopify-hermes-oauth/tokens.json') ?? '';
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('Removed example.myshopify.com');
+    expect(output).not.toContain('secret-token-value');
+    expect(updated).not.toContain('secret-token-value');
+    expect(harness.fileModes.get('/tmp/hermes/shopify-hermes-oauth/tokens.json')).toBe(0o600);
+  });
+
+  it('respects SHOPIFY_HERMES_DATA_DIR from Hermes .env when listing shops', async () => {
+    const harness = createHarness();
+    harness.files.set('/tmp/hermes/.env', 'SHOPIFY_HERMES_DATA_DIR=/tmp/custom-shopify-data\n');
+    harness.files.set('/tmp/custom-shopify-data/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'custom.myshopify.com': {
+          shop: 'custom.myshopify.com',
+          accessToken: 'shpat_never_print_me',
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'list'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('custom.myshopify.com');
+    expect(output).not.toContain('shpat_never_print_me');
+  });
+
+  it('respects SHOPIFY_HERMES_DATA_DIR from Hermes .env when removing shops', async () => {
+    const harness = createHarness();
+    harness.files.set('/tmp/hermes/.env', 'SHOPIFY_HERMES_DATA_DIR=/tmp/custom-shopify-data\n');
+    harness.files.set('/tmp/custom-shopify-data/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'custom.myshopify.com': {
+          shop: 'custom.myshopify.com',
+          accessToken: 'shpat_never_print_me',
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'remove', 'custom'], harness.deps);
+    const output = harness.stdout.join('\n');
+    const defaultStore = harness.files.get('/tmp/hermes/shopify-hermes-oauth/tokens.json') ?? '';
+    const customStore = harness.files.get('/tmp/custom-shopify-data/tokens.json') ?? '';
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('Removed custom.myshopify.com');
+    expect(defaultStore).toBe('');
+    expect(customStore).not.toContain('shpat_never_print_me');
+  });
+
+  it('distinguishes invalid shop input from token-store operational errors', async () => {
+    const invalidHarness = createHarness();
+    const corruptHarness = createHarness();
+    corruptHarness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', '{not-json');
+
+    await expect(runShopifyHermesOauthCli(['shops', 'remove', 'not a shop!'], invalidHarness.deps)).resolves.toBe(2);
+    await expect(runShopifyHermesOauthCli(['shops', 'remove', 'example'], corruptHarness.deps)).resolves.toBe(1);
+
+    expect(invalidHarness.stderr.join('\n')).toContain('Invalid Shopify shop domain.');
+    expect(corruptHarness.stderr.join('\n')).toContain('Could not update token store.');
+    expect(corruptHarness.stderr.join('\n')).not.toContain('Invalid Shopify shop domain.');
+    expect(corruptHarness.stderr.join('\n')).not.toContain('{not-json');
+  });
+
+  it('sanitizes token metadata and scopes before printing list output', async () => {
+    const harness = createHarness();
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'shpat_never_print_me',
+          scopes: ['read_products', 'read_orders\nINJECTED', 'read_customers\u001B[31m'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:05:00.000Z\nINJECTED',
+          metadata: { shopName: 'Example\nInjected\u001B[31m', currencyCode: 'USD\rBAD' },
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'list'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(harness.stdout).toHaveLength(1);
+    expect(output).toContain('Example\\nInjected\\u001B[31m');
+    expect(output).toContain('USD\\rBAD');
+    expect(output).toContain('read_orders\\nINJECTED');
+    expect(output).toContain('read_customers\\u001B[31m');
+    expect(output).not.toContain('\u001B');
+    expect(output).not.toContain('shpat_never_print_me');
+  });
+
+  it('returns usage-ish errors for missing or unknown shop subcommands', async () => {
+    const missingHarness = createHarness();
+    const unknownHarness = createHarness();
+
+    await expect(runShopifyHermesOauthCli(['shops'], missingHarness.deps)).resolves.toBe(2);
+    await expect(runShopifyHermesOauthCli(['shops', 'wat'], unknownHarness.deps)).resolves.toBe(2);
+
+    expect(missingHarness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth shops <list|remove>');
+    expect(unknownHarness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth shops <list|remove>');
   });
 });

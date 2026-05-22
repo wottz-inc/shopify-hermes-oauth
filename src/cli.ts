@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveShopifyHermesPaths } from './hermes-home.js';
+import { LocalJsonTokenStore, normalizeTokenStoreShopDomain, type StoredShopToken } from './tokens/local-token-store.js';
 
 const REQUIRED_CONFIG_KEYS = [
   'SHOPIFY_HERMES_CLIENT_ID',
@@ -50,6 +51,9 @@ interface CliContext {
   readonly commandExists: (command: string) => Promise<boolean>;
   readonly readFile: (path: string) => Promise<string | undefined>;
   readonly writeEnvFile: (path: string, content: string) => Promise<void>;
+  readonly writeJsonFile: (path: string, content: string) => Promise<void>;
+  readonly renameFile: (from: string, to: string) => Promise<void>;
+  readonly chmod: (path: string, mode: number) => Promise<void>;
   readonly mkdir: (path: string) => Promise<void>;
 }
 
@@ -74,8 +78,64 @@ export async function runShopifyHermesOauthCli(
     return runInit(context);
   }
 
+  if (command === 'shops') {
+    return runShops(args.slice(1), context);
+  }
+
   context.stderr(usage());
   return command === 'help' || command === '--help' || command === '-h' ? 0 : 2;
+}
+
+async function runShops(args: readonly string[], context: CliContext): Promise<number> {
+  const subcommand = args[0];
+
+  if (subcommand === 'list') {
+    const store = await createTokenStore(context);
+    const tokens = await store.listTokens();
+
+    if (tokens.length === 0) {
+      context.stdout('No shops installed.');
+      return 0;
+    }
+
+    for (const token of tokens) {
+      context.stdout(formatShopListEntry(token));
+    }
+
+    return 0;
+  }
+
+  if (subcommand === 'remove') {
+    const shop = args[1];
+
+    if (!isPresent(shop)) {
+      context.stderr(shopsUsage());
+      return 2;
+    }
+
+    let normalizedShop: string;
+
+    try {
+      normalizedShop = normalizeTokenStoreShopDomain(shop);
+    } catch {
+      context.stderr('Invalid Shopify shop domain.');
+      return 2;
+    }
+
+    try {
+      const store = await createTokenStore(context);
+      const removed = await store.deleteToken(normalizedShop);
+
+      context.stdout(removed ? `Removed ${normalizedShop}.` : `No token found for ${normalizedShop}.`);
+      return 0;
+    } catch {
+      context.stderr('Could not update token store. Check local token storage and try again.');
+      return 1;
+    }
+  }
+
+  context.stderr(shopsUsage());
+  return 2;
 }
 
 async function runDoctor(context: CliContext): Promise<number> {
@@ -164,6 +224,9 @@ async function runInit(context: CliContext): Promise<number> {
 }
 
 function createCliContext(dependencies: CliDependencies): CliContext {
+  const renameFile = dependencies.renameFile ?? fsRename;
+  const chmod = dependencies.chmod ?? fsChmod;
+
   return {
     env: dependencies.env ?? process.env,
     homeDir: dependencies.homeDir,
@@ -189,8 +252,6 @@ function createCliContext(dependencies: CliDependencies): CliContext {
     writeEnvFile: async (path, content) => {
       const directory = dirname(path);
       const tempPath = join(directory, `.env.tmp-${String(process.pid)}-${String(Date.now())}-${Math.random().toString(36).slice(2)}`);
-      const renameFile = dependencies.renameFile ?? fsRename;
-      const chmod = dependencies.chmod ?? fsChmod;
 
       await fsMkdir(directory, { recursive: true });
 
@@ -203,6 +264,20 @@ function createCliContext(dependencies: CliDependencies): CliContext {
       await chmod(tempPath, 0o600);
       await renameFile(tempPath, path);
       await chmod(path, 0o600);
+    },
+    writeJsonFile: async (path, content) => {
+      if (dependencies.writeFile !== undefined) {
+        await dependencies.writeFile(path, content, { mode: 0o600 });
+        return;
+      }
+
+      await fsWriteFile(path, content, { encoding: 'utf8', mode: 0o600 });
+    },
+    renameFile: async (from, to) => {
+      await renameFile(from, to);
+    },
+    chmod: async (path, mode) => {
+      await chmod(path, mode);
     },
     mkdir: async (path) => {
       if (dependencies.mkdir !== undefined) {
@@ -217,12 +292,106 @@ function createCliContext(dependencies: CliDependencies): CliContext {
 
 function usage(): string {
   return [
-    'Usage: shopify-hermes-oauth <doctor|init>',
+    'Usage: shopify-hermes-oauth <doctor|init|shops>',
     '',
     'Commands:',
     '  doctor  Check Node, Hermes CLI, tunnel tools, paths, and required Shopify config.',
     '  init    Create the data directory and append missing SHOPIFY_HERMES_* .env keys.',
+    '  shops   List or remove locally stored shop OAuth tokens (never prints token values).',
   ].join('\n');
+}
+
+function shopsUsage(): string {
+  return [
+    'Usage: shopify-hermes-oauth shops <list|remove>',
+    '',
+    'Commands:',
+    '  shops list           List installed shop domains and non-secret metadata.',
+    '  shops remove <shop>  Delete the local OAuth token for a shop.',
+  ].join('\n');
+}
+
+async function createTokenStore(context: CliContext): Promise<LocalJsonTokenStore> {
+  const initialPaths = resolveShopifyHermesPaths({ env: context.env, homeDir: context.homeDir });
+  const envFileContent = await context.readFile(initialPaths.envFile);
+  const envFileValues = parseShopifyHermesEnv(envFileContent ?? '');
+  const mergedEnv = mergeShopifyHermesEnv(envFileValues, context.env);
+  const paths = resolveShopifyHermesPaths({ env: mergedEnv, homeDir: context.homeDir });
+
+  return new LocalJsonTokenStore({
+    path: paths.tokenStore,
+    fileDependencies: {
+      readFile: async (path) => {
+        const content = await context.readFile(path);
+
+        if (content === undefined) {
+          const error = new Error(`File not found: ${path}`) as Error & { code: string };
+          error.code = 'ENOENT';
+          throw error;
+        }
+
+        return content;
+      },
+      writeFile: async (path, content) => {
+        await context.writeJsonFile(path, content);
+      },
+      rename: context.renameFile,
+      chmod: context.chmod,
+      mkdir: async (path) => {
+        await context.mkdir(path);
+      },
+    },
+  });
+}
+
+function formatShopListEntry(token: StoredShopToken): string {
+  const details = [
+    sanitizeOptionalCliField(token.metadata?.shopName),
+    sanitizeOptionalCliField(token.metadata?.currencyCode),
+    sanitizeOptionalCliField(token.metadata?.myshopifyDomain),
+    `scopes=${sanitizeCliField(token.scopes.join(','))}`,
+    `storedAt=${sanitizeCliField(token.storedAt)}`,
+    `updatedAt=${sanitizeCliField(token.updatedAt)}`,
+  ].filter((value): value is string => value !== undefined && value.length > 0);
+
+  return `${sanitizeCliField(token.shop)} ${details.join(' ')}`;
+}
+
+function sanitizeOptionalCliField(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : sanitizeCliField(value);
+}
+
+function sanitizeCliField(value: string): string {
+  let sanitized = '';
+
+  for (const character of value) {
+    sanitized += sanitizeCliCharacter(character);
+  }
+
+  return sanitized;
+}
+
+function sanitizeCliCharacter(character: string): string {
+  const codePoint = character.codePointAt(0) ?? 0;
+
+  if (!isControlCharacter(codePoint)) {
+    return character;
+  }
+
+  switch (character) {
+    case '\n':
+      return '\\n';
+    case '\r':
+      return '\\r';
+    case '\t':
+      return '\\t';
+    default:
+      return `\\u${codePoint.toString(16).toUpperCase().padStart(4, '0')}`;
+  }
+}
+
+function isControlCharacter(codePoint: number): boolean {
+  return (codePoint >= 0x00 && codePoint <= 0x1F) || (codePoint >= 0x7F && codePoint <= 0x9F);
 }
 
 function defaultCommandExists(command: string): boolean {
