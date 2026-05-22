@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { resolveShopifyHermesPaths } from './hermes-home.js';
+import { startStdioMcpServer, type McpServerDependencies } from './mcp/server.js';
 import { formatInventoryReport, generateInventoryReport, InventoryReportError } from './reports/inventory.js';
 import { formatOrdersReport, generateOrdersReport, parseOrdersReportWindow, type OrdersReportWindowInput } from './reports/orders.js';
 import { formatProductsReport, generateProductsReport, type ProductsReportFormat } from './reports/products.js';
@@ -94,6 +95,10 @@ export async function runShopifyHermesOauthCli(
 
   if (command === 'report') {
     return runReport(args.slice(1), context);
+  }
+
+  if (command === 'mcp') {
+    return runMcp(args.slice(1), context);
   }
 
   context.stderr(usage());
@@ -367,6 +372,21 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
   }
 }
 
+async function runMcp(args: readonly string[], context: CliContext): Promise<number> {
+  if (args[0] !== 'serve') {
+    context.stderr(mcpUsage());
+    return 2;
+  }
+
+  try {
+    await startStdioMcpServer(await createMcpServerDependencies(context));
+    return 0;
+  } catch (error) {
+    context.stderr(error instanceof Error ? redactSensitiveErrorMessage(error.message) : 'MCP server failed.');
+    return 1;
+  }
+}
+
 async function runDoctor(context: CliContext): Promise<number> {
   const envFileContent = await context.readFile(resolveShopifyHermesPaths({
     env: context.env,
@@ -530,13 +550,23 @@ function createCliContext(dependencies: CliDependencies): CliContext {
 
 function usage(): string {
   return [
-    'Usage: shopify-hermes-oauth <doctor|init|shops|report>',
+    'Usage: shopify-hermes-oauth <doctor|init|shops|report|mcp>',
     '',
     'Commands:',
     '  doctor  Check Node, Hermes CLI, tunnel tools, paths, and required Shopify config.',
     '  init    Create the data directory and append missing SHOPIFY_HERMES_* .env keys.',
     '  shops   List or remove locally stored shop OAuth tokens (never prints token values).',
     '  report  Generate read-only Shopify reports.',
+    '  mcp     Serve curated read-only Shopify MCP tools over stdio.',
+  ].join('\n');
+}
+
+function mcpUsage(): string {
+  return [
+    'Usage: shopify-hermes-oauth mcp serve',
+    '',
+    'Commands:',
+    '  mcp serve  Serve curated read-only Shopify MCP tools over stdio.',
   ].join('\n');
 }
 
@@ -702,6 +732,67 @@ function createTokenStoreForPath(path: string, context: CliContext): LocalJsonTo
       },
     },
   });
+}
+
+async function createMcpServerDependencies(context: CliContext): Promise<McpServerDependencies> {
+  const runtime = await resolveRuntimeConfiguration(context);
+  const store = createTokenStoreForPath(runtime.paths.tokenStore, context);
+  const adminClient = createShopifyAdminGraphqlClient({
+    apiVersion: runtime.mergedEnv.SHOPIFY_HERMES_API_VERSION ?? DEFAULT_SHOPIFY_HERMES_API_VERSION,
+    fetch: context.fetch,
+  });
+  const reportClientFor = async (shopInput: string, requiredScopes: readonly string[] = []) => {
+    const shop = normalizeTokenStoreShopDomain(shopInput);
+    const token = await store.getToken(shop);
+
+    if (token === undefined) {
+      throw new Error(`No stored OAuth token found for ${shop}.`);
+    }
+
+    for (const scope of requiredScopes) {
+      if (!token.scopes.includes(scope)) {
+        throw new Error(`Stored OAuth token for ${shop} is missing required scope: ${scope}.`);
+      }
+    }
+
+    return {
+      shop,
+      client: {
+        query: (query: string, variables: unknown) => adminClient.query({
+          shop,
+          accessToken: token.accessToken,
+          query,
+          variables,
+        }),
+      },
+    };
+  };
+
+  return {
+    tokenStore: store,
+    verifyShop: ({ shop }) => verifyShop({
+      shop,
+      tokenStore: store,
+      adminClient,
+      appendAuditEvent: async (event) => context.appendAuditEvent(runtime.paths.auditLog, event),
+    }),
+    reportProducts: async ({ shop, format }) => {
+      const reportRuntime = await reportClientFor(shop);
+      const report = await generateProductsReport({ client: reportRuntime.client });
+      return { shop: reportRuntime.shop, format, report, formatted: formatProductsReport(report, format) };
+    },
+    reportOrders: async ({ shop, format, since, from, to }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_orders']);
+      const report = await generateOrdersReport({ client: reportRuntime.client, window: { since, from, to } });
+      return { shop: reportRuntime.shop, format, report, formatted: formatOrdersReport(report, format) };
+    },
+    reportInventory: async ({ shop, format, lowStockThreshold }) => {
+      const threshold = lowStockThreshold ?? 5;
+      const reportRuntime = await reportClientFor(shop, ['read_inventory', 'read_products']);
+      const report = await generateInventoryReport({ client: reportRuntime.client, lowStockThreshold: threshold });
+      return { shop: reportRuntime.shop, format, lowStockThreshold: threshold, report, formatted: formatInventoryReport(report, format) };
+    },
+  };
 }
 
 function formatShopVerificationResult(result: VerifyShopResult): string {

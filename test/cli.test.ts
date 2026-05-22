@@ -232,7 +232,16 @@ describe('CLI init', () => {
     const exitCode = await runShopifyHermesOauthCli(['wat'], harness.deps);
 
     expect(exitCode).toBe(2);
-    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|shops|report>');
+    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|shops|report|mcp>');
+  });
+
+  it('recognizes the mcp serve command', async () => {
+    const harness = createHarness();
+
+    const exitCode = await runShopifyHermesOauthCli(['mcp'], harness.deps);
+
+    expect(exitCode).toBe(2);
+    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth mcp serve');
   });
 });
 
