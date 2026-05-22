@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { resolveShopifyHermesPaths } from './hermes-home.js';
+import { formatOrdersReport, generateOrdersReport, parseOrdersReportWindow, type OrdersReportWindowInput } from './reports/orders.js';
 import { formatProductsReport, generateProductsReport, type ProductsReportFormat } from './reports/products.js';
 import { createShopifyAdminGraphqlClient, redactSensitiveErrorMessage } from './shopify/admin-client.js';
 import { verifyShop, type VerifyShopResult } from './shops/verify.js';
@@ -192,7 +193,7 @@ async function runShops(args: readonly string[], context: CliContext): Promise<n
 async function runReport(args: readonly string[], context: CliContext): Promise<number> {
   const subcommand = args[0];
 
-  if (subcommand !== 'products') {
+  if (subcommand !== 'products' && subcommand !== 'orders') {
     context.stderr(reportUsage());
     return 2;
   }
@@ -204,11 +205,28 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
     return 2;
   }
 
-  const parsedFormat = parseReportFormat(args.slice(2));
+  const reportArgs = args.slice(2);
+  const parsedFormat = parseReportFormat(reportArgs.filter((arg, index) => reportArgs[index - 1] !== '--since' && reportArgs[index - 1] !== '--from' && reportArgs[index - 1] !== '--to' && arg !== '--since' && arg !== '--from' && arg !== '--to'));
 
   if (parsedFormat === undefined) {
     context.stderr('Invalid report format. Use markdown, json, or csv.');
     return 2;
+  }
+
+  let ordersWindowInput: OrdersReportWindowInput | undefined;
+  if (subcommand === 'orders') {
+    const parsedOrdersArgs = parseOrdersReportArgs(reportArgs);
+    if (parsedOrdersArgs === undefined) {
+      context.stderr(reportUsage());
+      return 2;
+    }
+    try {
+      parseOrdersReportWindow(parsedOrdersArgs);
+    } catch (error) {
+      context.stderr(error instanceof Error ? error.message : 'Invalid orders report date window.');
+      return 2;
+    }
+    ordersWindowInput = parsedOrdersArgs;
   }
 
   let normalizedShop: string;
@@ -220,8 +238,9 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
     return 2;
   }
 
+  const runtime = await resolveRuntimeConfiguration(context);
+
   try {
-    const runtime = await resolveRuntimeConfiguration(context);
     const store = createTokenStoreForPath(runtime.paths.tokenStore, context);
     const token = await store.getToken(normalizedShop);
 
@@ -230,11 +249,32 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
       return 1;
     }
 
+    if (subcommand === 'orders' && !token.scopes.includes('read_orders')) {
+      throw new Error(`Stored OAuth token for ${normalizedShop} is missing required scope: read_orders.`);
+    }
+
     const adminClient = createShopifyAdminGraphqlClient({
       apiVersion: runtime.mergedEnv.SHOPIFY_HERMES_API_VERSION ?? DEFAULT_SHOPIFY_HERMES_API_VERSION,
       fetch: context.fetch,
     });
-    const report = await generateProductsReport({
+
+    if (subcommand === 'products') {
+      const report = await generateProductsReport({
+        client: {
+          query: (query, variables) => adminClient.query({
+            shop: normalizedShop,
+            accessToken: token.accessToken,
+            query,
+            variables,
+          }),
+        },
+      });
+
+      context.stdout(formatProductsReport(report, parsedFormat));
+      return 0;
+    }
+
+    const report = await generateOrdersReport({
       client: {
         query: (query, variables) => adminClient.query({
           shop: normalizedShop,
@@ -243,12 +283,32 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
           variables,
         }),
       },
+      window: ordersWindowInput ?? {},
     });
 
-    context.stdout(formatProductsReport(report, parsedFormat));
+    await context.appendAuditEvent(runtime.paths.auditLog, {
+      action: 'report.orders',
+      shop: normalizedShop,
+      result: 'success',
+      metadata: { format: parsedFormat, from: report.window.from, to: report.window.to, orderCount: report.orders.length },
+    });
+    context.stdout(formatOrdersReport(report, parsedFormat));
     return 0;
   } catch (error) {
-    context.stderr(error instanceof Error ? redactSensitiveErrorMessage(error.message) : 'Could not generate products report.');
+    const message = error instanceof Error ? redactSensitiveErrorMessage(error.message) : `Could not generate ${subcommand} report.`;
+    if (subcommand === 'orders') {
+      try {
+        await context.appendAuditEvent(runtime.paths.auditLog, {
+          action: 'report.orders',
+          shop: normalizedShop,
+          result: 'failure',
+          metadata: { reason: message },
+        });
+      } catch {
+        // Preserve the original report error; audit logging must not expose or mask it.
+      }
+    }
+    context.stderr(message);
     return 1;
   }
 }
@@ -429,9 +489,11 @@ function usage(): string {
 function reportUsage(): string {
   return [
     'Usage: shopify-hermes-oauth report products <shop> [--format markdown|json|csv]',
+    '       shopify-hermes-oauth report orders <shop> (--since 30d | --from YYYY-MM-DD --to YYYY-MM-DD) [--format markdown|json|csv]',
     '',
     'Commands:',
     '  report products <shop>  Generate a read-only products report. Defaults to markdown.',
+    '  report orders <shop>    Generate a read-only orders report. Defaults to markdown.',
   ].join('\n');
 }
 
@@ -456,6 +518,40 @@ function parseReportFormat(args: readonly string[]): ProductsReportFormat | unde
   }
 
   return format;
+}
+
+function parseOrdersReportArgs(args: readonly string[]): OrdersReportWindowInput | undefined {
+  const window: { since?: string; from?: string; to?: string } = {};
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === '--format') {
+      index += 1;
+      continue;
+    }
+
+    if (arg === '--since' || arg === '--from' || arg === '--to') {
+      const value = args[index + 1];
+      if (!isPresent(value) || value.startsWith('--')) {
+        return undefined;
+      }
+
+      if (arg === '--since') {
+        window.since = value;
+      } else if (arg === '--from') {
+        window.from = value;
+      } else {
+        window.to = value;
+      }
+      index += 1;
+      continue;
+    }
+
+    return undefined;
+  }
+
+  return window;
 }
 
 function shopsUsage(): string {

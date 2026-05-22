@@ -634,6 +634,118 @@ describe('CLI report products', () => {
   });
 });
 
+describe('CLI report orders', () => {
+  it('prints an orders report for --since without exposing tokens and audits success', async () => {
+    const accessToken = 'shpat_never_print_me';
+    const audits: unknown[] = [];
+    const requests: unknown[] = [];
+    const harness = createHarness({
+      fetch: (_url, init) => {
+        const body = typeof init?.body === 'string' ? init.body : '';
+        requests.push(JSON.parse(body) as unknown);
+        return Promise.resolve(new Response(JSON.stringify({
+          data: {
+            orders: {
+              edges: [{ cursor: 'cursor-1', node: cliOrderNode() }],
+              pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+            },
+          },
+        }), { headers: { 'content-type': 'application/json' } }));
+      },
+      appendAuditEvent: (_path, event) => {
+        audits.push(event);
+      },
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken,
+          scopes: ['read_orders', 'read_customers'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['report', 'orders', 'example', '--since', '30d', '--format', 'markdown'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('| ID | GID | Name | Created At | Financial Status | Fulfillment Status | Total | Currency | Customer | Email | Line Items |');
+    expect(output).toContain('| 2001 | gid://shopify/Order/2001 | #1001 | 2026-05-20T10:30:00Z | PAID | UNFULFILLED | 42.50 | USD | Ada Lovelace | ada@example.test | 2 items: T-Shirt x2; Mug x1 |');
+    expect(JSON.stringify(requests)).toContain('created_at:>=');
+    expect(JSON.stringify(requests)).toContain('created_at:<=');
+    expect(output).not.toContain(accessToken);
+    expect(JSON.stringify(audits)).not.toContain(accessToken);
+    expect(audits).toEqual([expect.objectContaining({ action: 'report.orders', shop: 'example.myshopify.com', result: 'success' })]);
+  });
+
+  it('supports explicit --from/--to json orders reports and rejects invalid dates before network', async () => {
+    const harness = createHarness({
+      fetch: () => Promise.resolve(new Response(JSON.stringify({
+        data: { orders: { edges: [{ cursor: 'cursor-1', node: cliOrderNode() }], pageInfo: { hasNextPage: false, endCursor: 'cursor-1' } } },
+      }), { headers: { 'content-type': 'application/json' } })),
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'shpat_never_print_me',
+          scopes: ['read_orders'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    await expect(runShopifyHermesOauthCli(['report', 'orders', 'example', '--from', '2026-05-01', '--to', '2026-05-22', '--format', 'json'], harness.deps)).resolves.toBe(0);
+    const parsedOutput: unknown = JSON.parse(harness.stdout.join('\n'));
+    expect(JSON.stringify(parsedOutput)).toContain('"from":"2026-05-01"');
+    expect(JSON.stringify(parsedOutput)).toContain('"to":"2026-05-22"');
+    expect(JSON.stringify(parsedOutput)).toContain('"id":"2001"');
+    expect(JSON.stringify(parsedOutput)).toContain('"name":"#1001"');
+
+    const invalidHarness = createHarness({ fetch: () => Promise.reject(new Error('should not call network')) });
+    await expect(runShopifyHermesOauthCli(['report', 'orders', 'example', '--from', '2026-02-30', '--to', '2026-03-01'], invalidHarness.deps)).resolves.toBe(2);
+    expect(invalidHarness.stderr.join('\n')).toContain('Invalid orders report date: 2026-02-30. Use YYYY-MM-DD.');
+  });
+
+  it('fails before fetching when stored token lacks read_orders and audit logging fails safely', async () => {
+    const accessToken = 'shpat_never_print_me';
+    const harness = createHarness({
+      fetch: () => Promise.reject(new Error('Admin GraphQL should not be called')),
+      appendAuditEvent: () => {
+        throw new Error('audit sink unavailable');
+      },
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken,
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['report', 'orders', 'example', '--since', '30d'], harness.deps);
+    const errorOutput = harness.stderr.join('\n');
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(1);
+    expect(errorOutput).toContain('Stored OAuth token for example.myshopify.com is missing required scope: read_orders.');
+    expect(errorOutput).not.toContain(accessToken);
+    expect(errorOutput).not.toContain('audit sink unavailable');
+    expect(output).not.toContain(accessToken);
+  });
+});
+
 function cliProductNode() {
   return {
     id: 'gid://shopify/Product/1001',
@@ -645,6 +757,22 @@ function cliProductNode() {
     totalInventory: 7,
     variants: {
       edges: [{ node: { title: 'Red / S', sku: 'SKU-RED-S', inventoryQuantity: 7 } }],
+    },
+  };
+}
+
+function cliOrderNode() {
+  return {
+    id: 'gid://shopify/Order/2001',
+    name: '#1001',
+    createdAt: '2026-05-20T10:30:00Z',
+    displayFinancialStatus: 'PAID',
+    displayFulfillmentStatus: 'UNFULFILLED',
+    totalPriceSet: { shopMoney: { amount: '42.50', currencyCode: 'USD' } },
+    customer: { displayName: 'Ada Lovelace', email: 'ada@example.test' },
+    lineItems: {
+      edges: [{ node: { title: 'T-Shirt', quantity: 2 } }, { node: { title: 'Mug', quantity: 1 } }],
+      pageInfo: { hasNextPage: false },
     },
   };
 }
