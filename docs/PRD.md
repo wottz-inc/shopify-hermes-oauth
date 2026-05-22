@@ -17,14 +17,14 @@ The existing Nous/Hermes `shopify` skill is still useful for direct GraphQL/curl
 2. **Minimal human setup:** reduce setup to the unavoidable Shopify steps: creating/choosing a Shopify app, providing client credentials, setting a callback URL, and approving store installation. Automate everything else.
 3. **Safe default:** read-only by default; no raw write-capable Admin GraphQL exposed to agents.
 4. **Multi-store ready:** support OAuth installs for multiple `<shop>.myshopify.com` stores.
-5. **Simple dependency story:** no required Infisical, Vault, Pendragon infra, Forgejo, Tailscale, or hosted service. Use local Hermes storage by default.
-6. **Extensible:** keep token store, audit sink, and secret provider interfaces pluggable so teams can add Infisical/Vault/cloud secret stores later.
+5. **Simple dependency story:** no required private infrastructure, network overlays, hosted forge, hosted service, or third-party secret manager. Use local Hermes storage by default.
+6. **Extensible:** keep token store, audit sink, and secret provider interfaces pluggable so teams can add external secret stores later.
 7. **Upstreamable:** include a Hermes skill suitable for contribution to Nous Research as a companion to the direct-token `shopify` skill.
 
 ## 3. Non-goals for v0.1
 
 - No hosted SaaS service operated by Wottz.
-- No mandatory Infisical/Vault/SOPS integration.
+- No mandatory external secret-manager integration.
 - No refunds, cancellations, fulfilment changes, customer exports, theme edits, or product writes.
 - No generic `shopify.raw_graphql` MCP tool.
 - No built-in scheduler; Hermes cron should schedule CLI/MCP operations.
@@ -43,7 +43,7 @@ npm install -g @wottz/shopify-hermes-oauth
 shopify-hermes-oauth init
 shopify-hermes-oauth hermes install
 shopify-hermes-oauth dev --tunnel
-shopify-hermes-oauth install-url --shop example.myshopify.com
+# Open <public-app-url>/auth/start?shop=example.myshopify.com after configuring Shopify app URLs.
 shopify-hermes-oauth shops verify example.myshopify.com
 ```
 
@@ -149,15 +149,15 @@ The skill should say:
 
 Some human setup is unavoidable because Shopify requires app ownership and store approval. The product must minimise everything else.
 
-### 6.1 Setup wizard
+### 6.1 Setup initializer
 
 `shopify-hermes-oauth init` should:
 
 1. Detect `HERMES_HOME` and `.env`.
 2. Check Node version, Hermes CLI availability, and optional `cloudflared`/`ngrok` availability.
-3. Prompt for Shopify app client ID/secret and scopes if missing.
-4. Write values to `$HERMES_HOME/.env` without printing them.
-5. Create data directory and safe storage files.
+3. Create Hermes-local configuration/data directories.
+4. Write missing `$HERMES_HOME/.env` keys from current environment values or safe placeholders without printing secrets; it is not an interactive prompt.
+5. Initialize safe storage paths/files where applicable.
 6. Offer to configure Hermes MCP via `shopify-hermes-oauth hermes install`.
 7. Print next steps for creating/updating the Shopify app callback URL.
 
@@ -168,7 +168,7 @@ Some human setup is unavoidable because Shopify requires app ownership and store
 - if `cloudflared` is installed, create a temporary tunnel to `http://127.0.0.1:3456`, extract its public HTTPS URL, then start the local callback server with `--app-url <public-url>`;
 - otherwise detect `ngrok` if installed, create a temporary tunnel to `http://127.0.0.1:3456`, extract its public HTTPS URL, then start the local callback server with `--app-url <public-url>`;
 - fail safely without starting the local callback server if an installed tunnel tool exits or does not print a public HTTPS URL during startup;
-- otherwise print manual tunnel instructions and the `serve --app-url <your-public-https-url>` command without claiming local-only OAuth is ready;
+- otherwise print manual tunnel instructions and the `shopify-hermes-oauth serve --host 127.0.0.1 --port 3456 --app-url <your-public-https-url>` command without claiming local-only OAuth is ready;
 - print the exact Shopify app URLs to set:
 
 ```text
@@ -226,8 +226,7 @@ Default implementations:
 Optional future implementations:
 
 - SQLite token store;
-- Infisical token store;
-- Vault/SOPS token store;
+- external secret-manager token store;
 - remote audit sink.
 
 ## 8. CLI specification
@@ -244,8 +243,9 @@ shopify-hermes-oauth serve --host 127.0.0.1 --port 3456
 
 ### 8.2 OAuth/install commands
 
+After `shopify-hermes-oauth dev --tunnel` or `shopify-hermes-oauth serve --host 127.0.0.1 --port 3456 --app-url <public-https-url>` is running and Shopify app URLs are configured, approve an install by opening `<public-app-url>/auth/start?shop=example.myshopify.com`.
+
 ```bash
-shopify-hermes-oauth install-url --shop example.myshopify.com
 shopify-hermes-oauth shops list
 shopify-hermes-oauth shops verify example.myshopify.com
 shopify-hermes-oauth shops remove example.myshopify.com
@@ -444,7 +444,7 @@ v0.1 is complete when:
 9. MCP server exposes only the approved read-only tools.
 10. Hermes skill exists and documents safe usage.
 11. Docs explain unavoidable Shopify manual steps and the minimal setup path.
-12. No Pendragon/Infisical/Forgejo/Tailscale dependencies remain.
+12. No private infrastructure, hosted forge, network-overlay, or third-party secret-manager dependencies remain.
 
 ## 17. Milestones
 

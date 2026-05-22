@@ -31,5 +31,5 @@ If neither tunnel tool is installed, it does not start a misleading local-only O
 - Hermes-native: uses `HERMES_HOME`, `~/.hermes/.env`, `hermes mcp add`, and an optional Hermes skill.
 - Minimal human setup: automate everything except unavoidable Shopify app creation/callback approval/store install approval.
 - Read-only by default.
-- No required Infisical, Vault, Pendragon infrastructure, Forgejo, or hosted Wottz service.
+- No required private infrastructure, hosted forge, hosted service, or third-party secret manager.
 - No raw write-capable Shopify Admin GraphQL exposed to agents.

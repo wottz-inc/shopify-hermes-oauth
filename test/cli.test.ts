@@ -106,6 +106,12 @@ async function closeServer(server: Server | undefined): Promise<void> {
   });
 }
 
+function expectNoOldStandaloneMcpAliases(markdown: string): void {
+  for (const alias of ['shops_list', 'shops_verify', 'report_products', 'report_orders', 'report_inventory']) {
+    expect(markdown).not.toMatch(new RegExp(`(^|[^.\\w])${alias}([^.\\w]|$)`, 'u'));
+  }
+}
+
 describe('CLI dev tunnel', () => {
   it('starts cloudflared before serve and passes the public app URL to serve', async () => {
     const harness = createHarness({
@@ -617,7 +623,34 @@ describe('CLI hermes install', () => {
     }]);
     expect(harness.madeDirs).toContain('/tmp/hermes/skills/productivity/shopify-hermes-oauth');
     expect(skill).toContain('shopify-hermes-oauth');
+    expect(skill).toContain('Prefer the direct-token `shopify` skill');
+    expect(skill).toContain('For durable access, multiple stores, scheduled reports, or avoiding pasted per-store tokens, use this OAuth connector.');
+    expect(skill).toContain('Do not ask users to paste Shopify access tokens into chat.');
+    expect(skill).toContain('writes missing `.env` keys from current environment values or safe placeholders without printing secrets');
+    expect(skill).toContain('it is not an interactive prompt');
+    expect(skill).toContain('shopify-hermes-oauth init');
+    expect(skill).toContain('shopify-hermes-oauth doctor');
+    expect(skill).toContain('shopify-hermes-oauth hermes install');
+    expect(skill).toContain('shopify-hermes-oauth dev --tunnel');
     expect(skill).toContain('shops verify');
+    expect(skill).toContain('shopify.list_shops');
+    expect(skill).toContain('shopify.verify_shop');
+    expect(skill).toContain('shopify.report_products');
+    expect(skill).toContain('shopify.report_orders');
+    expect(skill).toContain('shopify.report_inventory');
+    expect(skill).toContain('shopify-hermes-oauth serve --host 127.0.0.1 --port 3456 --app-url <public-https-url>');
+    expect(skill).toContain('/auth/start?shop=<shop>.myshopify.com');
+    expect(skill).toContain('shopify-hermes-oauth report products <shop> --format markdown');
+    expect(skill).toContain('shopify-hermes-oauth report orders <shop> --since 30d --format markdown');
+    expect(skill).toContain('shopify-hermes-oauth report inventory <shop> --format markdown');
+    expect(skill).toContain('Project docs: `README.md`, `docs/PRD.md`, `docs/shopify-app-setup.md`');
+    expect(skill).not.toContain('shopify-hermes-oauth install-url');
+    expect(skill).not.toContain('shopify-hermes-oauth serve --app-url <public-https-url>');
+    expect(skill).not.toContain('prompts for Shopify app credentials');
+    expectNoOldStandaloneMcpAliases(skill);
+    expect(skill).not.toMatch(/Pendragon|Infisical|Forgejo|Tailscale/i);
+    expect(skill).not.toMatch(/shpat_[a-z0-9_]+/i);
+    expect(skill).not.toMatch(/CLIENT_SECRET\s*=\s*[^\s<]/i);
     expect(skill).not.toContain('super-secret-value');
     expect(output).toContain('Configured Hermes MCP server: shopify-hermes-oauth.');
     expect(output).toContain('Installed local Hermes skill: /tmp/hermes/skills/productivity/shopify-hermes-oauth/SKILL.md');
