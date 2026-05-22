@@ -232,7 +232,7 @@ describe('CLI init', () => {
     const exitCode = await runShopifyHermesOauthCli(['wat'], harness.deps);
 
     expect(exitCode).toBe(2);
-    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|shops>');
+    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|shops|report>');
   });
 });
 
@@ -548,3 +548,103 @@ describe('CLI shops', () => {
     expect(unknownHarness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth shops <list|remove|verify>');
   });
 });
+
+describe('CLI report products', () => {
+  it('prints a markdown products report for an installed shop without exposing tokens', async () => {
+    const accessToken = 'shpat_never_print_me';
+    const harness = createHarness({
+      fetch: () => Promise.resolve(new Response(JSON.stringify({
+        data: {
+          products: {
+            edges: [{ cursor: 'cursor-1', node: cliProductNode() }],
+            pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+          },
+        },
+      }), { headers: { 'content-type': 'application/json' } })),
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken,
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['report', 'products', 'example', '--format', 'markdown'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('| ID | GID | Title | Handle | Status | Vendor | Type | Inventory | Variants |');
+    expect(output).toContain('| 1001 | gid://shopify/Product/1001 | A Shirt | a-shirt | ACTIVE | Example Vendor | Apparel | 7 | 1 variant: Red / S (sku=SKU-RED-S, inventory=7) |');
+    expect(output).not.toContain(accessToken);
+  });
+
+  it('prints json and csv products reports and validates format safely', async () => {
+    const harness = createHarness({
+      fetch: () => Promise.resolve(new Response(JSON.stringify({
+        data: {
+          products: {
+            edges: [{ cursor: 'cursor-1', node: cliProductNode() }],
+            pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+          },
+        },
+      }), { headers: { 'content-type': 'application/json' } })),
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'shpat_never_print_me',
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    await expect(runShopifyHermesOauthCli(['report', 'products', 'example', '--format', 'json'], harness.deps)).resolves.toBe(0);
+    expect(JSON.parse(harness.stdout.join('\n'))).toEqual({ products: [expect.objectContaining({ id: '1001', title: 'A Shirt' })] });
+
+    harness.stdout.length = 0;
+    await expect(runShopifyHermesOauthCli(['report', 'products', 'example', '--format', 'csv'], harness.deps)).resolves.toBe(0);
+    expect(harness.stdout.join('\n')).toContain('id,gid,title,handle,status,vendor,productType,totalInventory,variantsSummary');
+    expect(harness.stdout.join('\n')).toContain('"1001","gid://shopify/Product/1001","A Shirt"');
+
+    const invalidHarness = createHarness();
+    await expect(runShopifyHermesOauthCli(['report', 'products', 'example', '--format', 'xml'], invalidHarness.deps)).resolves.toBe(2);
+    expect(invalidHarness.stderr.join('\n')).toContain('Invalid report format. Use markdown, json, or csv.');
+  });
+
+  it('fails safely when products report has no stored token', async () => {
+    const harness = createHarness({
+      fetch: () => Promise.reject(new Error('Admin GraphQL should not be called')),
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['report', 'products', 'missing'], harness.deps);
+
+    expect(exitCode).toBe(1);
+    expect(harness.stderr.join('\n')).toContain('No stored OAuth token found for missing.myshopify.com.');
+    expect(harness.stderr.join('\n')).not.toContain('shpat_');
+  });
+});
+
+function cliProductNode() {
+  return {
+    id: 'gid://shopify/Product/1001',
+    title: 'A Shirt',
+    handle: 'a-shirt',
+    status: 'ACTIVE',
+    vendor: 'Example Vendor',
+    productType: 'Apparel',
+    totalInventory: 7,
+    variants: {
+      edges: [{ node: { title: 'Red / S', sku: 'SKU-RED-S', inventoryQuantity: 7 } }],
+    },
+  };
+}

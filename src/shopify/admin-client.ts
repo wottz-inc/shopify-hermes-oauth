@@ -12,6 +12,15 @@ export interface ShopifyAdminClient {
   getShopMetadata(input: AdminShopMetadataInput): Promise<AdminShopMetadata>;
 }
 
+export interface ShopifyAdminQueryClient {
+  query<T>(input: AdminGraphqlQueryInput): Promise<T>;
+}
+
+export interface AdminGraphqlQueryInput extends AdminShopMetadataInput {
+  readonly query: string;
+  readonly variables?: unknown;
+}
+
 export interface AdminShopMetadataInput {
   readonly shop: string;
   readonly accessToken: string;
@@ -40,50 +49,59 @@ export class ShopifyAdminGraphqlError extends Error {
   }
 }
 
-export function createShopifyAdminGraphqlClient(options: ShopifyAdminGraphqlClientOptions): ShopifyAdminClient {
+export function createShopifyAdminGraphqlClient(options: ShopifyAdminGraphqlClientOptions): ShopifyAdminClient & ShopifyAdminQueryClient {
   const fetchImplementation = options.fetch ?? globalThis.fetch;
 
   return {
-    async getShopMetadata(input) {
-      const shop = normalizeTokenStoreShopDomain(input.shop);
-      const url = `https://${shop}/admin/api/${encodeURIComponent(options.apiVersion)}/graphql.json`;
-      let response: Response;
-
-      try {
-        response = await fetchImplementation(url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-shopify-access-token': input.accessToken,
-          },
-          body: JSON.stringify({ query: SHOP_METADATA_QUERY }),
-        });
-      } catch (error) {
-        throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL request failed: ${redactError(error)}`);
-      }
-
-      let body: unknown;
-      const bodyText = await response.text();
-
-      try {
-        body = bodyText.length === 0 ? {} : JSON.parse(bodyText);
-      } catch {
-        throw new ShopifyAdminGraphqlError('Shopify Admin GraphQL response was not valid JSON.');
-      }
-
-      if (!response.ok) {
-        throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL HTTP ${response.status.toString(10)}: ${redactHttpBody(body, bodyText)}`);
-      }
-
-      const graphqlResponse = body as GraphqlResponse;
-
-      if (graphqlResponse.errors !== undefined) {
-        throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL returned errors: ${redactGraphqlErrors(graphqlResponse.errors)}`);
-      }
-
+    async query<T>(input: AdminGraphqlQueryInput) {
+      return postGraphql<T>(fetchImplementation, options.apiVersion, input);
+    },
+    async getShopMetadata(input: AdminShopMetadataInput) {
+      const graphqlResponse = await postGraphql<GraphqlResponse>(fetchImplementation, options.apiVersion, {
+        ...input,
+        query: SHOP_METADATA_QUERY,
+      });
       return parseShopMetadata(graphqlResponse);
     },
   };
+}
+
+async function postGraphql<T>(fetchImplementation: typeof globalThis.fetch, apiVersion: string, input: AdminGraphqlQueryInput): Promise<T> {
+  const shop = normalizeTokenStoreShopDomain(input.shop);
+  const url = `https://${shop}/admin/api/${encodeURIComponent(apiVersion)}/graphql.json`;
+  let response: Response;
+
+  try {
+    response = await fetchImplementation(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-shopify-access-token': input.accessToken,
+      },
+      body: JSON.stringify(input.variables === undefined ? { query: input.query } : { query: input.query, variables: input.variables }),
+    });
+  } catch (error) {
+    throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL request failed: ${redactError(error)}`);
+  }
+
+  let body: unknown;
+  const bodyText = await response.text();
+
+  try {
+    body = bodyText.length === 0 ? {} : JSON.parse(bodyText);
+  } catch {
+    throw new ShopifyAdminGraphqlError('Shopify Admin GraphQL response was not valid JSON.');
+  }
+
+  if (!response.ok) {
+    throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL HTTP ${response.status.toString(10)}: ${redactHttpBody(body, bodyText)}`);
+  }
+
+  if (isRecord(body) && body.errors !== undefined) {
+    throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL returned errors: ${redactGraphqlErrors(body.errors)}`);
+  }
+
+  return body as T;
 }
 
 export function redactSensitiveText(text: string): string {

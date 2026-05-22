@@ -55,7 +55,23 @@ export type {
   AdminShopMetadataInput,
   ShopifyAdminClient,
   ShopifyAdminGraphqlClientOptions,
+  ShopifyAdminQueryClient,
 } from './shopify/admin-client.js';
+
+export {
+  PRODUCTS_REPORT_QUERY,
+  ProductsReportError,
+  formatProductsReport,
+  generateProductsReport,
+} from './reports/products.js';
+export type {
+  ProductReportItem,
+  ProductsReport,
+  ProductsReportFormat,
+  ProductsReportGraphqlClient,
+  ProductsReportOptions,
+  ProductsReportVariables,
+} from './reports/products.js';
 
 export { ShopVerificationError, verifyShop } from './shops/verify.js';
 export type { VerifyShopOptions, VerifyShopResult } from './shops/verify.js';

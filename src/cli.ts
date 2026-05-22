@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { resolveShopifyHermesPaths } from './hermes-home.js';
-import { createShopifyAdminGraphqlClient } from './shopify/admin-client.js';
+import { formatProductsReport, generateProductsReport, type ProductsReportFormat } from './reports/products.js';
+import { createShopifyAdminGraphqlClient, redactSensitiveErrorMessage } from './shopify/admin-client.js';
 import { verifyShop, type VerifyShopResult } from './shops/verify.js';
 import { LocalJsonTokenStore, normalizeTokenStoreShopDomain, type StoredShopToken } from './tokens/local-token-store.js';
 
@@ -87,6 +88,10 @@ export async function runShopifyHermesOauthCli(
 
   if (command === 'shops') {
     return runShops(args.slice(1), context);
+  }
+
+  if (command === 'report') {
+    return runReport(args.slice(1), context);
   }
 
   context.stderr(usage());
@@ -182,6 +187,70 @@ async function runShops(args: readonly string[], context: CliContext): Promise<n
 
   context.stderr(shopsUsage());
   return 2;
+}
+
+async function runReport(args: readonly string[], context: CliContext): Promise<number> {
+  const subcommand = args[0];
+
+  if (subcommand !== 'products') {
+    context.stderr(reportUsage());
+    return 2;
+  }
+
+  const shop = args[1];
+
+  if (!isPresent(shop)) {
+    context.stderr(reportUsage());
+    return 2;
+  }
+
+  const parsedFormat = parseReportFormat(args.slice(2));
+
+  if (parsedFormat === undefined) {
+    context.stderr('Invalid report format. Use markdown, json, or csv.');
+    return 2;
+  }
+
+  let normalizedShop: string;
+
+  try {
+    normalizedShop = normalizeTokenStoreShopDomain(shop);
+  } catch {
+    context.stderr('Invalid Shopify shop domain.');
+    return 2;
+  }
+
+  try {
+    const runtime = await resolveRuntimeConfiguration(context);
+    const store = createTokenStoreForPath(runtime.paths.tokenStore, context);
+    const token = await store.getToken(normalizedShop);
+
+    if (token === undefined) {
+      context.stderr(`No stored OAuth token found for ${normalizedShop}.`);
+      return 1;
+    }
+
+    const adminClient = createShopifyAdminGraphqlClient({
+      apiVersion: runtime.mergedEnv.SHOPIFY_HERMES_API_VERSION ?? DEFAULT_SHOPIFY_HERMES_API_VERSION,
+      fetch: context.fetch,
+    });
+    const report = await generateProductsReport({
+      client: {
+        query: (query, variables) => adminClient.query({
+          shop: normalizedShop,
+          accessToken: token.accessToken,
+          query,
+          variables,
+        }),
+      },
+    });
+
+    context.stdout(formatProductsReport(report, parsedFormat));
+    return 0;
+  } catch (error) {
+    context.stderr(error instanceof Error ? redactSensitiveErrorMessage(error.message) : 'Could not generate products report.');
+    return 1;
+  }
 }
 
 async function runDoctor(context: CliContext): Promise<number> {
@@ -347,13 +416,46 @@ function createCliContext(dependencies: CliDependencies): CliContext {
 
 function usage(): string {
   return [
-    'Usage: shopify-hermes-oauth <doctor|init|shops>',
+    'Usage: shopify-hermes-oauth <doctor|init|shops|report>',
     '',
     'Commands:',
     '  doctor  Check Node, Hermes CLI, tunnel tools, paths, and required Shopify config.',
     '  init    Create the data directory and append missing SHOPIFY_HERMES_* .env keys.',
     '  shops   List or remove locally stored shop OAuth tokens (never prints token values).',
+    '  report  Generate read-only Shopify reports.',
   ].join('\n');
+}
+
+function reportUsage(): string {
+  return [
+    'Usage: shopify-hermes-oauth report products <shop> [--format markdown|json|csv]',
+    '',
+    'Commands:',
+    '  report products <shop>  Generate a read-only products report. Defaults to markdown.',
+  ].join('\n');
+}
+
+function parseReportFormat(args: readonly string[]): ProductsReportFormat | undefined {
+  let format: ProductsReportFormat = 'markdown';
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg !== '--format') {
+      return undefined;
+    }
+
+    const value = args[index + 1];
+
+    if (value !== 'markdown' && value !== 'json' && value !== 'csv') {
+      return undefined;
+    }
+
+    format = value;
+    index += 1;
+  }
+
+  return format;
 }
 
 function shopsUsage(): string {
