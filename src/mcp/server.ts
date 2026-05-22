@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline';
 import { stdin as processStdin, stdout as processStdout } from 'node:process';
 import { type Readable, type Writable } from 'node:stream';
 
+import { type AuditEventInput } from '../audit.js';
 import { type ProductsReportFormat } from '../reports/products.js';
 import { type VerifyShopResult } from '../shops/verify.js';
 import { type StoredShopToken, type TokenStore } from '../tokens/local-token-store.js';
@@ -43,6 +44,7 @@ export interface McpServerDependencies {
   readonly reportProducts: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly reportOrders: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly reportInventory: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly appendAuditEvent?: (event: AuditEventInput) => Promise<void> | void;
 }
 
 export interface McpShopSummary {
@@ -109,36 +111,111 @@ export function listTools(): readonly McpToolDefinition[] {
 }
 
 export async function callTool(name: string, args: unknown, deps: McpServerDependencies): Promise<unknown> {
+  const auditEvent = (result: 'success' | 'failure', reason?: string): AuditEventInput => ({
+    action: 'mcp.tool',
+    ...readAuditShop(args),
+    result,
+    metadata: buildMcpAuditMetadata(name, args, reason),
+  });
+
   if (!ALLOWED_TOOL_NAMES.has(name)) {
-    throw new McpToolError();
+    const error = new McpToolError();
+    await appendMcpAuditEventBestEffort(deps, auditEvent('failure', error.message));
+    throw error;
   }
 
   try {
+    let result: unknown;
     switch (name) {
       case 'shopify.list_shops':
         validateExactArgs(args, []);
-        return await listShops(deps.tokenStore);
+        result = await listShops(deps.tokenStore);
+        break;
       case 'shopify.verify_shop':
         validateExactArgs(args, ['shop']);
-        return sanitizeToolOutput(await deps.verifyShop({ shop: readRequiredString(args, 'shop') }));
+        result = sanitizeToolOutput(await deps.verifyShop({ shop: readRequiredString(args, 'shop') }));
+        break;
       case 'shopify.report_products':
         validateExactArgs(args, ['shop', 'format']);
-        return sanitizeToolOutput(await deps.reportProducts(readReportArgs(args)));
+        result = sanitizeToolOutput(await deps.reportProducts(readReportArgs(args)));
+        break;
       case 'shopify.report_orders':
         validateExactArgs(args, ['shop', 'format', 'since', 'from', 'to']);
-        return sanitizeToolOutput(await deps.reportOrders(readReportArgs(args)));
+        result = sanitizeToolOutput(await deps.reportOrders(readReportArgs(args)));
+        break;
       case 'shopify.report_inventory':
         validateExactArgs(args, ['shop', 'format', 'lowStockThreshold']);
-        return sanitizeToolOutput(await deps.reportInventory(readReportArgs(args)));
+        result = sanitizeToolOutput(await deps.reportInventory(readReportArgs(args)));
+        break;
       default:
         throw new McpToolError();
     }
+    await appendMcpAuditEventBestEffort(deps, auditEvent('success'));
+    return result;
   } catch (error) {
     if (error instanceof McpToolError) {
+      await appendMcpAuditEventBestEffort(deps, auditEvent('failure', error.message));
       throw error;
     }
+    await appendMcpAuditEventBestEffort(deps, auditEvent('failure', 'Tool call failed.'));
     throw new McpToolError('Tool call failed.');
   }
+}
+
+async function appendMcpAuditEventBestEffort(deps: McpServerDependencies, event: AuditEventInput): Promise<void> {
+  try {
+    await deps.appendAuditEvent?.(event);
+  } catch {
+    // MCP audit logging must never mask tool results or the original tool error.
+  }
+}
+
+function buildMcpAuditMetadata(name: string, args: unknown, reason?: string): Record<string, unknown> {
+  return {
+    source: 'mcp',
+    actor: 'mcp',
+    mode: 'read-only',
+    toolName: sanitizeAuditString(name),
+    ...(isReportToolName(name) ? readAuditFormat(args) : {}),
+    ...(name === 'shopify.report_inventory' ? readAuditThreshold(args) : {}),
+    ...(reason === undefined ? {} : { reason: sanitizeAuditString(reason) }),
+  };
+}
+
+function isReportToolName(name: string): boolean {
+  return name === 'shopify.report_products' || name === 'shopify.report_orders' || name === 'shopify.report_inventory';
+}
+
+function readAuditShop(args: unknown): { readonly shop?: string } {
+  if (!isRecord(args) || typeof args.shop !== 'string') {
+    return {};
+  }
+
+  const shop = args.shop.trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/u.test(shop) ? { shop } : {};
+}
+
+function readAuditFormat(args: unknown): { readonly format?: ProductsReportFormat } {
+  if (!isRecord(args)) {
+    return {};
+  }
+  if (args.format === 'json' || args.format === 'csv' || args.format === 'markdown') {
+    return { format: args.format };
+  }
+  return Object.hasOwn(args, 'shop') ? { format: 'markdown' } : {};
+}
+
+function readAuditThreshold(args: unknown): { readonly threshold?: number } {
+  return isRecord(args) && Number.isInteger(args.lowStockThreshold) ? { threshold: args.lowStockThreshold as number } : {};
+}
+
+function sanitizeAuditString(value: string): string {
+  return value
+    .replace(/X-Shopify-Access-Token/giu, '[REDACTED]')
+    .replace(/shpat_[A-Za-z0-9_-]+/gu, '[REDACTED]')
+    .replace(/access_token\s*[=:]\s*[^\s,;]+/giu, 'access_token=[REDACTED]')
+    .replace(/[\r\n\t]/gu, ' ')
+    .slice(0, 200);
 }
 
 export async function startStdioMcpServer(

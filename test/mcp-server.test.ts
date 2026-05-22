@@ -91,7 +91,9 @@ describe('curated MCP server', () => {
   });
 
   it('lists shops as metadata only and never returns token material', async () => {
-    const result = await callTool('shopify.list_shops', {}, createDeps());
+    const auditEvents: unknown[] = [];
+    const deps = { ...createDeps(), appendAuditEvent: (event: unknown) => { auditEvents.push(event); } };
+    const result = await callTool('shopify.list_shops', {}, deps);
     const serialized = JSON.stringify(result);
 
     expect(result).toEqual({
@@ -110,6 +112,140 @@ describe('curated MCP server', () => {
     expect(serialized).not.toContain('authorization');
     expect(serialized).not.toContain('metadata-token-must-not-leak');
     expect(serialized).not.toContain('metadata-bearer-must-not-leak');
+    expect(auditEvents).toEqual([{
+      action: 'mcp.tool',
+      result: 'success',
+      metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.list_shops' },
+    }]);
+    expect(JSON.stringify(auditEvents)).not.toContain('shpat_never-print-me');
+  });
+
+  it('audits every public allowlisted MCP tool at least once with safe metadata', async () => {
+    const auditEvents: unknown[] = [];
+    const deps = { ...createDeps(), appendAuditEvent: (event: unknown) => { auditEvents.push(event); } };
+
+    await expect(callTool('shopify.list_shops', {}, deps)).resolves.toMatchObject({ shops: [{ shop: 'alpha.myshopify.com' }] });
+    await expect(callTool('shopify.verify_shop', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com' });
+    await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', format: 'json' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', format: 'json' });
+    await expect(callTool('shopify.report_orders', { shop: 'alpha.myshopify.com', since: '30d' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', format: 'markdown' });
+    await expect(callTool('shopify.report_inventory', { shop: 'alpha.myshopify.com', lowStockThreshold: 7 }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      lowStockThreshold: 7,
+    });
+
+    expect(auditEvents).toEqual([
+      {
+        action: 'mcp.tool',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.list_shops' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.verify_shop' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'json' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_orders', format: 'markdown' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_inventory', format: 'markdown', threshold: 7 },
+      },
+    ]);
+    expect(JSON.stringify(auditEvents)).not.toContain('SKU');
+    expect(JSON.stringify(auditEvents)).not.toContain('inventoryItem');
+    expect(JSON.stringify(auditEvents)).not.toContain('shpat_never-print-me');
+  });
+
+  it('does not let MCP success audit failures mask tool results', async () => {
+    const deps = {
+      ...createDeps(),
+      appendAuditEvent: () => {
+        throw new Error('audit sink unavailable');
+      },
+    };
+
+    await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', format: 'json' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      format: 'json',
+    });
+  });
+
+  it('audits MCP tool failures without leaking dependency error details or arguments with secrets', async () => {
+    const auditEvents: unknown[] = [];
+    const deps = {
+      ...createDeps(),
+      appendAuditEvent: (event: unknown) => { auditEvents.push(event); },
+      reportProducts: () => {
+        throw new Error('upstream failed with X-Shopify-Access-Token: shpat_never-print-me');
+      },
+    };
+
+    await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', format: 'json' }, deps)).rejects.toThrow('Tool call failed.');
+
+    expect(auditEvents).toEqual([{
+      action: 'mcp.tool',
+      shop: 'alpha.myshopify.com',
+      result: 'failure',
+      metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'json', reason: 'Tool call failed.' },
+    }]);
+    expect(JSON.stringify(auditEvents)).not.toContain('shpat_never-print-me');
+    expect(JSON.stringify(auditEvents)).not.toContain('X-Shopify-Access-Token');
+  });
+
+  it('does not let MCP failure audit failures mask original allowed-tool errors', async () => {
+    const deps = {
+      ...createDeps(),
+      appendAuditEvent: () => {
+        throw new Error('audit sink unavailable');
+      },
+      reportProducts: () => {
+        throw new Error('upstream failed with X-Shopify-Access-Token: shpat_never-print-me');
+      },
+    };
+
+    await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', access_token: 'shpat_secret' }, deps)).rejects.toThrow('Unknown argument: access_token.');
+    await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com' }, deps)).rejects.toThrow('Tool call failed.');
+  });
+
+  it('audits unknown and write-like MCP tool calls best-effort with safe metadata', async () => {
+    const auditEvents: unknown[] = [];
+    const deps = {
+      ...createDeps(),
+      appendAuditEvent: (event: unknown) => { auditEvents.push(event); },
+    };
+
+    await expect(callTool('shopify.raw_graphql', { shop: 'shpat_secret', query: 'mutation { productDelete { id } }' }, deps)).rejects.toThrow('Tool is not allowed.');
+    await expect(callTool('shopify.delete_shop', { shop: 'alpha.myshopify.com', accessToken: 'shpat_secret' }, deps)).rejects.toThrow('Tool is not allowed.');
+
+    expect(auditEvents).toEqual([
+      {
+        action: 'mcp.tool',
+        result: 'failure',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.raw_graphql', reason: 'Tool is not allowed.' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'failure',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.delete_shop', reason: 'Tool is not allowed.' },
+      },
+    ]);
+    expect(JSON.stringify(auditEvents)).not.toContain('shpat_secret');
+    expect(JSON.stringify(auditEvents)).not.toContain('mutation');
+    expect(JSON.stringify(auditEvents)).not.toContain('accessToken');
   });
 
   it('rejects extra, raw GraphQL, mutation-looking, and unknown arguments per tool', async () => {

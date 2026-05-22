@@ -246,8 +246,55 @@ describe('CLI init', () => {
 });
 
 describe('CLI shops', () => {
+  it('does not let shops list success audit failures mask the successful operation', async () => {
+    const harness = createHarness({
+      appendAuditEvent: () => {
+        throw new Error('audit sink unavailable');
+      },
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'shpat_never_print_me',
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'list'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.stdout.join('\n')).toContain('example.myshopify.com');
+    expect(harness.stderr.join('\n')).not.toContain('audit sink unavailable');
+  });
+
+  it('audits shops list token-store failures best-effort without leaking store details', async () => {
+    const auditEvents: unknown[] = [];
+    const harness = createHarness({
+      appendAuditEvent: (_path, event) => { auditEvents.push(event); },
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', '{not-json-with-shpat_secret');
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'list'], harness.deps);
+
+    expect(exitCode).toBe(1);
+    expect(harness.stderr.join('\n')).toContain('Could not read token store.');
+    expect(harness.stderr.join('\n')).not.toContain('shpat_secret');
+    expect(auditEvents).toEqual([{
+      action: 'shops.list',
+      result: 'failure',
+      metadata: { source: 'cli', actor: 'cli', mode: 'read-only', reason: 'token_store_list_failed' },
+    }]);
+    expect(JSON.stringify(auditEvents)).not.toContain('shpat_secret');
+  });
+
   it('lists shop domains and non-secret metadata without token values', async () => {
-    const harness = createHarness();
+    const auditEvents: unknown[] = [];
+    const harness = createHarness({ appendAuditEvent: (_path, event) => { auditEvents.push(event); } });
     harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
       version: 1,
       shops: {
@@ -272,10 +319,17 @@ describe('CLI shops', () => {
     expect(output).toContain('read_products,read_orders');
     expect(output).toContain('2026-05-22T12:05:00.000Z');
     expect(output).not.toContain('shpat_never_print_me');
+    expect(auditEvents).toEqual([{
+      action: 'shops.list',
+      result: 'success',
+      metadata: { source: 'cli', actor: 'cli', mode: 'read-only', shopCount: 1 },
+    }]);
+    expect(JSON.stringify(auditEvents)).not.toContain('shpat_never_print_me');
   });
 
   it('removes a normalized shop and never prints token values', async () => {
-    const harness = createHarness();
+    const auditEvents: unknown[] = [];
+    const harness = createHarness({ appendAuditEvent: (_path, event) => { auditEvents.push(event); } });
     harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
       version: 1,
       shops: {
@@ -298,6 +352,59 @@ describe('CLI shops', () => {
     expect(output).not.toContain('secret-token-value');
     expect(updated).not.toContain('secret-token-value');
     expect(harness.fileModes.get('/tmp/hermes/shopify-hermes-oauth/tokens.json')).toBe(0o600);
+    expect(auditEvents).toEqual([{
+      action: 'shops.remove',
+      shop: 'example.myshopify.com',
+      result: 'success',
+      metadata: { source: 'cli', actor: 'cli', mode: 'write', removed: true },
+    }]);
+    expect(JSON.stringify(auditEvents)).not.toContain('secret-token-value');
+  });
+
+  it('does not let shops remove success audit failures mask the successful operation', async () => {
+    const harness = createHarness({
+      appendAuditEvent: () => {
+        throw new Error('audit sink unavailable');
+      },
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'secret-token-value',
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'remove', 'example'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.stdout.join('\n')).toContain('Removed example.myshopify.com');
+    expect(harness.stderr.join('\n')).not.toContain('audit sink unavailable');
+  });
+
+  it('audits shops remove token-store failures best-effort without masking the primary failure', async () => {
+    const auditEvents: unknown[] = [];
+    const harness = createHarness({
+      appendAuditEvent: (_path, event) => { auditEvents.push(event); },
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', '{not-json-with-secret-token-value');
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'remove', 'example'], harness.deps);
+
+    expect(exitCode).toBe(1);
+    expect(harness.stderr.join('\n')).toContain('Could not update token store.');
+    expect(auditEvents).toEqual([{
+      action: 'shops.remove',
+      shop: 'example.myshopify.com',
+      result: 'failure',
+      metadata: { source: 'cli', actor: 'cli', mode: 'write', reason: 'token_store_remove_failed' },
+    }]);
+    expect(JSON.stringify(auditEvents)).not.toContain('secret-token-value');
   });
 
   it('respects SHOPIFY_HERMES_DATA_DIR from Hermes .env when listing shops', async () => {
@@ -440,6 +547,9 @@ describe('CLI shops', () => {
       shop: 'example.myshopify.com',
       result: 'success',
       metadata: {
+        source: 'cli',
+        actor: 'cli',
+        mode: 'read-only',
         shopName: 'Example Shop',
         myshopifyDomain: 'example.myshopify.com',
         currencyCode: 'USD',
@@ -466,7 +576,7 @@ describe('CLI shops', () => {
       action: 'shops.verify',
       shop: 'missing.myshopify.com',
       result: 'failure',
-      metadata: { reason: 'missing_oauth_record' },
+      metadata: { source: 'cli', actor: 'cli', mode: 'read-only', reason: 'missing_oauth_record' },
     }]);
   });
 
@@ -559,9 +669,42 @@ describe('CLI shops', () => {
 });
 
 describe('CLI report products', () => {
+  it('does not let products report success audit failures mask successful output', async () => {
+    const harness = createHarness({
+      appendAuditEvent: () => {
+        throw new Error('audit sink unavailable');
+      },
+      fetch: () => Promise.resolve(new Response(JSON.stringify({
+        data: { products: { edges: [{ cursor: 'cursor-1', node: cliProductNode() }], pageInfo: { hasNextPage: false, endCursor: 'cursor-1' } } },
+      }), { headers: { 'content-type': 'application/json' } })),
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'shpat_never_print_me',
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['report', 'products', 'example'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.stdout.join('\n')).toContain('A Shirt');
+    expect(harness.stderr.join('\n')).not.toContain('audit sink unavailable');
+  });
+
   it('prints a markdown products report for an installed shop without exposing tokens', async () => {
     const accessToken = 'shpat_never_print_me';
+    const auditEvents: unknown[] = [];
     const harness = createHarness({
+      appendAuditEvent: (_path, event) => {
+        auditEvents.push(event);
+      },
       fetch: () => Promise.resolve(new Response(JSON.stringify({
         data: {
           products: {
@@ -591,6 +734,13 @@ describe('CLI report products', () => {
     expect(output).toContain('| ID | GID | Title | Handle | Status | Vendor | Type | Inventory | Variants |');
     expect(output).toContain('| 1001 | gid://shopify/Product/1001 | A Shirt | a-shirt | ACTIVE | Example Vendor | Apparel | 7 | 1 variant: Red / S (sku=SKU-RED-S, inventory=7) |');
     expect(output).not.toContain(accessToken);
+    expect(auditEvents).toEqual([{
+      action: 'report.products',
+      shop: 'example.myshopify.com',
+      result: 'success',
+      metadata: { source: 'cli', actor: 'cli', mode: 'read-only', format: 'markdown', productCount: 1 },
+    }]);
+    expect(JSON.stringify(auditEvents)).not.toContain(accessToken);
   });
 
   it('prints json and csv products reports and validates format safely', async () => {
@@ -631,7 +781,11 @@ describe('CLI report products', () => {
   });
 
   it('fails safely when products report has no stored token', async () => {
+    const auditEvents: unknown[] = [];
     const harness = createHarness({
+      appendAuditEvent: (_path, event) => {
+        auditEvents.push(event);
+      },
       fetch: () => Promise.reject(new Error('Admin GraphQL should not be called')),
     });
 
@@ -640,10 +794,83 @@ describe('CLI report products', () => {
     expect(exitCode).toBe(1);
     expect(harness.stderr.join('\n')).toContain('No stored OAuth token found for missing.myshopify.com.');
     expect(harness.stderr.join('\n')).not.toContain('shpat_');
+    expect(auditEvents).toEqual([{
+      action: 'report.products',
+      shop: 'missing.myshopify.com',
+      result: 'failure',
+      metadata: { source: 'cli', actor: 'cli', mode: 'read-only', reason: 'No stored OAuth token found for missing.myshopify.com.' },
+    }]);
+  });
+
+  it('audits redacted product report failures without leaking response secrets', async () => {
+    const accessToken = 'shpat_never_print_me';
+    const responseSecret = 'plain_response_secret';
+    const auditEvents: unknown[] = [];
+    const harness = createHarness({
+      appendAuditEvent: (_path, event) => {
+        auditEvents.push(event);
+      },
+      fetch: () => Promise.resolve(new Response(JSON.stringify({
+        errors: [{ message: `Denied for X-Shopify-Access-Token: ${accessToken}; access_token=${responseSecret}` }],
+      }), { status: 401, headers: { 'content-type': 'application/json' } })),
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken,
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['report', 'products', 'example'], harness.deps);
+    const serializedAudit = JSON.stringify(auditEvents);
+
+    expect(exitCode).toBe(1);
+    expect(harness.stderr.join('\n')).toContain('[REDACTED]');
+    expect(serializedAudit).toContain('[REDACTED]');
+    expect(serializedAudit).toContain('"action":"report.products"');
+    for (const secret of [accessToken, responseSecret, 'X-Shopify-Access-Token']) {
+      expect(harness.stderr.join('\n')).not.toContain(secret);
+      expect(serializedAudit).not.toContain(secret);
+    }
   });
 });
 
 describe('CLI report inventory', () => {
+  it('does not let inventory report success audit failures mask successful output', async () => {
+    const harness = createHarness({
+      appendAuditEvent: () => {
+        throw new Error('audit sink unavailable');
+      },
+      fetch: () => Promise.resolve(new Response(JSON.stringify({
+        data: { products: { edges: [{ cursor: 'cursor-1', node: cliInventoryProductNode() }], pageInfo: { hasNextPage: false, endCursor: 'cursor-1' } } },
+      }), { headers: { 'content-type': 'application/json' } })),
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'shpat_never_print_me',
+          scopes: ['read_products', 'read_inventory'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['report', 'inventory', 'example'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.stdout.join('\n')).toContain('Main Warehouse');
+    expect(harness.stderr.join('\n')).not.toContain('audit sink unavailable');
+  });
+
   it('prints a markdown inventory report for an installed shop without exposing tokens and audits success', async () => {
     const accessToken = 'shpat_never_print_me';
     const audits: unknown[] = [];
@@ -765,6 +992,35 @@ describe('CLI report inventory', () => {
 });
 
 describe('CLI report orders', () => {
+  it('does not let orders report success audit failures mask successful output', async () => {
+    const harness = createHarness({
+      appendAuditEvent: () => {
+        throw new Error('audit sink unavailable');
+      },
+      fetch: () => Promise.resolve(new Response(JSON.stringify({
+        data: { orders: { edges: [{ cursor: 'cursor-1', node: cliOrderNode() }], pageInfo: { hasNextPage: false, endCursor: 'cursor-1' } } },
+      }), { headers: { 'content-type': 'application/json' } })),
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'shpat_never_print_me',
+          scopes: ['read_orders'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['report', 'orders', 'example', '--since', '30d'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.stdout.join('\n')).toContain('#1001');
+    expect(harness.stderr.join('\n')).not.toContain('audit sink unavailable');
+  });
+
   it('prints an orders report for --since without exposing tokens and audits success', async () => {
     const accessToken = 'shpat_never_print_me';
     const audits: unknown[] = [];

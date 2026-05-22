@@ -109,8 +109,27 @@ async function runShops(args: readonly string[], context: CliContext): Promise<n
   const subcommand = args[0];
 
   if (subcommand === 'list') {
-    const store = await createTokenStore(context);
-    const tokens = await store.listTokens();
+    const runtime = await resolveRuntimeConfiguration(context);
+    const store = createTokenStoreForPath(runtime.paths.tokenStore, context);
+    let tokens: readonly StoredShopToken[];
+
+    try {
+      tokens = await store.listTokens();
+    } catch {
+      await appendAuditEventBestEffort(context, runtime.paths.auditLog, {
+        action: 'shops.list',
+        result: 'failure',
+        metadata: auditMetadata({ mode: 'read-only', reason: 'token_store_list_failed' }),
+      });
+      context.stderr('Could not read token store. Check local token storage and try again.');
+      return 1;
+    }
+
+    await appendAuditEventBestEffort(context, runtime.paths.auditLog, {
+      action: 'shops.list',
+      result: 'success',
+      metadata: auditMetadata({ mode: 'read-only', shopCount: tokens.length }),
+    });
 
     if (tokens.length === 0) {
       context.stdout('No shops installed.');
@@ -142,12 +161,27 @@ async function runShops(args: readonly string[], context: CliContext): Promise<n
     }
 
     try {
-      const store = await createTokenStore(context);
+      const runtime = await resolveRuntimeConfiguration(context);
+      const store = createTokenStoreForPath(runtime.paths.tokenStore, context);
       const removed = await store.deleteToken(normalizedShop);
+
+      await appendAuditEventBestEffort(context, runtime.paths.auditLog, {
+        action: 'shops.remove',
+        shop: normalizedShop,
+        result: 'success',
+        metadata: auditMetadata({ mode: 'write', removed }),
+      });
 
       context.stdout(removed ? `Removed ${normalizedShop}.` : `No token found for ${normalizedShop}.`);
       return 0;
     } catch {
+      const runtime = await resolveRuntimeConfiguration(context);
+      await appendAuditEventBestEffort(context, runtime.paths.auditLog, {
+        action: 'shops.remove',
+        shop: normalizedShop,
+        result: 'failure',
+        metadata: auditMetadata({ mode: 'write', reason: 'token_store_remove_failed' }),
+      });
       context.stderr('Could not update token store. Check local token storage and try again.');
       return 1;
     }
@@ -181,7 +215,7 @@ async function runShops(args: readonly string[], context: CliContext): Promise<n
         shop: normalizedShop,
         tokenStore: store,
         adminClient,
-        appendAuditEvent: async (event) => context.appendAuditEvent(runtime.paths.auditLog, event),
+        appendAuditEvent: async (event) => appendAuditEventBestEffort(context, runtime.paths.auditLog, enrichAuditEvent(event, 'cli', 'read-only')),
       });
 
       context.stdout(formatShopVerificationResult(result));
@@ -271,8 +305,7 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
     const token = await store.getToken(normalizedShop);
 
     if (token === undefined) {
-      context.stderr(`No stored OAuth token found for ${normalizedShop}.`);
-      return 1;
+      throw new Error(`No stored OAuth token found for ${normalizedShop}.`);
     }
 
     if (subcommand === 'orders' && !token.scopes.includes('read_orders')) {
@@ -306,6 +339,12 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
         },
       });
 
+      await appendAuditEventBestEffort(context, runtime.paths.auditLog, {
+        action: 'report.products',
+        shop: normalizedShop,
+        result: 'success',
+        metadata: auditMetadata({ mode: 'read-only', format: parsedFormat, productCount: report.products.length }),
+      });
       context.stdout(formatProductsReport(report, parsedFormat));
       return 0;
     }
@@ -323,11 +362,11 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
         lowStockThreshold,
       });
 
-      await context.appendAuditEvent(runtime.paths.auditLog, {
+      await appendAuditEventBestEffort(context, runtime.paths.auditLog, {
         action: 'report.inventory',
         shop: normalizedShop,
         result: 'success',
-        metadata: { format: parsedFormat, rowCount: report.rows.length, threshold: lowStockThreshold },
+        metadata: auditMetadata({ mode: 'read-only', format: parsedFormat, rowCount: report.rows.length, threshold: lowStockThreshold }),
       });
       context.stdout(formatInventoryReport(report, parsedFormat));
       return 0;
@@ -345,30 +384,49 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
       window: ordersWindowInput ?? {},
     });
 
-    await context.appendAuditEvent(runtime.paths.auditLog, {
+    await appendAuditEventBestEffort(context, runtime.paths.auditLog, {
       action: 'report.orders',
       shop: normalizedShop,
       result: 'success',
-      metadata: { format: parsedFormat, from: report.window.from, to: report.window.to, orderCount: report.orders.length },
+      metadata: auditMetadata({ mode: 'read-only', format: parsedFormat, from: report.window.from, to: report.window.to, orderCount: report.orders.length }),
     });
     context.stdout(formatOrdersReport(report, parsedFormat));
     return 0;
   } catch (error) {
     const message = error instanceof Error ? redactSensitiveErrorMessage(error.message) : `Could not generate ${subcommand} report.`;
-    if (subcommand === 'orders' || subcommand === 'inventory') {
-      try {
-        await context.appendAuditEvent(runtime.paths.auditLog, {
-          action: subcommand === 'orders' ? 'report.orders' : 'report.inventory',
-          shop: normalizedShop,
-          result: 'failure',
-          metadata: subcommand === 'inventory' ? { reason: message, threshold: lowStockThreshold } : { reason: message },
-        });
-      } catch {
-        // Preserve the original report error; audit logging must not expose or mask it.
-      }
+    try {
+      await context.appendAuditEvent(runtime.paths.auditLog, {
+        action: `report.${subcommand}`,
+        shop: normalizedShop,
+        result: 'failure',
+        metadata: auditMetadata(subcommand === 'inventory'
+          ? { mode: 'read-only', reason: message, threshold: lowStockThreshold }
+          : { mode: 'read-only', reason: message }),
+      });
+    } catch {
+      // Preserve the original report error; audit logging must not expose or mask it.
     }
     context.stderr(message);
     return 1;
+  }
+}
+
+function enrichAuditEvent(event: AuditEventInput, source: 'cli' | 'mcp', mode: 'read-only' | 'write'): AuditEventInput {
+  return {
+    ...event,
+    metadata: auditMetadata({ mode, ...(event.metadata ?? {}) }, source),
+  };
+}
+
+function auditMetadata(metadata: Readonly<Record<string, unknown>> = {}, source: 'cli' | 'mcp' = 'cli'): Record<string, unknown> {
+  return { source, actor: source, ...metadata };
+}
+
+async function appendAuditEventBestEffort(context: CliContext, path: string, event: AuditEventInput): Promise<void> {
+  try {
+    await context.appendAuditEvent(path, event);
+  } catch {
+    // Audit logging is best-effort for successful primary operations and must not mask failures.
   }
 }
 
@@ -689,11 +747,6 @@ function shopsUsage(): string {
   ].join('\n');
 }
 
-async function createTokenStore(context: CliContext): Promise<LocalJsonTokenStore> {
-  const { paths } = await resolveRuntimeConfiguration(context);
-  return createTokenStoreForPath(paths.tokenStore, context);
-}
-
 async function resolveRuntimeConfiguration(context: CliContext): Promise<{
   readonly mergedEnv: Record<string, string>;
   readonly paths: ReturnType<typeof resolveShopifyHermesPaths>;
@@ -770,11 +823,12 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
 
   return {
     tokenStore: store,
+    appendAuditEvent: async (event) => context.appendAuditEvent(runtime.paths.auditLog, event),
     verifyShop: ({ shop }) => verifyShop({
       shop,
       tokenStore: store,
       adminClient,
-      appendAuditEvent: async (event) => context.appendAuditEvent(runtime.paths.auditLog, event),
+      appendAuditEvent: async (event) => appendAuditEventBestEffort(context, runtime.paths.auditLog, enrichAuditEvent(event, 'mcp', 'read-only')),
     }),
     reportProducts: async ({ shop, format }) => {
       const reportRuntime = await reportClientFor(shop);
