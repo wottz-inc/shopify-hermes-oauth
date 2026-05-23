@@ -2,11 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createHmac } from 'node:crypto';
 import type { Server } from 'node:http';
 
-import {
-  createOAuthHttpServer,
-  createOAuthHttpServerForTesting,
-  type OAuthHttpServerDependencies,
-} from '../src/server.js';
+import { createOAuthHttpServer, type OAuthHttpServerDependencies } from '../src/server.js';
+import { createOAuthHttpServerForTesting } from '../src/__test__/oauth-http-server.js';
 
 const openServers: Server[] = [];
 
