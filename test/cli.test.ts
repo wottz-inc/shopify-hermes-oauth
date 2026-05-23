@@ -1175,6 +1175,19 @@ describe('CLI shops', () => {
 });
 
 describe('CLI report products', () => {
+  it('rejects malformed products report extras before token lookup', async () => {
+    for (const args of [
+      ['report', 'products', 'example', '--since', '30d'],
+      ['report', 'products', 'example', '--low-stock-threshold', '4'],
+      ['report', 'products', 'example', '--format', 'markdown', 'garbage'],
+    ]) {
+      const harness = createHarness({ fetch: () => Promise.reject(new Error('Admin GraphQL should not be called')) });
+
+      await expect(runShopifyHermesOauthCli(args, harness.deps)).resolves.toBe(2);
+      expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth report products <shop> [--format markdown|json|csv]');
+    }
+  });
+
   it('does not let products report success audit failures mask successful output', async () => {
     const harness = createHarness({
       appendAuditEvent: () => {
@@ -1348,6 +1361,18 @@ describe('CLI report products', () => {
 });
 
 describe('CLI report inventory', () => {
+  it('rejects malformed inventory report extras before token lookup', async () => {
+    for (const args of [
+      ['report', 'inventory', 'example', '--since', '30d', 'garbage'],
+      ['report', 'inventory', 'example', '--low-stock-threshold', '4', 'garbage'],
+    ]) {
+      const harness = createHarness({ fetch: () => Promise.reject(new Error('Admin GraphQL should not be called')) });
+
+      await expect(runShopifyHermesOauthCli(args, harness.deps)).resolves.toBe(2);
+      expect(harness.stderr.join('\n')).toContain('shopify-hermes-oauth report inventory <shop> [--format markdown|json|csv] [--low-stock-threshold N]');
+    }
+  });
+
   it('does not let inventory report success audit failures mask successful output', async () => {
     const harness = createHarness({
       appendAuditEvent: () => {
@@ -1498,6 +1523,18 @@ describe('CLI report inventory', () => {
 });
 
 describe('CLI report orders', () => {
+  it('rejects malformed orders report extras before token lookup', async () => {
+    for (const args of [
+      ['report', 'orders', 'example', '--since', '30d', 'garbage'],
+      ['report', 'orders', 'example', '--from', '2026-05-01', '--to', '2026-05-22', '--low-stock-threshold', '4'],
+    ]) {
+      const harness = createHarness({ fetch: () => Promise.reject(new Error('Admin GraphQL should not be called')) });
+
+      await expect(runShopifyHermesOauthCli(args, harness.deps)).resolves.toBe(2);
+      expect(harness.stderr.join('\n')).toContain('shopify-hermes-oauth report orders <shop> (--since 30d | --from YYYY-MM-DD --to YYYY-MM-DD) [--format markdown|json|csv]');
+    }
+  });
+
   it('does not let orders report success audit failures mask successful output', async () => {
     const harness = createHarness({
       appendAuditEvent: () => {

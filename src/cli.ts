@@ -270,49 +270,36 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
     return 2;
   }
 
-  const reportArgs = args.slice(2);
-  const parsedFormat = parseReportFormat(reportArgs.filter((arg, index) => reportArgs[index - 1] !== '--since' && reportArgs[index - 1] !== '--from' && reportArgs[index - 1] !== '--to' && reportArgs[index - 1] !== '--low-stock-threshold' && arg !== '--since' && arg !== '--from' && arg !== '--to' && arg !== '--low-stock-threshold'));
+  let parsedReportArgs: ReportArgsParseResult;
+  try {
+    parsedReportArgs = parseReportArgs(subcommand, args.slice(2));
+  } catch (error) {
+    context.stderr(error instanceof Error ? error.message : 'Invalid inventory report options.');
+    return 2;
+  }
 
-  if (parsedFormat === undefined) {
+  if (parsedReportArgs === 'invalid-format') {
     context.stderr('Invalid report format. Use markdown, json, or csv.');
     return 2;
   }
 
-  let ordersWindowInput: OrdersReportWindowInput | undefined;
-  let lowStockThreshold = 5;
+  if (parsedReportArgs === undefined) {
+    context.stderr(reportUsage());
+    return 2;
+  }
+
   if (subcommand === 'orders') {
-    const parsedOrdersArgs = parseOrdersReportArgs(reportArgs);
-    if (parsedOrdersArgs === undefined) {
-      context.stderr(reportUsage());
-      return 2;
-    }
     try {
-      parseOrdersReportWindow(parsedOrdersArgs);
+      parseOrdersReportWindow(parsedReportArgs.ordersWindowInput);
     } catch (error) {
       context.stderr(error instanceof Error ? error.message : 'Invalid orders report date window.');
       return 2;
     }
-    ordersWindowInput = parsedOrdersArgs;
   }
 
-  if (subcommand === 'inventory') {
-    let parsedInventoryArgs: InventoryReportArgs | undefined;
-    try {
-      parsedInventoryArgs = parseInventoryReportArgs(reportArgs);
-    } catch (error) {
-      context.stderr(error instanceof Error ? error.message : 'Invalid inventory report options.');
-      return 2;
-    }
-
-    if (parsedInventoryArgs === undefined) {
-      context.stderr(reportUsage());
-      return 2;
-    }
-
-    if (parsedInventoryArgs.lowStockThreshold !== undefined) {
-      lowStockThreshold = parsedInventoryArgs.lowStockThreshold;
-    }
-  }
+  const parsedFormat = parsedReportArgs.format;
+  const ordersWindowInput = parsedReportArgs.ordersWindowInput;
+  const lowStockThreshold = parsedReportArgs.lowStockThreshold;
 
   let normalizedShop: string;
 
@@ -406,7 +393,7 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
           variables,
         }),
       },
-      window: ordersWindowInput ?? {},
+      window: ordersWindowInput,
     });
 
     await appendAuditEventBestEffort(context, runtime.paths.auditLog, {
@@ -1124,79 +1111,61 @@ function reportUsage(): string {
   ].join('\n');
 }
 
-function parseReportFormat(args: readonly string[]): ProductsReportFormat | undefined {
-  let format: ProductsReportFormat = 'markdown';
-
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-
-    if (arg !== '--format') {
-      return undefined;
-    }
-
-    const value = args[index + 1];
-
-    if (value !== 'markdown' && value !== 'json' && value !== 'csv') {
-      return undefined;
-    }
-
-    format = value;
-    index += 1;
-  }
-
-  return format;
+interface ParsedReportArgs {
+  readonly format: ProductsReportFormat;
+  readonly ordersWindowInput: OrdersReportWindowInput;
+  readonly lowStockThreshold: number;
 }
 
-function parseOrdersReportArgs(args: readonly string[]): OrdersReportWindowInput | undefined {
-  const window: { since?: string; from?: string; to?: string } = {};
+type ReportSubcommand = 'products' | 'orders' | 'inventory';
+type ReportArgsParseResult = ParsedReportArgs | 'invalid-format' | undefined;
+
+function parseReportArgs(subcommand: ReportSubcommand, args: readonly string[]): ReportArgsParseResult {
+  let format: ProductsReportFormat = 'markdown';
+  const ordersWindowInput: { since?: string; from?: string; to?: string } = {};
+  let lowStockThreshold = 5;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
 
     if (arg === '--format') {
+      const value = args[index + 1];
+
+      if (value !== 'markdown' && value !== 'json' && value !== 'csv') {
+        return 'invalid-format';
+      }
+
+      format = value;
       index += 1;
       continue;
     }
 
     if (arg === '--since' || arg === '--from' || arg === '--to') {
+      if (subcommand !== 'orders') {
+        return undefined;
+      }
+
       const value = args[index + 1];
       if (!isPresent(value) || value.startsWith('--')) {
         return undefined;
       }
 
       if (arg === '--since') {
-        window.since = value;
+        ordersWindowInput.since = value;
       } else if (arg === '--from') {
-        window.from = value;
+        ordersWindowInput.from = value;
       } else {
-        window.to = value;
+        ordersWindowInput.to = value;
       }
       index += 1;
       continue;
     }
 
-    return undefined;
-  }
-
-  return window;
-}
-
-interface InventoryReportArgs {
-  readonly lowStockThreshold?: number;
-}
-
-function parseInventoryReportArgs(args: readonly string[]): InventoryReportArgs | undefined {
-  const parsed: { lowStockThreshold?: number } = {};
-
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-
-    if (arg === '--format') {
-      index += 1;
-      continue;
-    }
-
     if (arg === '--low-stock-threshold') {
+      if (subcommand !== 'inventory') {
+        return undefined;
+      }
+
       const value = args[index + 1];
       if (!isPresent(value) || value.startsWith('--')) {
         return undefined;
@@ -1206,9 +1175,7 @@ function parseInventoryReportArgs(args: readonly string[]): InventoryReportArgs 
         throw new InventoryReportError('Inventory report low-stock threshold must be a non-negative integer.');
       }
 
-      const threshold = Number(value);
-
-      parsed.lowStockThreshold = threshold;
+      lowStockThreshold = Number(value);
       index += 1;
       continue;
     }
@@ -1216,7 +1183,7 @@ function parseInventoryReportArgs(args: readonly string[]): InventoryReportArgs 
     return undefined;
   }
 
-  return parsed;
+  return { format, ordersWindowInput, lowStockThreshold };
 }
 
 function shopsUsage(): string {
