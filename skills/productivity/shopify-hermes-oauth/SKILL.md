@@ -74,6 +74,16 @@ shopify-hermes-oauth report inventory <shop> --format markdown
 
 Prefer Markdown for user-facing summaries and JSON only when a downstream tool needs structured data. Avoid exposing unnecessary customer details; summarize only what the user needs.
 
+## Limits
+
+v0.1 reports have explicit nested-connection ceilings:
+
+- Products report: shows at most the first 100 variants per product and marks the variants summary when additional variants are omitted.
+- Orders report: shows at most the first 50 line items per order and marks the line-item summary when additional line items are omitted.
+- Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels, with the affected product/variant/inventory item GID included where safe.
+
+If a report hits these limits, narrow the report scope or use a custom paginated Shopify Admin GraphQL workflow outside the curated v0.1 reports.
+
 ## MCP tools
 
 After `shopify-hermes-oauth hermes install`, use the MCP server for agent workflows. Expected read-oriented tools include:

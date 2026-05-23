@@ -381,6 +381,10 @@ Include:
 - `json` for tools/automation;
 - `csv` for spreadsheet export.
 
+### Nested connection limits
+
+v0.1 report queries intentionally avoid unbounded nested pagination. The products report shows at most the first 100 variants per product, and the orders report shows at most the first 50 line items per order; both summaries explicitly say when additional nested records were omitted. The inventory report fails rather than silently truncating when a product has more than 100 variants or a variant has more than 50 inventory levels, and its error identifies the affected product/variant/inventory item GID where safe. If a store hits these ceilings, narrow the report scope or use a custom paginated Shopify Admin GraphQL workflow outside the curated v0.1 reports.
+
 ## 13. Testing and quality gates
 
 Every code issue must follow TDD where practical:

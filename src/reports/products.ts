@@ -11,7 +11,7 @@ export const PRODUCTS_REPORT_QUERY = `
           vendor
           productType
           totalInventory
-          variants(first: 50) {
+          variants(first: 100) {
             edges {
               node {
                 title
@@ -192,11 +192,11 @@ function summarizeVariants(value: unknown): string {
   }).filter((variant): variant is string => variant !== undefined);
 
   if (variants.length === 0) {
-    return hasMoreVariants(value) ? '0+ variants shown: …' : '0 variants';
+    return hasMoreVariants(value) ? 'No variants shown; additional variants omitted: …' : '0 variants';
   }
 
   if (hasMoreVariants(value)) {
-    return `${variants.length.toString(10)}+ variants shown: ${variants.join('; ')}; …`;
+    return `Showing first ${variants.length.toString(10)} variants; additional variants omitted: ${variants.join('; ')}; …`;
   }
 
   return `${variants.length.toString(10)} ${variants.length === 1 ? 'variant' : 'variants'}: ${variants.join('; ')}`;

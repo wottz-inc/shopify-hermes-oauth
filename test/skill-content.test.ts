@@ -90,6 +90,11 @@ describe('shopify-hermes-oauth Hermes skill', () => {
       'shopify.report_products',
       'shopify.report_orders',
       'shopify.report_inventory',
+      '## Limits',
+      'Products report: shows at most the first 100 variants per product',
+      'Orders report: shows at most the first 50 line items per order',
+      'Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels',
+      'narrow the report scope or use a custom paginated Shopify Admin GraphQL workflow',
       'Do not ask users to paste Shopify access tokens into chat',
     ]) {
       expect(markdown).toContain(required);
@@ -115,6 +120,10 @@ describe('shopify-hermes-oauth Hermes skill', () => {
     expect(reviewedDocs).not.toContain('shopify-hermes-oauth install-url');
     expect(reviewedDocs).not.toMatch(/Pendragon|Infisical|Forgejo|Tailscale/i);
     expect(reviewedDocs).toContain('/auth/start?shop=example.myshopify.com');
+    expect(reviewedDocs).toContain('Nested connection limits');
+    expect(reviewedDocs).toContain('products report shows at most the first 100 variants per product');
+    expect(reviewedDocs).toContain('orders report shows at most the first 50 line items per order');
+    expect(reviewedDocs).toContain('inventory report fails rather than silently truncating');
   });
 
   it('stays generic and avoids private infrastructure references or secret placeholders', () => {

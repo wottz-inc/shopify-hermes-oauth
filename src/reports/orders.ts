@@ -256,11 +256,11 @@ function summarizeLineItems(value: unknown): string {
   }).filter((item): item is string => item !== undefined);
 
   if (items.length === 0) {
-    return hasMoreLineItems(value) ? '0+ items shown: …' : '0 items';
+    return hasMoreLineItems(value) ? 'No line items shown; additional line items omitted: …' : '0 items';
   }
 
   if (hasMoreLineItems(value)) {
-    return `${items.length.toString(10)}+ items shown: ${items.join('; ')}; …`;
+    return `Showing first ${items.length.toString(10)} line items; additional line items omitted: ${items.join('; ')}; …`;
   }
 
   return `${items.length.toString(10)} ${items.length === 1 ? 'item' : 'items'}: ${items.join('; ')}`;

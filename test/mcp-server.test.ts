@@ -183,26 +183,44 @@ describe('curated MCP server', () => {
     });
   });
 
-  it('audits MCP tool failures without leaking dependency error details or arguments with secrets', async () => {
+  it('audits MCP tool failures without leaking dependency error details, row/order/customer details, or arguments with secrets', async () => {
     const auditEvents: unknown[] = [];
     const deps = {
       ...createDeps(),
       appendAuditEvent: (event: unknown) => { auditEvents.push(event); },
       reportProducts: () => {
-        throw new Error('upstream failed with X-Shopify-Access-Token: shpat_never-print-me');
+        throw new Error('upstream failed with X-Shopify-Access-Token: shpat_never-print-me SKU-RED-S');
+      },
+      reportOrders: () => {
+        throw new Error('truncated order gid://shopify/Order/2001 #1001 Ada Lovelace ada@example.test');
       },
     };
 
     await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', format: 'json' }, deps)).rejects.toThrow('Tool call failed.');
+    await expect(callTool('shopify.report_orders', { shop: 'alpha.myshopify.com', format: 'json', since: '30d' }, deps)).rejects.toThrow('Tool call failed.');
 
-    expect(auditEvents).toEqual([{
-      action: 'mcp.tool',
-      shop: 'alpha.myshopify.com',
-      result: 'failure',
-      metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'json', reason: 'Tool call failed.' },
-    }]);
-    expect(JSON.stringify(auditEvents)).not.toContain('shpat_never-print-me');
-    expect(JSON.stringify(auditEvents)).not.toContain('X-Shopify-Access-Token');
+    expect(auditEvents).toEqual([
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'failure',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'json', reason: 'Tool call failed.' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'failure',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_orders', format: 'json', reason: 'Tool call failed.' },
+      },
+    ]);
+    const serializedAudit = JSON.stringify(auditEvents);
+    expect(serializedAudit).not.toContain('shpat_never-print-me');
+    expect(serializedAudit).not.toContain('X-Shopify-Access-Token');
+    expect(serializedAudit).not.toContain('SKU-RED-S');
+    expect(serializedAudit).not.toContain('gid://shopify/Order/2001');
+    expect(serializedAudit).not.toContain('#1001');
+    expect(serializedAudit).not.toContain('Ada Lovelace');
+    expect(serializedAudit).not.toContain('ada@example.test');
   });
 
   it('does not let MCP failure audit failures mask original allowed-tool errors', async () => {

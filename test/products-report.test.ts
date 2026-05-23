@@ -134,9 +134,13 @@ describe('products report service', () => {
     );
   });
 
-  it('requests variant pageInfo and marks variant summaries as truncated when more variants exist', async () => {
+  it('requests up to 100 variants and explicitly marks products with more than 100 variants as truncated', async () => {
     expect(PRODUCTS_REPORT_QUERY).toContain('pageInfo');
     expect(PRODUCTS_REPORT_QUERY).toContain('hasNextPage');
+    expect(PRODUCTS_REPORT_QUERY).toContain('variants(first: 100)');
+    const variantEdges = Array.from({ length: 100 }, (_, index) => ({
+      node: { title: `Variant ${(index + 1).toString(10)}`, sku: `SKU-${(index + 1).toString(10)}`, inventoryQuantity: index + 1 },
+    }));
 
     const client: ProductsReportGraphqlClient = {
       query: () => Promise.resolve({
@@ -146,10 +150,7 @@ describe('products report service', () => {
               cursor: 'cursor-1',
               node: productNode({
                 variants: {
-                  edges: [
-                    { node: { title: 'Red / S', sku: 'SKU-RED-S', inventoryQuantity: 3 } },
-                    { node: { title: 'Blue / M', sku: 'SKU-BLUE-M', inventoryQuantity: 4 } },
-                  ],
+                  edges: variantEdges,
                   pageInfo: { hasNextPage: true },
                 },
               }),
@@ -160,11 +161,28 @@ describe('products report service', () => {
       }),
     };
 
-    await expect(generateProductsReport({ client })).resolves.toEqual({
-      products: [expect.objectContaining({
-        variantsSummary: '2+ variants shown: Red / S (sku=SKU-RED-S, inventory=3); Blue / M (sku=SKU-BLUE-M, inventory=4); …',
-      })],
-    });
+    const report = await generateProductsReport({ client });
+    expect(report.products[0]?.variantsSummary).toContain('Showing first 100 variants; additional variants omitted');
+  });
+
+  it('uses clear wording when a truncated variants connection has no shown variants', async () => {
+    const client: ProductsReportGraphqlClient = {
+      query: () => Promise.resolve({
+        data: {
+          products: {
+            edges: [{
+              cursor: 'cursor-1',
+              node: productNode({ variants: { edges: [], pageInfo: { hasNextPage: true } } }),
+            }],
+            pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+          },
+        },
+      }),
+    };
+
+    await expect(generateProductsReport({ client })).resolves.toEqual(expect.objectContaining({
+      products: [expect.objectContaining({ variantsSummary: 'No variants shown; additional variants omitted: …' })],
+    }));
   });
 
   it('neutralizes CSV spreadsheet formula injection cells', () => {

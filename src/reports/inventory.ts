@@ -188,7 +188,10 @@ function parseProductRows(value: unknown, lowStockThreshold: number): InventoryR
 
   const productGid = readString(value.id, 'product id');
   const productTitle = readString(value.title, 'product title');
-  assertConnectionNotTruncated(value.variants, 'variants');
+  assertConnectionNotTruncated(
+    value.variants,
+    `variants connection was truncated for product ${productGid}. v0.1 inventory reports support at most 100 variants per product`,
+  );
   const variants = readConnectionEdges(value.variants);
   const rows: InventoryReportRow[] = [];
 
@@ -197,7 +200,10 @@ function parseProductRows(value: unknown, lowStockThreshold: number): InventoryR
     const variantGid = readString(variant.id, 'variant id');
     const inventoryItem = readRecord(variant.inventoryItem, 'variant inventory item');
     const inventoryItemGid = readString(inventoryItem.id, 'inventory item id');
-    assertConnectionNotTruncated(inventoryItem.inventoryLevels, 'inventory levels');
+    assertConnectionNotTruncated(
+      inventoryItem.inventoryLevels,
+      `inventory levels connection was truncated for product ${productGid}, variant ${variantGid}, inventory item ${inventoryItemGid}. v0.1 inventory reports support at most 50 inventory levels per variant`,
+    );
     const levels = readConnectionEdges(inventoryItem.inventoryLevels);
 
     for (const levelEdge of levels) {
@@ -237,14 +243,14 @@ function readConnectionEdges(value: unknown): readonly unknown[] {
   return value.edges;
 }
 
-function assertConnectionNotTruncated(value: unknown, connectionName: string): void {
+function assertConnectionNotTruncated(value: unknown, detail: string): void {
   if (!isRecord(value)) {
     return;
   }
 
   const pageInfo = value.pageInfo;
   if (isRecord(pageInfo) && pageInfo.hasNextPage === true) {
-    throw new InventoryReportError(`Shopify Admin GraphQL ${connectionName} connection was truncated.`);
+    throw new InventoryReportError(`Shopify Admin GraphQL ${detail}.`);
   }
 }
 

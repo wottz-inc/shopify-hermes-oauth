@@ -129,8 +129,8 @@ describe('inventory report service', () => {
     }));
   });
 
-  it('fails safely instead of silently truncating when nested variant pages remain', async () => {
-    const product = inventoryProductNode();
+  it('fails safely with GID-only product context instead of silently truncating products with more than 100 variants', async () => {
+    const product = inventoryProductNode({ title: 'Sensitive Shirt \u0000 Drop' });
     const variants = product.variants as { readonly edges: readonly unknown[]; readonly pageInfo?: unknown };
     const client: InventoryReportGraphqlClient = {
       query: () => Promise.resolve({
@@ -146,10 +146,13 @@ describe('inventory report service', () => {
       }),
     };
 
-    await expect(generateInventoryReport({ client })).rejects.toThrow('Shopify Admin GraphQL variants connection was truncated.');
+    await expect(generateInventoryReport({ client })).rejects.toThrow(
+      'Shopify Admin GraphQL variants connection was truncated for product gid://shopify/Product/1001. v0.1 inventory reports support at most 100 variants per product.',
+    );
+    await expect(generateInventoryReport({ client })).rejects.not.toThrow('Sensitive Shirt');
   });
 
-  it('fails safely instead of silently truncating when nested inventory level pages remain', async () => {
+  it('fails safely with GID-only product and variant context instead of silently truncating more than 50 inventory levels', async () => {
     const client: InventoryReportGraphqlClient = {
       query: () => Promise.resolve({
         data: {
@@ -157,6 +160,7 @@ describe('inventory report service', () => {
             edges: [{
               cursor: 'cursor-1',
               node: inventoryProductNode({
+                title: 'Sensitive Shirt \u0000 Drop',
                 inventoryLevels: {
                   edges: [{ node: { location: { name: 'Main Warehouse' }, quantities: [{ name: 'available', quantity: 3 }] } }],
                   pageInfo: { hasNextPage: true, endCursor: 'level-cursor-1' },
@@ -169,7 +173,10 @@ describe('inventory report service', () => {
       }),
     };
 
-    await expect(generateInventoryReport({ client })).rejects.toThrow('Shopify Admin GraphQL inventory levels connection was truncated.');
+    await expect(generateInventoryReport({ client })).rejects.toThrow(
+      'Shopify Admin GraphQL inventory levels connection was truncated for product gid://shopify/Product/1001, variant gid://shopify/ProductVariant/2001, inventory item gid://shopify/InventoryItem/3001. v0.1 inventory reports support at most 50 inventory levels per variant.',
+    );
+    await expect(generateInventoryReport({ client })).rejects.not.toThrow('Sensitive Shirt');
   });
 
   it('fails safely for repeated cursors, max pages, and invalid page sizes/thresholds', async () => {

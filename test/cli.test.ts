@@ -1326,11 +1326,11 @@ describe('CLI report products', () => {
       action: 'report.products',
       shop: 'missing.myshopify.com',
       result: 'failure',
-      metadata: { source: 'cli', actor: 'cli', mode: 'read-only', reason: 'No stored OAuth token found for missing.myshopify.com.' },
+      metadata: { source: 'cli', actor: 'cli', mode: 'read-only', reason: 'report_failed' },
     }]);
   });
 
-  it('audits redacted product report failures without leaking response secrets', async () => {
+  it('audits aggregate-only product report failures without leaking response secrets', async () => {
     const accessToken = 'shpat_never_print_me';
     const responseSecret = 'plain_response_secret';
     const auditEvents: unknown[] = [];
@@ -1360,12 +1360,13 @@ describe('CLI report products', () => {
 
     expect(exitCode).toBe(1);
     expect(harness.stderr.join('\n')).toContain('[REDACTED]');
-    expect(serializedAudit).toContain('[REDACTED]');
+    expect(serializedAudit).toContain('"reason":"report_failed"');
     expect(serializedAudit).toContain('"action":"report.products"');
     for (const secret of [accessToken, responseSecret, 'X-Shopify-Access-Token']) {
       expect(harness.stderr.join('\n')).not.toContain(secret);
       expect(serializedAudit).not.toContain(secret);
     }
+    expect(serializedAudit).not.toContain('[REDACTED]');
   });
 });
 
@@ -1527,7 +1528,8 @@ describe('CLI report inventory', () => {
     expect(JSON.stringify(audits)).not.toContain(accessToken);
     expect(JSON.stringify(audits)).toContain('"action":"report.inventory"');
     expect(JSON.stringify(audits)).toContain('"result":"failure"');
-    expect(JSON.stringify(audits)).toContain('read_inventory');
+    expect(JSON.stringify(audits)).toContain('"reason":"report_failed"');
+    expect(JSON.stringify(audits)).not.toContain('read_inventory');
   });
 });
 

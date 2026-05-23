@@ -74,6 +74,42 @@ describe('orders report service', () => {
     ].join('\n'));
   });
 
+  it('explicitly marks orders with more than 50 line items as truncated', async () => {
+    const lineItemEdges = Array.from({ length: 50 }, (_, index) => ({
+      node: { title: `Line Item ${(index + 1).toString(10)}`, quantity: index + 1 },
+    }));
+    const client: OrdersReportGraphqlClient = {
+      query: () => Promise.resolve({
+        data: {
+          orders: {
+            edges: [{ cursor: 'cursor-1', node: orderNode({ lineItems: { edges: lineItemEdges, pageInfo: { hasNextPage: true } } }) }],
+            pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+          },
+        },
+      }),
+    };
+
+    const report = await generateOrdersReport({ client, window: { from: '2026-05-01', to: '2026-05-02' } });
+    expect(report.orders[0]?.lineItemsSummary).toContain('Showing first 50 line items; additional line items omitted');
+  });
+
+  it('uses clear wording when a truncated line items connection has no shown items', async () => {
+    const client: OrdersReportGraphqlClient = {
+      query: () => Promise.resolve({
+        data: {
+          orders: {
+            edges: [{ cursor: 'cursor-1', node: orderNode({ lineItems: { edges: [], pageInfo: { hasNextPage: true } } }) }],
+            pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+          },
+        },
+      }),
+    };
+
+    await expect(generateOrdersReport({ client, window: { from: '2026-05-01', to: '2026-05-02' } })).resolves.toEqual(expect.objectContaining({
+      orders: [expect.objectContaining({ lineItemsSummary: 'No line items shown; additional line items omitted: …' })],
+    }));
+  });
+
   it('fails safely for repeated cursors and max pages', async () => {
     const repeated: OrdersReportGraphqlClient = {
       query: () => Promise.resolve({ data: { orders: { edges: [{ cursor: 'cursor-1', node: orderNode() }], pageInfo: { hasNextPage: true, endCursor: 'cursor-1' } } } }),
@@ -140,7 +176,12 @@ function orderItem() {
   };
 }
 
-function orderNode(overrides: Partial<{ readonly id: string; readonly name: string; readonly displayFulfillmentStatus: string }> = {}) {
+function orderNode(overrides: Partial<{
+  readonly id: string;
+  readonly name: string;
+  readonly displayFulfillmentStatus: string;
+  readonly lineItems: unknown;
+}> = {}) {
   return {
     id: overrides.id ?? 'gid://shopify/Order/2001',
     name: overrides.name ?? '#1001',
@@ -149,6 +190,6 @@ function orderNode(overrides: Partial<{ readonly id: string; readonly name: stri
     displayFulfillmentStatus: overrides.displayFulfillmentStatus ?? 'UNFULFILLED',
     totalPriceSet: { shopMoney: { amount: '42.50', currencyCode: 'USD' } },
     customer: { displayName: 'Ada Lovelace', email: 'ada@example.test' },
-    lineItems: { edges: [{ node: { title: 'T-Shirt', quantity: 2 } }, { node: { title: 'Mug', quantity: 1 } }], pageInfo: { hasNextPage: false } },
+    lineItems: overrides.lineItems ?? { edges: [{ node: { title: 'T-Shirt', quantity: 2 } }, { node: { title: 'Mug', quantity: 1 } }], pageInfo: { hasNextPage: false } },
   };
 }

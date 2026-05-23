@@ -412,8 +412,8 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
         shop: normalizedShop,
         result: 'failure',
         metadata: auditMetadata(subcommand === 'inventory'
-          ? { mode: 'read-only', reason: message, threshold: lowStockThreshold }
-          : { mode: 'read-only', reason: message }),
+          ? { mode: 'read-only', reason: 'report_failed', threshold: lowStockThreshold }
+          : { mode: 'read-only', reason: 'report_failed' }),
       });
     } catch {
       // Preserve the original report error; audit logging must not expose or mask it.
