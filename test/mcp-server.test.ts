@@ -266,6 +266,49 @@ describe('curated MCP server', () => {
     expect(JSON.stringify(auditEvents)).not.toContain('accessToken');
   });
 
+  it('marks over-boundary sanitized audit strings with an ellipsis only when truncated', async () => {
+    const auditEvents: unknown[] = [];
+    const deps = {
+      ...createDeps(),
+      appendAuditEvent: (event: unknown) => { auditEvents.push(event); },
+    };
+    const underBoundaryName = 'u'.repeat(199);
+    const exactBoundaryName = 'e'.repeat(200);
+    const overBoundaryName = 'o'.repeat(201);
+
+    await expect(callTool(underBoundaryName, {}, deps)).rejects.toThrow('Tool is not allowed.');
+    await expect(callTool(exactBoundaryName, {}, deps)).rejects.toThrow('Tool is not allowed.');
+    await expect(callTool(overBoundaryName, {}, deps)).rejects.toThrow('Tool is not allowed.');
+
+    expect(auditEvents.map((event) => (event as { metadata: { toolName: string } }).metadata.toolName)).toEqual([
+      underBoundaryName,
+      exactBoundaryName,
+      `${'o'.repeat(199)}…`,
+    ]);
+  });
+
+  it('preserves control-character sanitization and secret redaction when adding truncation ellipses', async () => {
+    const auditEvents: unknown[] = [];
+    const deps = {
+      ...createDeps(),
+      appendAuditEvent: (event: unknown) => { auditEvents.push(event); },
+    };
+    const secret = 'shpat_this-secret-must-not-leak';
+    const name = `unsafe\nname\twith\r${secret} ${'x'.repeat(220)}`;
+
+    await expect(callTool(name, {}, deps)).rejects.toThrow('Tool is not allowed.');
+
+    const serializedAudit = JSON.stringify(auditEvents);
+    const toolName = (auditEvents[0] as { metadata: { toolName: string } }).metadata.toolName;
+    expect(toolName).toContain('unsafe name with [REDACTED]');
+    expect(toolName).toHaveLength(200);
+    expect(toolName.endsWith('…')).toBe(true);
+    expect(serializedAudit).not.toContain(secret);
+    expect(serializedAudit).not.toContain('shpat_');
+    expect(serializedAudit).not.toContain('unsafe\\nname');
+    expect(serializedAudit).not.toContain('unsafe\\tname');
+  });
+
   it('rejects extra, raw GraphQL, mutation-looking, and unknown arguments per tool', async () => {
     const badArgs = [
       { query: '{ shop { name } }' },

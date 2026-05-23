@@ -210,12 +210,13 @@ function readAuditThreshold(args: unknown): { readonly threshold?: number } {
 }
 
 function sanitizeAuditString(value: string): string {
-  return value
+  const sanitized = value
     .replace(/X-Shopify-Access-Token/giu, '[REDACTED]')
     .replace(/shpat_[A-Za-z0-9_-]+/gu, '[REDACTED]')
     .replace(/access_token\s*[=:]\s*[^\s,;]+/giu, 'access_token=[REDACTED]')
-    .replace(/[\r\n\t]/gu, ' ')
-    .slice(0, 200);
+    .replace(/[\r\n\t]/gu, ' ');
+
+  return sanitized.length > 200 ? `${sanitized.slice(0, 199)}…` : sanitized;
 }
 
 export async function startStdioMcpServer(
