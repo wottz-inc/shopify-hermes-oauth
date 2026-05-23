@@ -740,12 +740,148 @@ async function hasDetectableHermesMcpConfig(context: CliContext, hermesHome: str
 
   for (const candidatePath of candidatePaths) {
     const content = await context.readFile(candidatePath);
-    if (content?.includes(HERMES_MCP_SERVER_NAME) === true) {
+    if (content === undefined) {
+      continue;
+    }
+
+    if (candidatePath.endsWith('.json') ? hasHermesMcpJsonConfig(content) : hasHermesMcpYamlConfig(content)) {
       return true;
     }
   }
 
   return false;
+}
+
+function hasHermesMcpJsonConfig(content: string): boolean {
+  try {
+    return hasHermesMcpConfigShape(JSON.parse(content) as unknown);
+  } catch {
+    return false;
+  }
+}
+
+const HERMES_MCP_CONFIG_CONTAINER_KEYS = ['mcp_servers', 'mcpServers', 'servers'] as const;
+
+function hasHermesMcpConfigShape(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return HERMES_MCP_CONFIG_CONTAINER_KEYS.some((key) => hasHermesMcpConfigContainer(value[key]));
+}
+
+function hasHermesMcpConfigContainer(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => isHermesMcpServerConfig(item));
+  }
+
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  if (isHermesMcpServerConfig(value)) {
+    return true;
+  }
+
+  return Object.values(value).some((item) => isHermesMcpServerConfig(item));
+}
+
+function isHermesMcpServerConfig(value: unknown): boolean {
+  return isRecord(value) && value.command === HERMES_MCP_SERVER_NAME && hasHermesMcpArgs(value.args);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function hasHermesMcpArgs(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.every((item) => typeof item === 'string') && value.some((arg, index) => arg === 'mcp' && value[index + 1] === 'serve');
+  }
+
+  return typeof value === 'string' && /(?:^|\s)mcp\s+serve(?:\s|$)/u.test(value);
+}
+
+function hasHermesMcpYamlConfig(content: string): boolean {
+  const lines = content
+    .split(/\r?\n/u)
+    .map((line) => stripYamlComment(line))
+    .filter((line) => line.trim().length > 0);
+
+  for (const [index, line] of lines.entries()) {
+    const commandMatch = /^(\s*)command:\s*['"]?shopify-hermes-oauth['"]?\s*$/u.exec(line);
+    if (commandMatch === null) {
+      continue;
+    }
+
+    if (yamlBlockHasMcpServeArgs(lines.slice(index + 1), commandMatch[1]?.length ?? 0)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function stripYamlComment(line: string): string {
+  const commentIndex = line.indexOf('#');
+  return commentIndex === -1 ? line : line.slice(0, commentIndex);
+}
+
+function yamlBlockHasMcpServeArgs(lines: readonly string[], propertyIndent: number): boolean {
+  const args: string[] = [];
+  let inArgs = false;
+  let argsIndent = -1;
+
+  for (const line of lines) {
+    const indent = line.search(/\S/u);
+    if (indent < propertyIndent) {
+      break;
+    }
+
+    if (!inArgs) {
+      const argsMatch = /^(\s*)args:\s*(.*)$/u.exec(line);
+      if (argsMatch === null) {
+        continue;
+      }
+
+      inArgs = true;
+      argsIndent = argsMatch[1]?.length ?? indent;
+      const inlineArgs = parseYamlInlineArgs(argsMatch[2] ?? '');
+      if (inlineArgs.length > 0) {
+        args.push(...inlineArgs);
+        break;
+      }
+      continue;
+    }
+
+    if (indent <= argsIndent) {
+      break;
+    }
+
+    const listItem = /^\s*-\s*['"]?([^'"\s]+)['"]?\s*$/u.exec(line)?.[1];
+    if (listItem !== undefined) {
+      args.push(listItem);
+    }
+  }
+
+  return hasHermesMcpArgs(args);
+}
+
+function parseYamlInlineArgs(value: string): readonly string[] {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return [];
+  }
+
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    return trimmed
+      .slice(1, -1)
+      .split(',')
+      .map((item) => item.trim().replace(/^['"]|['"]$/gu, ''))
+      .filter((item) => item.length > 0);
+  }
+
+  return trimmed.split(/\s+/u);
 }
 
 function localHermesSkillContent(): string {

@@ -1047,6 +1047,104 @@ describe('CLI hermes install', () => {
     expect(output).not.toContain('super-secret-value');
   });
 
+  it('does not treat comments or stale notes mentioning this server as installed', async () => {
+    const harness = createHarness({ commandExists: (command) => command === 'hermes' });
+    harness.files.set('/tmp/hermes/config.yaml', [
+      '# Tried shopify-hermes-oauth before, but removed the MCP server.',
+      'mcp_servers:',
+      '  other-server:',
+      '    command: other-server',
+      '    args:',
+      '      - mcp',
+      '      - serve',
+      '',
+    ].join('\n'));
+    harness.files.set('/tmp/hermes/mcp.json', JSON.stringify({
+      notes: 'stale text: shopify-hermes-oauth used to be configured here',
+      servers: {
+        unrelated: {
+          command: 'shopify-hermes-oauth-helper',
+          args: ['mcp', 'serve'],
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['hermes', 'install'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.executedCommands).toEqual([{
+      command: 'hermes',
+      args: ['mcp', 'add', 'shopify-hermes-oauth', '--command', 'shopify-hermes-oauth', '--args', 'mcp', 'serve'],
+    }]);
+    expect(harness.stdout.join('\n')).toContain('Configured Hermes MCP server: shopify-hermes-oauth.');
+  });
+
+  it('is idempotent for valid Hermes MCP config with command and args shape', async () => {
+    const harness = createHarness({ commandExists: (command) => command === 'hermes' });
+    harness.files.set('/tmp/hermes/config.json', JSON.stringify({
+      mcpServers: {
+        shopify: {
+          command: 'shopify-hermes-oauth',
+          args: ['mcp', 'serve'],
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['hermes', 'install'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.executedCommands).toEqual([]);
+    expect(harness.stdout.join('\n')).toContain('Hermes MCP server already configured: shopify-hermes-oauth.');
+  });
+
+  it('does not treat unrelated JSON metadata command and args as installed', async () => {
+    const harness = createHarness({ commandExists: (command) => command === 'hermes' });
+    harness.files.set('/tmp/hermes/config.json', JSON.stringify({
+      metadata: {
+        lastCommand: {
+          command: 'shopify-hermes-oauth',
+          args: ['mcp', 'serve'],
+        },
+      },
+      mcpServers: {
+        unrelated: {
+          command: 'other-server',
+          args: ['mcp', 'serve'],
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['hermes', 'install'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.executedCommands).toEqual([{
+      command: 'hermes',
+      args: ['mcp', 'add', 'shopify-hermes-oauth', '--command', 'shopify-hermes-oauth', '--args', 'mcp', 'serve'],
+    }]);
+    expect(harness.stdout.join('\n')).toContain('Configured Hermes MCP server: shopify-hermes-oauth.');
+  });
+
+  it('does not treat JSON MCP config with malformed non-string args as installed', async () => {
+    const harness = createHarness({ commandExists: (command) => command === 'hermes' });
+    harness.files.set('/tmp/hermes/mcp.json', JSON.stringify({
+      servers: {
+        shopify: {
+          command: 'shopify-hermes-oauth',
+          args: ['mcp', 123, 'serve'],
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['hermes', 'install'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.executedCommands).toEqual([{
+      command: 'hermes',
+      args: ['mcp', 'add', 'shopify-hermes-oauth', '--command', 'shopify-hermes-oauth', '--args', 'mcp', 'serve'],
+    }]);
+    expect(harness.stdout.join('\n')).toContain('Configured Hermes MCP server: shopify-hermes-oauth.');
+  });
+
   it('returns failure with sanitized manual fallback when Hermes MCP add fails', async () => {
     const harness = createHarness({
       env: {
