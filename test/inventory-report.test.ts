@@ -81,7 +81,7 @@ describe('inventory report service', () => {
       lowStockThreshold: 5,
       rows: [
         inventoryRow({ productTitle: 'A | Shirt', available: 5, lowStock: true }),
-        inventoryRow({ productGid: 'gid://shopify/Product/1002', productId: '1002', productTitle: ' =Bad', variantGid: 'gid://shopify/ProductVariant/2002', variantId: '2002', sku: '', inventoryItemGid: 'gid://shopify/InventoryItem/3002', inventoryItemId: '3002', locationName: '\tRetail', available: null, onHand: null, committed: null, lowStock: false }),
+        inventoryRow({ productGid: 'gid://shopify/Product/1002', productId: '1002', productTitle: ' =1+1', variantGid: 'gid://shopify/ProductVariant/2002', variantId: '2002', variantTitle: '\t=Variant', sku: ' +SKU', inventoryItemGid: 'gid://shopify/InventoryItem/3002', inventoryItemId: '3002', locationName: '\tRetail', available: null, onHand: null, committed: null, lowStock: false }),
       ],
     };
 
@@ -89,13 +89,13 @@ describe('inventory report service', () => {
       '| Product ID | Product GID | Product | Variant ID | Variant GID | Variant | SKU | Inventory Item GID | Location | Available | On Hand | Committed | Low Stock |',
       '| --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |',
       '| 1001 | gid://shopify/Product/1001 | A \\| Shirt | 2001 | gid://shopify/ProductVariant/2001 | Red / S | SKU-RED-S | gid://shopify/InventoryItem/3001 | Main Warehouse | 5 | 7 | 2 | yes |',
-      '| 1002 | gid://shopify/Product/1002 |  =Bad | 2002 | gid://shopify/ProductVariant/2002 | Red / S |  | gid://shopify/InventoryItem/3002 | \\tRetail |  |  |  | no |',
+      '| 1002 | gid://shopify/Product/1002 |  =1+1 | 2002 | gid://shopify/ProductVariant/2002 | \\t=Variant |  +SKU | gid://shopify/InventoryItem/3002 | \\tRetail |  |  |  | no |',
     ].join('\n'));
     expect(formatInventoryReport(report, 'json')).toBe(JSON.stringify(report, null, 2));
     expect(formatInventoryReport(report, 'csv')).toBe([
       'productId,productGid,productTitle,variantId,variantGid,variantTitle,sku,inventoryItemGid,locationName,available,onHand,committed,lowStock',
       '"1001","gid://shopify/Product/1001","A | Shirt","2001","gid://shopify/ProductVariant/2001","Red / S","SKU-RED-S","gid://shopify/InventoryItem/3001","Main Warehouse","5","7","2","true"',
-      '"1002","gid://shopify/Product/1002","\' =Bad","2002","gid://shopify/ProductVariant/2002","Red / S","","gid://shopify/InventoryItem/3002","\'\\tRetail","","","","false"',
+      '"1002","gid://shopify/Product/1002","\' =1+1","2002","gid://shopify/ProductVariant/2002","\'\\t=Variant","\' +SKU","gid://shopify/InventoryItem/3002","\'\\tRetail","","","","false"',
     ].join('\n'));
   });
 

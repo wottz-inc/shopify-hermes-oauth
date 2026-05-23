@@ -1,3 +1,5 @@
+import { csvCell } from './csv.js';
+
 export const ORDERS_REPORT_QUERY = `
   query OrdersReport($first: Int!, $after: String, $query: String!) {
     orders(first: $first, after: $after, query: $query, sortKey: CREATED_AT) {
@@ -368,15 +370,6 @@ function extractNumericId(gid: string): string {
 
 function markdownCell(value: string): string {
   return sanitizeOutput(value).replace(/\|/gu, '\\|');
-}
-
-function csvCell(value: string): string {
-  const neutralized = isSpreadsheetFormulaCandidate(value) ? `'${sanitizeOutput(value)}` : sanitizeOutput(value);
-  return `"${neutralized.replace(/"/gu, '""')}"`;
-}
-
-function isSpreadsheetFormulaCandidate(value: string): boolean {
-  return /^[\s]*[=+\-@]/u.test(value);
 }
 
 function sanitizeOutput(value: string): string {

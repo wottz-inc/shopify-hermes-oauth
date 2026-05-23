@@ -133,13 +133,15 @@ describe('orders report service', () => {
       window: { from: '2026-05-01', to: '2026-05-02', query: 'created_at:>=2026-05-01 created_at:<=2026-05-02' },
       orders: [{
         ...orderItem(),
-        name: ' =cmd',
-        lineItemsSummary: ' -bad x1',
+        name: ' =1+1',
+        financialStatus: '\t=cmd',
+        lineItemsSummary: ' +bad x1',
       }],
     }, 'csv');
 
-    expect(csv).toContain('"\' =cmd"');
-    expect(csv).toContain('"\' -bad x1"');
+    expect(csv).toContain('"\' =1+1"');
+    expect(csv).toContain('"\'\\t=cmd"');
+    expect(csv).toContain('"\' +bad x1"');
   });
 
   it('omits customer fields from generated order output even when Shopify returns them', async () => {

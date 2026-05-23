@@ -1,3 +1,5 @@
+import { csvCell } from './csv.js';
+
 export const PRODUCTS_REPORT_QUERY = `
   query ProductsReport($first: Int!, $after: String) {
     products(first: $first, after: $after) {
@@ -278,24 +280,6 @@ function formatInventory(value: number | null): string {
 
 function markdownCell(value: string): string {
   return sanitizeOutput(value).replace(/\|/gu, '\\|');
-}
-
-function csvCell(value: string): string {
-  const neutralized = isSpreadsheetFormulaCandidate(value) ? `'${sanitizeOutput(value)}` : sanitizeOutput(value);
-
-  return `"${neutralized.replace(/"/gu, '""')}"`;
-}
-
-function isSpreadsheetFormulaCandidate(value: string): boolean {
-  const firstCharacter = value.at(0);
-
-  return firstCharacter === '='
-    || firstCharacter === '+'
-    || firstCharacter === '-'
-    || firstCharacter === '@'
-    || firstCharacter === '\t'
-    || firstCharacter === '\r'
-    || firstCharacter === '\n';
 }
 
 function sanitizeOutput(value: string): string {

@@ -190,9 +190,9 @@ describe('products report service', () => {
       products: [
         {
           gid: 'gid://shopify/Product/1001',
-          id: '=1001',
-          title: '+SUM(A1:A2)',
-          handle: '-danger',
+          id: ' =1+1',
+          title: '\t=1+1',
+          handle: ' +SUM(A1:A2)',
           status: '@ACTIVE',
           vendor: '\tTabbed Vendor',
           productType: '\rCarriage Type',
@@ -204,7 +204,7 @@ describe('products report service', () => {
 
     expect(formatProductsReport(report, 'csv')).toBe([
       'id,gid,title,handle,status,vendor,productType,totalInventory,variantsSummary',
-      '"\'=1001","gid://shopify/Product/1001","\'+SUM(A1:A2)","\'-danger","\'@ACTIVE","\'\\tTabbed Vendor","\'\\rCarriage Type","","\'\\nVariant (sku==SKU, inventory=1)"',
+      '"\' =1+1","gid://shopify/Product/1001","\'\\t=1+1","\' +SUM(A1:A2)","\'@ACTIVE","\'\\tTabbed Vendor","\'\\rCarriage Type","","\'\\nVariant (sku==SKU, inventory=1)"',
     ].join('\n'));
   });
 
