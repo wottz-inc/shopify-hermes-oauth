@@ -24,14 +24,14 @@ Findings:
 - `/auth/start` normalizes and validates `<shop>.myshopify.com` domains before redirecting to Shopify.
 - The OAuth start URL includes `client_id`, requested scopes, callback URL, and opaque state; it does not include the client secret or access tokens.
 - Callback handling validates required `shop`, `code`, `state`, `timestamp`, and `hmac` parameters.
-- HMAC validation excludes `hmac` and `signature`, sorts query parameters, signs with `sha256`, checks hex shape, and compares using `timingSafeEqual`.
+- HMAC validation now delegates OAuth callback query verification to the official `@shopify/shopify-api` helper (`shopify.utils.validateHmac(..., { signator: 'admin' })`) instead of maintaining project-owned callback signing/comparison crypto.
 - Stale callbacks are rejected before state consumption or token exchange.
 - State is consumed before token exchange, and a shop mismatch between state and callback rejects the install.
 - Error responses are generic (`Invalid OAuth callback`) and do not echo callback parameters, tokens, HMACs, or client secrets.
 
 Notes/residual risk:
 
-- The current server contains a project-owned HMAC implementation. The PRD prefers official Shopify library helpers where practical, and `docs/decisions/0001-shopify-official-api-package.md` tracks that direction. For v0.1, tests cover the implemented flow, but replacing callback validation with official Shopify helpers remains an appropriate future hardening task.
+- The prior project-owned OAuth callback HMAC implementation has been removed. Callback ordering remains explicit: required parameters and local stale timestamp checks run before official HMAC validation; invalid HMACs reject before state consumption, token exchange, or token storage; state remains single-use; shop mismatch and other callback failures continue to return the same generic response.
 
 ## MCP allowlist and read-only posture
 
@@ -83,4 +83,4 @@ Known intentional storage path:
 - Live Shopify credential testing is out of scope for unit tests and was not performed.
 - The default local JSON token store relies on host filesystem security and owner-only permissions; teams with stronger requirements can add a pluggable external secret store later.
 - Report outputs intentionally contain read-only Shopify business data. The security goal is to avoid secrets/tokens and raw write tools; downstream users still need to handle report data according to their own data policies.
-- Official Shopify OAuth/HMAC helpers should remain a future hardening target where integration is practical.
+- OAuth callback HMAC verification now uses Shopify's official helper. Live Shopify credential testing remains out of scope for unit tests and should follow the redacted live validation runbook when performed.

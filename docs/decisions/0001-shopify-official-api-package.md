@@ -39,3 +39,8 @@ Protocol ownership for this project:
 - Adds a moderate dependency tree (`@shopify/shopify-api` and its official client dependencies), which is acceptable for a connector that will implement OAuth and Admin API calls.
 - Tests must avoid live Shopify calls. Non-live tests should instantiate/import the official package and assert expected local surfaces only.
 - Future implementation should centralize Shopify API initialization in a small adapter module so Hermes-specific code does not spread direct dependency usage everywhere.
+
+## Follow-up notes
+
+- Issue #22 replaced the project-owned OAuth callback HMAC signing/comparison logic with `shopify.utils.validateHmac(query, { signator: 'admin' })` from `@shopify/shopify-api` v13.
+- The callback route still owns Hermes-specific safety ordering around the official helper: required parameter checks and the local stale timestamp guard happen first, HMAC failure happens before state consumption/token exchange/token storage, state is single-use, shop mismatch rejects, and callback errors remain generic.

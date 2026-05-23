@@ -1,5 +1,7 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+
+import '@shopify/shopify-api/adapters/node';
+import { ApiVersion, LogSeverity, shopifyApi } from '@shopify/shopify-api';
 
 import { normalizeShopDomain } from './shop-domain.js';
 
@@ -57,6 +59,10 @@ export type OAuthTokenExchange = (
   input: OAuthTokenExchangeInput,
 ) => Promise<OAuthTokenExchangeResult> | OAuthTokenExchangeResult;
 
+type OAuthCallbackHmacValidator = (
+  query: Readonly<Record<string, string | undefined>>,
+) => Promise<boolean> | boolean;
+
 export interface OAuthHttpServerDependencies {
   readonly config: OAuthHttpServerConfig;
   readonly stateStore: OAuthStateStore;
@@ -66,7 +72,24 @@ export interface OAuthHttpServerDependencies {
   readonly maxCallbackAgeMs?: number;
 }
 
+interface OAuthHttpServerInternalDependencies extends OAuthHttpServerDependencies {
+  readonly hmacValidator: OAuthCallbackHmacValidator;
+}
+
 export function createOAuthHttpServer(dependencies: OAuthHttpServerDependencies): Server {
+  const resolvedDependencies: OAuthHttpServerInternalDependencies = {
+    ...dependencies,
+    hmacValidator: createShopifyHmacValidator(dependencies.config),
+  };
+
+  return createServer((request, response) => {
+    void routeRequest(request, response, resolvedDependencies);
+  });
+}
+
+export function createOAuthHttpServerForTesting(
+  dependencies: OAuthHttpServerInternalDependencies,
+): Server {
   return createServer((request, response) => {
     void routeRequest(request, response, dependencies);
   });
@@ -75,7 +98,7 @@ export function createOAuthHttpServer(dependencies: OAuthHttpServerDependencies)
 async function routeRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  dependencies: OAuthHttpServerDependencies,
+  dependencies: OAuthHttpServerInternalDependencies,
 ): Promise<void> {
   const url = parseRequestUrl(request, dependencies.config.appUrl);
 
@@ -110,7 +133,7 @@ async function routeRequest(
 function handleAuthStart(
   url: URL,
   response: ServerResponse,
-  dependencies: OAuthHttpServerDependencies,
+  dependencies: OAuthHttpServerInternalDependencies,
 ): void {
   const shopParam = url.searchParams.get('shop');
 
@@ -133,10 +156,10 @@ function handleAuthStart(
 async function handleAuthCallback(
   url: URL,
   response: ServerResponse,
-  dependencies: OAuthHttpServerDependencies,
+  dependencies: OAuthHttpServerInternalDependencies,
 ): Promise<void> {
   try {
-    const callback = validateCallbackRequest(url, dependencies);
+    const callback = await validateCallbackRequest(url, dependencies);
     const stateRecord = dependencies.stateStore.consume(callback.state);
 
     if (stateRecord.shop !== callback.shop) {
@@ -163,15 +186,17 @@ async function handleAuthCallback(
   }
 }
 
-function validateCallbackRequest(
+async function validateCallbackRequest(
   url: URL,
-  dependencies: OAuthHttpServerDependencies,
-): { shop: string; code: string; state: string } {
+  dependencies: OAuthHttpServerInternalDependencies,
+): Promise<{ shop: string; code: string; state: string }> {
+  assertNoDuplicateCallbackParams(url.searchParams);
+
   const shop = normalizeShopDomain(url.searchParams.get('shop') ?? '');
   const code = requiredParam(url, 'code');
   const state = requiredParam(url, 'state');
   const timestamp = parseTimestamp(requiredParam(url, 'timestamp'));
-  const hmac = requiredParam(url, 'hmac');
+  requiredParam(url, 'hmac');
   const now = dependencies.now ?? Date.now;
   const maxAgeMs = dependencies.maxCallbackAgeMs ?? DEFAULT_MAX_CALLBACK_AGE_MS;
 
@@ -179,11 +204,42 @@ function validateCallbackRequest(
     throw new Error('Stale OAuth callback');
   }
 
-  if (!isValidHmac(url.searchParams, dependencies.config.clientSecret, hmac)) {
+  if (!(await dependencies.hmacValidator(callbackQuery(url.searchParams)))) {
     throw new Error('Invalid HMAC');
   }
 
   return { shop, code, state };
+}
+
+function assertNoDuplicateCallbackParams(params: URLSearchParams): void {
+  const seen = new Set<string>();
+
+  for (const key of params.keys()) {
+    if (seen.has(key)) {
+      throw new Error('Duplicate OAuth callback parameter');
+    }
+
+    seen.add(key);
+  }
+}
+
+function createShopifyHmacValidator(config: OAuthHttpServerConfig): OAuthCallbackHmacValidator {
+  const shopify = shopifyApi({
+    apiKey: config.clientId,
+    apiSecretKey: config.clientSecret,
+    apiVersion: ApiVersion.January26,
+    hostName: new URL(config.appUrl).host,
+    isEmbeddedApp: false,
+    logger: { level: LogSeverity.Error },
+    scopes: [...config.scopes],
+    _logDisabledFutureFlags: false,
+  });
+
+  return (query) => shopify.utils.validateHmac(query, { signator: 'admin' });
+}
+
+function callbackQuery(params: URLSearchParams): Record<string, string | undefined> {
+  return Object.fromEntries(params.entries());
 }
 
 function requiredParam(url: URL, name: string): string {
@@ -210,25 +266,6 @@ function parseTimestamp(value: string): number {
   return timestamp;
 }
 
-function isValidHmac(params: URLSearchParams, clientSecret: string, providedHmac: string): boolean {
-  if (!/^[a-f0-9]{64}$/iu.test(providedHmac)) {
-    return false;
-  }
-
-  const expectedHmac = createHmac('sha256', clientSecret).update(hmacMessage(params)).digest('hex');
-  const expected = Buffer.from(expectedHmac, 'hex');
-  const provided = Buffer.from(providedHmac, 'hex');
-
-  return expected.length === provided.length && timingSafeEqual(expected, provided);
-}
-
-function hmacMessage(params: URLSearchParams): string {
-  return [...params.entries()]
-    .filter(([key]) => key !== 'hmac' && key !== 'signature')
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${key}=${value}`)
-    .join('&');
-}
 
 function normalizeScopes(scopes: readonly string[] | string): readonly string[] {
   if (typeof scopes === 'string') {

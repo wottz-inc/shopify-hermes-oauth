@@ -103,16 +103,17 @@ describe('OAuth HTTP server routes', () => {
   });
 
   it('rejects an invalid callback state before token exchange or token store', async () => {
-    const deps = makeDeps();
+    const deps = { ...makeDeps(), now: Date.now };
     deps.stateStore.consume.mockImplementation(() => {
       throw new Error('Invalid or expired OAuth state');
     });
     const { baseUrl } = await listen(deps);
+    const callbackTimestamp = Math.floor(Date.now() / 1_000).toString(10);
     const callbackUrl = signedCallbackUrl(baseUrl, {
       shop: 'example.myshopify.com',
       code: 'oauth-code',
       state: 'state-123',
-      timestamp: '1700000000',
+      timestamp: callbackTimestamp,
     });
 
     const response = await fetch(callbackUrl);
@@ -125,13 +126,14 @@ describe('OAuth HTTP server routes', () => {
   });
 
   it('exchanges and stores a token for a valid mocked callback', async () => {
-    const deps = makeDeps();
+    const deps = { ...makeDeps(), now: Date.now };
     const { baseUrl } = await listen(deps);
+    const callbackTimestamp = Math.floor(Date.now() / 1_000).toString(10);
     const callbackUrl = signedCallbackUrl(baseUrl, {
-      shop: 'Example.myshopify.com',
+      shop: 'example.myshopify.com',
       code: 'oauth-code',
       state: 'state-123',
-      timestamp: '1700000000',
+      timestamp: callbackTimestamp,
     });
 
     const response = await fetch(callbackUrl);
