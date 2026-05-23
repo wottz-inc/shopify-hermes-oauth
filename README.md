@@ -35,6 +35,10 @@ If neither tunnel tool is installed, it does not start a misleading local-only O
 - No required private infrastructure, hosted forge, hosted service, or third-party secret manager.
 - No raw write-capable Shopify Admin GraphQL exposed to agents.
 
+## Token-store lock waits
+
+Local token-store writes use an owner-only lock file. The default lock-acquisition timeout is 10 seconds so interactive CLI commands fail promptly when another process leaves an active or unrecoverable lock behind. Batch jobs or tests that need longer waits can override this through the local file dependency hook (`lockTimeoutMs`) while retaining the same stale-lock recovery behavior.
+
 ## Dependency hygiene
 
 CI runs `npm audit --audit-level=high` after `npm ci` so high, critical, or worse dependency advisories fail the build while non-actionable low/moderate advisories remain non-blocking. `npm outdated` is an informational local maintenance check for reviewers and maintainers; it is not a blocking CI gate because new package releases alone do not imply an actionable or deterministic failure.

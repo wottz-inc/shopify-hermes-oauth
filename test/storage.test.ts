@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ensureDataDirectory, withFileLock, writeJsonAtomic } from '../src/storage/local-files.js';
 
@@ -15,6 +15,7 @@ async function makeTempRoot(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -137,33 +138,69 @@ describe('secure local file utilities', () => {
     ).rejects.toBe(operationError);
   });
 
-  it('times out without removing an active non-stale lock', async () => {
+  it('defaults token-store lock waits to 10 seconds for interactive flows', async () => {
     const root = await makeTempRoot();
     const file = join(root, 'tokens.json');
     const existingLockError = Object.assign(new Error('lock exists'), { code: 'EEXIST' });
+    let nowMs = 0;
+    let metadataReads = 0;
     let unlinkAttempted = false;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
 
     await expect(
       withFileLock(file, () => Promise.resolve('not-run'), {
         writeFile: () => {
           throw existingLockError;
         },
-        readFile: () =>
-          JSON.stringify({
+        readFile: () => {
+          metadataReads += 1;
+          nowMs += 1_000;
+          return JSON.stringify({
             owner: 'active-owner',
             pid: 12345,
             hostname: 'active-host',
-            createdAt: new Date().toISOString(),
-          }),
+            createdAt: new Date(nowMs).toISOString(),
+          });
+        },
         unlink: () => {
           unlinkAttempted = true;
           throw new Error('active lock should not be removed');
         },
-        lockRetryIntervalMs: 1,
-        lockTimeoutMs: 5,
+        lockRetryIntervalMs: 0,
       }),
     ).rejects.toThrow('Timed out waiting for token store lock.');
+    expect(metadataReads).toBe(10);
     expect(unlinkAttempted).toBe(false);
+  });
+
+  it('honors dependency overrides for longer batch lock waits', async () => {
+    const root = await makeTempRoot();
+    const file = join(root, 'tokens.json');
+    const existingLockError = Object.assign(new Error('lock exists'), { code: 'EEXIST' });
+    let nowMs = 0;
+    let metadataReads = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    await expect(
+      withFileLock(file, () => Promise.resolve('not-run'), {
+        writeFile: () => {
+          throw existingLockError;
+        },
+        readFile: () => {
+          metadataReads += 1;
+          nowMs += 1_000;
+          return JSON.stringify({
+            owner: 'active-owner',
+            pid: 12345,
+            hostname: 'active-host',
+            createdAt: new Date(nowMs).toISOString(),
+          });
+        },
+        lockRetryIntervalMs: 0,
+        lockTimeoutMs: 45_000,
+      }),
+    ).rejects.toThrow('Timed out waiting for token store lock.');
+    expect(metadataReads).toBe(45);
   });
 
   it('throws lock cleanup errors only after successful operations', async () => {

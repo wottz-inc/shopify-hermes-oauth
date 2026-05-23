@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 const DATA_DIRECTORY_MODE = 0o700;
 const LOCAL_STATE_FILE_MODE = 0o600;
 const LOCK_RETRY_INTERVAL_MS = 10;
-const LOCK_TIMEOUT_MS = 30_000;
+const LOCK_TIMEOUT_MS = 10_000;
 const LOCK_STALE_MS = 10 * 60_000;
 
 interface LockMetadata {
