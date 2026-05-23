@@ -4,7 +4,7 @@ Hermes-first Shopify OAuth connector for agent-safe multi-store access, read-onl
 
 This repository is being planned as the native Shopify OAuth access layer for Hermes agents. See [`docs/PRD.md`](docs/PRD.md) for the product requirements, implementation specification, milestones, and v0.1 acceptance criteria.
 
-For practical setup, see [`docs/shopify-app-setup.md`](docs/shopify-app-setup.md). It separates automated CLI/Hermes steps from unavoidable Shopify dashboard and store approval steps.
+For practical setup, see [`docs/shopify-app-setup.md`](docs/shopify-app-setup.md). It separates automated CLI/Hermes steps from unavoidable Shopify dashboard and store approval steps. Reviewers can also find the security notes in [`docs/SECURITY_REVIEW.md`](docs/SECURITY_REVIEW.md) and the live dev-store validation runbook in [`docs/LIVE_DEV_STORE_VALIDATION.md`](docs/LIVE_DEV_STORE_VALIDATION.md).
 
 Quick dev tunnel helper:
 
@@ -23,7 +23,7 @@ If neither tunnel tool is installed, it does not start a misleading local-only O
 
 ## Intended positioning
 
-- Use the upstream Hermes `shopify` skill for direct one-store token/curl GraphQL operations.
+- Use the upstream Hermes `shopify` skill for direct-token Admin GraphQL/curl operations and other single-token/direct-token GraphQL/curl workflows.
 - Use `shopify-hermes-oauth` for durable OAuth installs, multi-store access, curated MCP tools, read-only reports, and guarded future write operations.
 
 ## v0.1 principles

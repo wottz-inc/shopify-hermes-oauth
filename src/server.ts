@@ -143,7 +143,7 @@ function handleAuthStart(
     const stateRecord = dependencies.stateStore.create({ shop, redirectUri });
     const oauthUrl = new URL(SHOPIFY_OAUTH_PATH, `https://${shop}`);
     oauthUrl.searchParams.set('client_id', dependencies.config.clientId);
-    oauthUrl.searchParams.set('scope', dependencies.config.scopes.join(','));
+    oauthUrl.searchParams.set('scope', normalizeScopes(dependencies.config.scopes).join(','));
     oauthUrl.searchParams.set('redirect_uri', redirectUri);
     oauthUrl.searchParams.set('state', stateRecord.state);
 
@@ -195,6 +195,7 @@ async function validateCallbackRequest(
   const shop = normalizeShopDomain(url.searchParams.get('shop') ?? '');
   const code = requiredParam(url, 'code');
   const state = requiredParam(url, 'state');
+  // Shopify callback timestamps are seconds since epoch; convert to milliseconds for Date.now comparisons below.
   const timestamp = parseTimestamp(requiredParam(url, 'timestamp'));
   requiredParam(url, 'hmac');
   const now = dependencies.now ?? Date.now;
@@ -231,7 +232,7 @@ function createShopifyHmacValidator(config: OAuthHttpServerConfig): OAuthCallbac
     hostName: new URL(config.appUrl).host,
     isEmbeddedApp: false,
     logger: { level: LogSeverity.Error },
-    scopes: [...config.scopes],
+    scopes: [...normalizeScopes(config.scopes)],
     _logDisabledFutureFlags: false,
   });
 
@@ -268,14 +269,11 @@ function parseTimestamp(value: string): number {
 
 
 function normalizeScopes(scopes: readonly string[] | string): readonly string[] {
-  if (typeof scopes === 'string') {
-    return scopes
-      .split(',')
-      .map((scope) => scope.trim())
-      .filter((scope) => scope.length > 0);
-  }
+  const scopeList = typeof scopes === 'string' ? scopes.split(',') : scopes;
 
-  return scopes;
+  return scopeList
+    .map((scope) => scope.trim())
+    .filter((scope) => scope.length > 0);
 }
 
 function callbackUrl(appUrl: string): string {

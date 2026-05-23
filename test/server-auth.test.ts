@@ -70,6 +70,28 @@ describe('OAuth HTTP server routes', () => {
     expect(location).not.toContain(clientSecret);
   });
 
+  it('trims and drops blank programmatic config scopes before building the Shopify OAuth URL', async () => {
+    const baseDeps = makeDeps();
+    const deps: OAuthHttpServerDependencies = {
+      ...baseDeps,
+      config: {
+        ...baseDeps.config,
+        scopes: [' read_products ', '', '  ', 'write_orders'],
+      },
+    };
+    const { baseUrl } = await listen(deps);
+
+    const response = await fetch(`${baseUrl}/auth/start?shop=Example-Shop.myshopify.com`, {
+      redirect: 'manual',
+    });
+
+    expect(response.status).toBe(302);
+    const location = response.headers.get('location');
+    expect(location).not.toBeNull();
+    const redirectUrl = new URL(location ?? '');
+    expect(redirectUrl.searchParams.get('scope')).toBe('read_products,write_orders');
+  });
+
   it('rejects invalid /auth/start shop input without leaking user input', async () => {
     const { baseUrl } = await listen(makeDeps());
 
