@@ -408,7 +408,37 @@ Minimum test areas:
 - MCP tool allowlist and dispatch;
 - CLI smoke tests;
 - Hermes installer idempotence;
-- audit log secret rejection.
+- audit log secret rejection;
+- CSV formula neutralization shared across all report CSV outputs, including leading-whitespace cases;
+- MCP audit-string redaction for the same secret-like patterns as the canonical redactor;
+- route-level OAuth HTTP failure handling with no unhandled promise rejection;
+- adversarial config/env values such as very large timestamps and excessive scope lists.
+
+Dependency hygiene should be part of CI for the public package. At minimum, CI should run the normal test/typecheck/lint/build gates and a high-severity dependency advisory check. Any outdated-dependency check should be documented as either informational or blocking so the release signal stays deterministic.
+
+Documentation-content tests should separate safety contracts from copy-polish assertions. Safety tests must continue to enforce no pasted tokens, no private deployment terms, least-privilege defaults, current command names, and nested-connection limit guidance. Copy tests may be looser so routine wording edits do not encourage removing safety assertions.
+
+## 13.1 Full-repository review follow-up requirements
+
+A full repository review on 2026-05-23 found no critical blockers and rated the project ready with minor fixes, but all findings are now part of the design backlog. The follow-up milestone is [M7 — full-repository review follow-ups](https://github.com/wottz-inc/shopify-hermes-oauth/milestone/7), with issues #33-#47.
+
+### Release-hardening requirements
+
+1. **Shared CSV safety helper** ([#33](https://github.com/wottz-inc/shopify-hermes-oauth/issues/33)): products, orders, and inventory CSV serializers must use one shared neutralization helper. It must prefix cells that begin with whitespace or with whitespace followed by spreadsheet formula characters (`=`, `+`, `-`, `@`).
+2. **Canonical MCP audit redaction** ([#34](https://github.com/wottz-inc/shopify-hermes-oauth/issues/34)): MCP audit tool names and reasons must reuse the canonical sensitive-text redactor before truncation, rather than maintaining a narrower Shopify-only sanitizer.
+3. **Top-level HTTP route safety** ([#35](https://github.com/wottz-inc/shopify-hermes-oauth/issues/35)): the OAuth HTTP server must catch unexpected route-level failures and response-write failures with generic responses and no unhandled rejections.
+4. **Token-exchange boundary validation** ([#36](https://github.com/wottz-inc/shopify-hermes-oauth/issues/36)): the OAuth token exchange function must normalize and validate `input.shop` at the network boundary before constructing the Shopify token endpoint.
+5. **Doctor audit health behavior** ([#37](https://github.com/wottz-inc/shopify-hermes-oauth/issues/37)): `doctor` must either verify audit writability without appending to the main operational audit log, or write clearly isolated health-check records with documented semantics.
+6. **Shared strict JSON record guard** ([#38](https://github.com/wottz-inc/shopify-hermes-oauth/issues/38)): audit, MCP, report, and Admin parsing paths should use a single strict plain-object/JSON-record helper where serialized or audited data is accepted.
+7. **Non-duplicative MCP result payloads** ([#39](https://github.com/wottz-inc/shopify-hermes-oauth/issues/39)): MCP tools should avoid duplicating full JSON in both text content and structured content; prefer structured data plus a concise summary where useful.
+8. **Safe timestamp arithmetic** ([#40](https://github.com/wottz-inc/shopify-hermes-oauth/issues/40)): OAuth timestamp freshness checks should avoid unsafe second-to-millisecond multiplication for adversarially large safe integers.
+9. **Structured Hermes idempotence detection** ([#41](https://github.com/wottz-inc/shopify-hermes-oauth/issues/41)): `hermes install` must not treat comments or unrelated text containing `shopify-hermes-oauth` as proof that MCP is configured.
+10. **Scope-list caps** ([#42](https://github.com/wottz-inc/shopify-hermes-oauth/issues/42)): configured OAuth scopes should be trimmed, blank entries dropped, and over-large scope lists rejected before building OAuth URLs.
+11. **Dependency hygiene** ([#43](https://github.com/wottz-inc/shopify-hermes-oauth/issues/43)): CI should include a high-severity dependency advisory check and a documented policy for outdated packages.
+12. **Explicit dev-server readiness** ([#44](https://github.com/wottz-inc/shopify-hermes-oauth/issues/44)): `dev --tunnel` should wait for the local callback server's explicit listening signal or a bounded timeout, not a short stdout-silence window.
+13. **Interactive lock timeout tuning** ([#45](https://github.com/wottz-inc/shopify-hermes-oauth/issues/45)): token-store lock timeout defaults should be suitable for interactive CLI use, while preserving override hooks for batch/test flows.
+14. **Safety-vs-copy doc tests** ([#46](https://github.com/wottz-inc/shopify-hermes-oauth/issues/46)): documentation tests should make safety-critical assertions visibly non-negotiable and separate them from wording-polish assertions.
+15. **Production export hygiene for test seams** ([#47](https://github.com/wottz-inc/shopify-hermes-oauth/issues/47)): OAuth HTTP testing factories must not accidentally become public production exports; add an export-surface guard or move them to test-only modules.
 
 ## 14. Documentation deliverables
 

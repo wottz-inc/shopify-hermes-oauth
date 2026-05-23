@@ -84,3 +84,20 @@ Known intentional storage path:
 - The default local JSON token store relies on host filesystem security and owner-only permissions; teams with stronger requirements can add a pluggable external secret store later.
 - Report outputs intentionally contain read-only Shopify business data. The security goal is to avoid secrets/tokens and raw write tools; downstream users still need to handle report data according to their own data policies.
 - OAuth callback HMAC verification now uses Shopify's official helper. Live Shopify credential testing remains out of scope for unit tests and should follow the redacted live validation runbook when performed.
+
+## Full-repository review addendum — 2026-05-23
+
+A later full repository review found no critical security blockers and no known token-leak path, but it identified several hardening items that affect the security/design specification. These are tracked in [M7 — full-repository review follow-ups](https://github.com/wottz-inc/shopify-hermes-oauth/milestone/7).
+
+Security-relevant follow-ups:
+
+- [#33](https://github.com/wottz-inc/shopify-hermes-oauth/issues/33): make CSV formula-injection neutralization a shared helper and cover leading-whitespace formulas in products/orders/inventory reports.
+- [#34](https://github.com/wottz-inc/shopify-hermes-oauth/issues/34): make MCP audit-string sanitization call the canonical sensitive-text redactor before truncation.
+- [#35](https://github.com/wottz-inc/shopify-hermes-oauth/issues/35): catch unexpected OAuth HTTP route failures so malformed requests or socket edge cases cannot surface as unhandled rejections.
+- [#36](https://github.com/wottz-inc/shopify-hermes-oauth/issues/36): re-normalize the shop domain inside token exchange before constructing the Shopify token URL.
+- [#38](https://github.com/wottz-inc/shopify-hermes-oauth/issues/38): consolidate strict plain-object checks for JSON/audit/MCP paths.
+- [#40](https://github.com/wottz-inc/shopify-hermes-oauth/issues/40): make OAuth timestamp freshness arithmetic avoid unsafe multiplication for adversarially large values.
+- [#42](https://github.com/wottz-inc/shopify-hermes-oauth/issues/42): cap configured scope-list length before building OAuth URLs.
+- [#47](https://github.com/wottz-inc/shopify-hermes-oauth/issues/47): keep OAuth HTTP test seams out of production/public exports.
+
+Operational and maintainability follow-ups from the same review are tracked in [#37](https://github.com/wottz-inc/shopify-hermes-oauth/issues/37), [#39](https://github.com/wottz-inc/shopify-hermes-oauth/issues/39), [#41](https://github.com/wottz-inc/shopify-hermes-oauth/issues/41), [#43](https://github.com/wottz-inc/shopify-hermes-oauth/issues/43), [#44](https://github.com/wottz-inc/shopify-hermes-oauth/issues/44), [#45](https://github.com/wottz-inc/shopify-hermes-oauth/issues/45), and [#46](https://github.com/wottz-inc/shopify-hermes-oauth/issues/46). They do not change the v0.1 no-raw-GraphQL/no-write-MCP posture, but they should be addressed before treating the connector as polished for broader release.
