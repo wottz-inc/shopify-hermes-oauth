@@ -269,6 +269,127 @@ describe('curated MCP server', () => {
     expect(JSON.stringify(auditEvents)).not.toContain('accessToken');
   });
 
+  it('redacts canonical generic authorization and token-like text from MCP failure audit metadata', async () => {
+    const auditEvents: unknown[] = [];
+    const deps = {
+      ...createDeps(),
+      appendAuditEvent: (event: unknown) => { auditEvents.push(event); },
+      reportProducts: () => {
+        const bearerPlaceholder = ['synthetic', 'bearer', 'placeholder'].join('-');
+        throw new McpToolError(`dependency denied Authorization: Bearer ${bearerPlaceholder}`);
+      },
+    };
+    const providerPlaceholder = ['xoxb', 'synthetic', 'placeholder'].join('-');
+    const toolName = `shopify.${providerPlaceholder}`;
+
+    await expect(callTool(toolName, {}, deps)).rejects.toThrow('Tool is not allowed.');
+    await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com' }, deps)).rejects.toThrow(McpToolError);
+
+    const serializedAudit = JSON.stringify(auditEvents);
+    expect(auditEvents).toEqual([
+      {
+        action: 'mcp.tool',
+        result: 'failure',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.[REDACTED]', reason: 'Tool is not allowed.' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'failure',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'markdown', reason: 'Tool call failed.' },
+      },
+    ]);
+    expect(serializedAudit).not.toContain(providerPlaceholder);
+    expect(serializedAudit).not.toContain('synthetic-bearer-placeholder');
+    expect(serializedAudit).not.toContain('Bearer synthetic');
+  });
+
+  it('redacts canonical generic authorization and token-like text from MCP JSON-RPC errors', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const lines: unknown[] = [];
+    output.setEncoding('utf8');
+    output.on('data', (chunk: string) => {
+      for (const line of chunk.split('\n').filter((value) => value.length > 0)) {
+        lines.push(JSON.parse(line) as unknown);
+      }
+    });
+    const bearerPlaceholder = ['synthetic', 'bearer', 'placeholder'].join('-');
+    const providerPlaceholder = ['ya29', 'synthetic', 'placeholder'].join('.');
+    const deps = {
+      ...createDeps(),
+      reportProducts: () => {
+        throw new McpToolError(`dependency denied Authorization: Bearer ${bearerPlaceholder}`);
+      },
+    };
+
+    const server = startStdioMcpServer(deps, { input, output });
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'shopify.report_products', arguments: { shop: 'alpha.myshopify.com' } } })}\n`);
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: `shopify.${providerPlaceholder}`, arguments: {} } })}\n`);
+    input.end();
+    await server;
+
+    expect(lines).toEqual([
+      { jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'Tool call failed.' } },
+      { jsonrpc: '2.0', id: 2, error: { code: -32000, message: 'Tool is not allowed.' } },
+    ]);
+    const serializedLines = JSON.stringify(lines);
+    expect(serializedLines).not.toContain(bearerPlaceholder);
+    expect(serializedLines).not.toContain(providerPlaceholder);
+    expect(serializedLines).not.toContain('Bearer synthetic');
+  });
+
+  it('returns and audits generic failures when dependencies throw McpToolError with internal non-token details', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const lines: unknown[] = [];
+    const auditEvents: unknown[] = [];
+    output.setEncoding('utf8');
+    output.on('data', (chunk: string) => {
+      for (const line of chunk.split('\n').filter((value) => value.length > 0)) {
+        lines.push(JSON.parse(line) as unknown);
+      }
+    });
+    const internalDetail = 'tenant=acme-corp customer=ada@example.test db=primary-writer shard=eu-7 trace=9f86d081';
+    const deps = {
+      ...createDeps(),
+      appendAuditEvent: (event: unknown) => { auditEvents.push(event); },
+      reportProducts: () => {
+        throw new McpToolError(`dependency rejected request: ${internalDetail}`);
+      },
+    };
+
+    const server = startStdioMcpServer(deps, { input, output });
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'shopify.report_products', arguments: { shop: 'alpha.myshopify.com' } } })}\n`);
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'shopify.report_products', arguments: { shop: 'alpha.myshopify.com', internal: internalDetail } } })}\n`);
+    input.end();
+    await server;
+
+    expect(lines).toEqual([
+      { jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'Tool call failed.' } },
+      { jsonrpc: '2.0', id: 2, error: { code: -32000, message: 'Unknown argument: internal.' } },
+    ]);
+    expect(auditEvents).toEqual([
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'failure',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'markdown', reason: 'Tool call failed.' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'failure',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'markdown', reason: 'Unknown argument: internal.' },
+      },
+    ]);
+    const serialized = JSON.stringify({ lines, auditEvents });
+    expect(serialized).not.toContain(internalDetail);
+    expect(serialized).not.toContain('ada@example.test');
+    expect(serialized).not.toContain('primary-writer');
+    expect(serialized).not.toContain('eu-7');
+  });
+
   it('marks over-boundary sanitized audit strings with an ellipsis only when truncated', async () => {
     const auditEvents: unknown[] = [];
     const deps = {
