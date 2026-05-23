@@ -108,6 +108,9 @@ const TOOL_DEFINITIONS: readonly McpToolDefinition[] = [
 ];
 
 const ALLOWED_TOOL_NAMES = new Set<string>(TOOL_DEFINITIONS.map((tool) => tool.name));
+const MCP_SUMMARY_MAX_KEYS = 5;
+const MCP_SUMMARY_MAX_KEY_LENGTH = 40;
+const MCP_SUMMARY_MAX_KEYS_TEXT_LENGTH = 160;
 
 export function listTools(): readonly McpToolDefinition[] {
   return TOOL_DEFINITIONS;
@@ -291,7 +294,7 @@ async function handleJsonRpcMessage(line: string, deps: McpServerDependencies): 
         const params = isRecord(request.params) ? request.params : {};
         const name = typeof params.name === 'string' ? params.name : '';
         const result = await callTool(name, params.arguments, deps);
-        return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result } };
+        return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: summarizeToolResult(result) }], structuredContent: result } };
       }
       default:
         return jsonRpcError(id, -32601, 'Method not found');
@@ -330,6 +333,43 @@ function validateExactArgs(args: unknown, allowedKeys: readonly string[]): void 
       throw new McpToolError(`Unknown argument: ${key}.`);
     }
   }
+}
+
+function summarizeToolResult(result: unknown): string {
+  if (!isRecord(result)) {
+    return 'Tool result available in structuredContent.';
+  }
+
+  const keys = summarizeToolResultKeys(Object.keys(result));
+  if (keys.length === 0) {
+    return 'Tool result available in structuredContent.';
+  }
+
+  return `Tool result available in structuredContent (keys: ${keys.join(', ')}${Object.keys(result).length > MCP_SUMMARY_MAX_KEYS ? ', …' : ''}).`;
+}
+
+function summarizeToolResultKeys(rawKeys: readonly string[]): readonly string[] {
+  const keys: string[] = [];
+  let textLength = 0;
+
+  for (const rawKey of rawKeys) {
+    const key = truncateText(sanitizeMcpErrorMessage(rawKey), MCP_SUMMARY_MAX_KEY_LENGTH);
+    if (key.length === 0) {
+      continue;
+    }
+    const separatorLength = keys.length === 0 ? 0 : 2;
+    if (keys.length >= MCP_SUMMARY_MAX_KEYS || textLength + separatorLength + key.length > MCP_SUMMARY_MAX_KEYS_TEXT_LENGTH) {
+      break;
+    }
+    keys.push(key);
+    textLength += separatorLength + key.length;
+  }
+
+  return keys;
+}
+
+function truncateText(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
 }
 
 function sanitizeToolOutput(value: unknown): unknown {

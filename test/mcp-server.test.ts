@@ -489,15 +489,100 @@ describe('curated MCP server', () => {
     expect(lines[0]).toEqual({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
     expect(lines[1]).toMatchObject({ jsonrpc: '2.0', id: 1, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} } } });
     expect(lines[2]).toMatchObject({ jsonrpc: '2.0', id: 2, result: { tools: listTools() } });
-    expect(lines[3]).toMatchObject({ jsonrpc: '2.0', id: 3, result: { structuredContent: {
-      shops: [{
-        shop: 'alpha.myshopify.com',
-        scopes: ['read_products', 'read_orders'],
-        storedAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-02T00:00:00.000Z',
-        metadata: { shopName: 'Alpha', currencyCode: 'USD', myshopifyDomain: 'alpha.myshopify.com' },
-      }],
-    } } });
+    expect(lines[3]).toMatchObject({ jsonrpc: '2.0', id: 3, result: {
+      content: [{ type: 'text', text: 'Tool result available in structuredContent (keys: shops).' }],
+      structuredContent: {
+        shops: [{
+          shop: 'alpha.myshopify.com',
+          scopes: ['read_products', 'read_orders'],
+          storedAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+          metadata: { shopName: 'Alpha', currencyCode: 'USD', myshopifyDomain: 'alpha.myshopify.com' },
+        }],
+      },
+    } });
+    const toolResult = lines[3] as { result: { content: readonly [{ text: string }]; structuredContent: unknown } };
+    const text = toolResult.result.content[0].text;
+    expect(text).not.toBe(JSON.stringify(toolResult.result.structuredContent));
+    expect(text).not.toContain('alpha.myshopify.com');
+    expect(text).not.toContain('accessToken');
+    expect(text).not.toContain('authorization');
+    expect(JSON.stringify(lines[3])).not.toContain('shpat_never-print-me');
+    expect(JSON.stringify(lines[3])).not.toContain('metadata-token-must-not-leak');
+  });
+
+  it('omits deeply nested token-like dependency keys from tools/call structured content and text', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const lines: unknown[] = [];
+    output.setEncoding('utf8');
+    output.on('data', (chunk: string) => {
+      for (const line of chunk.split('\n').filter((value) => value.length > 0)) {
+        lines.push(JSON.parse(line) as unknown);
+      }
+    });
+    const deps = {
+      ...createDeps(),
+      reportProducts: () => ({
+        safe: {
+          nested: {
+            accessToken: 'nested-access-token-must-not-leak',
+            refresh_token: 'nested-refresh-token-must-not-leak',
+            authorization: 'Bearer nested-authorization-must-not-leak',
+            rows: [{ id: '1', apiToken: 'nested-array-token-must-not-leak', title: 'Tee' }],
+          },
+        },
+      }),
+    };
+
+    const server = startStdioMcpServer(deps, { input, output });
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'shopify.report_products', arguments: { shop: 'alpha.myshopify.com' } } })}\n`);
+    input.end();
+    await server;
+
+    expect(lines).toEqual([
+      { jsonrpc: '2.0', id: 1, result: {
+        content: [{ type: 'text', text: 'Tool result available in structuredContent (keys: safe).' }],
+        structuredContent: { safe: { nested: { rows: [{ id: '1', title: 'Tee' }] } } },
+      } },
+    ]);
+    const serialized = JSON.stringify(lines);
+    expect(serialized).not.toContain('accessToken');
+    expect(serialized).not.toContain('refresh_token');
+    expect(serialized).not.toContain('apiToken');
+    expect(serialized).not.toContain('authorization');
+    expect(serialized).not.toContain('nested-access-token-must-not-leak');
+    expect(serialized).not.toContain('nested-refresh-token-must-not-leak');
+    expect(serialized).not.toContain('nested-array-token-must-not-leak');
+    expect(serialized).not.toContain('nested-authorization-must-not-leak');
+  });
+
+  it('length-caps tools/call text summaries for maliciously large top-level keys', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const lines: unknown[] = [];
+    output.setEncoding('utf8');
+    output.on('data', (chunk: string) => {
+      for (const line of chunk.split('\n').filter((value) => value.length > 0)) {
+        lines.push(JSON.parse(line) as unknown);
+      }
+    });
+    const hugeKey = `safe-${'x'.repeat(1_000)}`;
+    const deps = {
+      ...createDeps(),
+      reportProducts: () => ({ [hugeKey]: true, second: true, third: true, fourth: true, fifth: true, sixth: true }),
+    };
+
+    const server = startStdioMcpServer(deps, { input, output });
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'shopify.report_products', arguments: { shop: 'alpha.myshopify.com' } } })}\n`);
+    input.end();
+    await server;
+
+    expect(lines).toHaveLength(1);
+    const text = (lines[0] as { result: { content: readonly [{ text: string }] } }).result.content[0].text;
+    expect(text).toBe(`Tool result available in structuredContent (keys: safe-${'x'.repeat(34)}…, second, third, fourth, fifth, …).`);
+    expect(text).toHaveLength(125);
+    expect(text).not.toContain(hugeKey);
   });
 
   it('fails safely for unknown, raw GraphQL, and write-like tool names', async () => {
