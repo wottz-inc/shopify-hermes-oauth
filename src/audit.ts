@@ -347,7 +347,10 @@ function isSensitiveKey(key: string | undefined): boolean {
 }
 
 function looksLikeSecretValue(value: string): boolean {
-  return /^(?:(?:shpat|shpca|shpss|shppa)_[A-Za-z0-9_-]+|Bearer\s+\S+)$/iu.test(value);
+  return /(?:shpat|shpca|shpss|shppa)_[A-Za-z0-9_-]+/iu.test(value) ||
+    /^Bearer\s+\S+$/iu.test(value) ||
+    /(?:Authorization|X-Shopify-Access-Token)\s*:\s*(?:Bearer\s+)?\S+/iu.test(value) ||
+    /["']?(?:access[_-]?token|accessToken|client[_-]?secret|clientSecret|api[_-]?key|apiKey|private[_-]?key|privateKey)["']?\s*[=:]\s*["']?\S+/iu.test(value);
 }
 
 async function appendAuditLine(

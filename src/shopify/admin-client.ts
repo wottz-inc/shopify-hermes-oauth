@@ -110,7 +110,7 @@ export function redactSensitiveText(text: string): string {
     .replace(/(X-Shopify-Access-Token\s*:\s*)\S+/giu, '$1[REDACTED]')
     .replace(/(Cookie\s*:\s*)[^\r\n]+/giu, '$1[REDACTED]')
     .replace(/((?:access[_-]?token|token|authorization|cookie|session|secret|password|api[_-]?key|private[_-]?key|credentials?)\s*[=:]\s*)(?:Bearer\s+)?\S+/giu, '$1[REDACTED]')
-    .replace(/("(?:access[_-]?token|token|authorization|cookie|session|secret|password|api[_-]?key|private[_-]?key|credentials?|x-shopify-access-token)"\s*:\s*)"(?:[^"\\]|\\.)*"/giu, '$1"[REDACTED]"')
+    .replace(/("[^"]*(?:access[_-]?token|token|authorization|cookie|session|secret|password|api[_-]?key|private[_-]?key|credentials?|x-shopify-access-token)[^"]*"\s*:\s*)"(?:[^"\\]|\\.)*"/giu, '$1"[REDACTED]"')
     .replace(/\b(?:shpat|shpca|shpss|shppa)_[A-Za-z0-9_-]+\b/giu, '[REDACTED]');
 }
 

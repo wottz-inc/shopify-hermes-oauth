@@ -103,6 +103,54 @@ describe('JSONL audit writer', () => {
     await expect(readFile(auditLog, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('rejects embedded Shopify token substrings even when the field name is not sensitive', async () => {
+    const root = await makeTempRoot();
+    const auditLog = join(root, 'audit.jsonl');
+    const embeddedToken = 'upstream error included shpat_real_token_value';
+
+    await expect(
+      appendAuditEvent(auditLog, {
+        action: 'debug',
+        result: 'failure',
+        metadata: { value: embeddedToken },
+      }),
+    ).rejects.toThrow(AuditSecretError);
+
+    await expect(readFile(auditLog, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('rejects serialized JSON-like secret keys even when the field name is not sensitive', async () => {
+    const root = await makeTempRoot();
+    const auditLog = join(root, 'audit.jsonl');
+    const serializedSecret = '{ "clientSecret":"super-secret", "accessToken":"opaque-session-value" }';
+
+    await expect(
+      appendAuditEvent(auditLog, {
+        action: 'debug',
+        result: 'failure',
+        metadata: { value: serializedSecret },
+      }),
+    ).rejects.toThrow(AuditSecretError);
+
+    await expect(readFile(auditLog, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('rejects authorization header strings even when the field name is not sensitive', async () => {
+    const root = await makeTempRoot();
+    const auditLog = join(root, 'audit.jsonl');
+    const headerValue = 'X-Shopify-Access-Token: shpat_header_value_must_not_leak';
+
+    await expect(
+      appendAuditEvent(auditLog, {
+        action: 'debug',
+        result: 'failure',
+        metadata: { value: headerValue },
+      }),
+    ).rejects.toThrow(AuditSecretError);
+
+    await expect(readFile(auditLog, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('rejects metadata with toJSON functions before secret-like serialized data can bypass scanning', async () => {
     const root = await makeTempRoot();
     const auditLog = join(root, 'audit.jsonl');

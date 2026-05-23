@@ -119,4 +119,12 @@ describe('Shopify Admin GraphQL client', () => {
       }
     }
   });
+
+  it('redacts camelCase secret keys from raw JSON-like strings', () => {
+    const rawSecret = 'oauth-client-secret-value';
+    const redacted = redactSensitiveText(`{"clientSecret":"${rawSecret}","safe":"ok"}`);
+
+    expect(redacted).toBe('{"clientSecret":"[REDACTED]","safe":"ok"}');
+    expect(redacted).not.toContain(rawSecret);
+  });
 });
