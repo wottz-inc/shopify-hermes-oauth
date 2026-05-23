@@ -11,14 +11,39 @@ function readRunbook(): string {
   return readFileSync(runbookPath, 'utf8');
 }
 
-describe('live dev-store validation runbook', () => {
-  it('documents the required safe validation flow and exact connector commands', () => {
+function expectAllPresent(markdown: string, requiredSnippets: readonly string[]): void {
+  for (const required of requiredSnippets) {
+    expect(markdown).toContain(required);
+  }
+}
+
+// SAFETY-CRITICAL documentation tests are non-negotiable guardrails. If one of
+// these fails after a copy edit, update the documentation to preserve the safety
+// contract rather than deleting or weakening the assertion.
+describe('SAFETY-CRITICAL live dev-store validation runbook contracts', () => {
+  it('enforces dev/test-only validation and required redaction guidance', () => {
     const markdown = readRunbook();
 
-    for (const required of [
-      '# Live dev/test Shopify store validation runbook',
+    expectAllPresent(markdown, [
       'dev/test Shopify store only',
       'not a production-use playbook',
+      'Do not paste tokens, client secrets, raw callback query strings, token-store contents, or screenshots that show secrets',
+      'No live credentials are required in CI',
+      'Must redact or omit',
+      '<redacted-shop>.myshopify.com',
+      '<redacted-public-https-url>',
+      '<redacted-client-id>',
+      '<redacted-client-secret>',
+      '<redacted-access-token>',
+      'Do not paste screenshots that show secrets',
+      'Do not paste token store contents',
+    ]);
+  });
+
+  it('enforces the exact connector commands and MCP tool names reviewers may cite', () => {
+    const markdown = readRunbook();
+
+    expectAllPresent(markdown, [
       'shopify-hermes-oauth init',
       'shopify-hermes-oauth doctor',
       'shopify-hermes-oauth dev --tunnel',
@@ -38,32 +63,23 @@ describe('live dev-store validation runbook', () => {
       'shopify.report_orders',
       'shopify.report_inventory',
       'shopify-hermes-oauth shops remove <shop>.myshopify.com',
-    ]) {
-      expect(markdown).toContain(required);
-    }
+    ]);
   });
 
-  it('contains an evidence template that says what is safe to paste and what must be redacted', () => {
+  it('keeps least-privilege guidance discoverable from the validation flow', () => {
     const markdown = readRunbook();
+    const readOnlyGuidance = [
+      /read-only scopes expected for v0\.1/i,
+      /Keep v0\.1 read-only/i,
+      /raw GraphQL or write-like tool names are unavailable\/fail closed/i,
+    ];
 
-    for (const required of [
-      '## Evidence template for issues/PRs',
-      'Safe to paste',
-      'Must redact or omit',
-      '<redacted-shop>.myshopify.com',
-      '<redacted-public-https-url>',
-      '<redacted-client-id>',
-      '<redacted-client-secret>',
-      '<redacted-access-token>',
-      'Do not paste screenshots that show secrets',
-      'Do not paste token store contents',
-      'No live credentials are required in CI',
-    ]) {
-      expect(markdown).toContain(required);
+    for (const required of readOnlyGuidance) {
+      expect(markdown).toMatch(required);
     }
   });
 
-  it('keeps the public runbook generic and free of committed secrets or private infrastructure', () => {
+  it('keeps the public runbook free of committed secrets or private infrastructure', () => {
     const markdown = readRunbook();
 
     expect(markdown).not.toMatch(/Pendragon|Infisical|Forgejo|Tailscale/i);
@@ -74,5 +90,18 @@ describe('live dev-store validation runbook', () => {
     expect(markdown).not.toMatch(/SHOPIFY_HERMES_CLIENT_SECRET\s*=\s*[^\s<]/i);
     expect(markdown).not.toMatch(/https:\/\/[^\s<`]*ngrok[^\s<`]*/i);
     expect(markdown).not.toMatch(/https:\/\/[^\s<`]*trycloudflare[^\s<`]*/i);
+  });
+});
+
+// COPY/POLISH tests document broad structure only. These may be updated for
+// editorial changes as long as the SAFETY-CRITICAL tests above continue to pass.
+describe('copy-polish live dev-store validation runbook structure', () => {
+  it('keeps a validation title, numbered flow, and reusable evidence template', () => {
+    const markdown = readRunbook();
+
+    expect(markdown).toContain('# Live dev/test Shopify store validation runbook');
+    expect(markdown.match(/^## \d+\./gm)?.length).toBeGreaterThanOrEqual(8);
+    expect(markdown).toMatch(/^## Evidence template for issues\/PRs$/m);
+    expect(markdown).toMatch(/^## Safe to paste$/m);
   });
 });
