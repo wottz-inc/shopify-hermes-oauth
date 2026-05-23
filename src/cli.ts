@@ -509,8 +509,17 @@ async function startTunnelBackedDevServer(context: CliContext, provider: string,
     return 1;
   }
 
+  if (!hasCallbackServerReadiness(server.stdout ?? '')) {
+    context.stderr(`Local OAuth callback server did not become ready within 5 seconds. Run \`shopify-hermes-oauth serve --host ${DEV_HOST} --port ${DEV_PORT} --app-url ${publicUrl}\` for details.`);
+    return 1;
+  }
+
   printTunnelUrls(context, publicUrl);
   return 0;
+}
+
+function hasCallbackServerReadiness(output: string): boolean {
+  return output.includes(`OAuth callback server listening: ${DEV_LOCAL_URL}`);
 }
 
 function devServerArgs(publicUrl: string): readonly string[] {
@@ -1550,7 +1559,7 @@ function defaultExecuteCommand(command: string, args: readonly string[]): { read
   return { status: result.status };
 }
 
-async function defaultStartProcess(command: string, args: readonly string[]): Promise<StartedProcessResult> {
+export async function defaultStartProcess(command: string, args: readonly string[]): Promise<StartedProcessResult> {
   const child = spawn(command, [...args], {
     detached: false,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -1571,18 +1580,49 @@ async function defaultStartProcess(command: string, args: readonly string[]): Pr
 
   return new Promise((resolve) => {
     let settled = false;
-    const settle = (result: StartedProcessResult): void => {
+    const closeSpawnedProcess = (): void => {
+      child.stdout.destroy();
+      child.stderr.destroy();
+
+      if (!child.killed) {
+        child.kill();
+      }
+    };
+    const settle = (result: StartedProcessResult, options: { readonly closeChild?: boolean } = {}): void => {
       if (settled) {
         return;
       }
 
       settled = true;
       clearTimeout(timeout);
+
+      if (options.closeChild === true) {
+        closeSpawnedProcess();
+      }
+
       resolve(result);
     };
     const timeout = setTimeout(() => {
-      settle({ stdout: output });
-    }, command === 'shopify-hermes-oauth' ? 500 : 5_000);
+      settle({ stdout: output }, { closeChild: command === 'shopify-hermes-oauth' });
+    }, 5_000);
+
+    const settleIfReadyOrFailed = (): void => {
+      if (command === 'shopify-hermes-oauth') {
+        if (hasCallbackServerReadiness(output)) {
+          settle({ stdout: output });
+          return;
+        }
+
+        if (hasExplicitCallbackServerStartupError(output)) {
+          settle({ stdout: output, status: 1 }, { closeChild: true });
+          return;
+        }
+      }
+
+      if (extractPublicHttpsUrl(output, command) !== undefined) {
+        settle({ stdout: output });
+      }
+    };
 
     child.on('error', () => {
       settle({ stdout: output, status: 1 });
@@ -1590,17 +1630,13 @@ async function defaultStartProcess(command: string, args: readonly string[]): Pr
     child.on('exit', (status) => {
       settle({ stdout: output, status });
     });
-    child.stdout.on('data', () => {
-      if (extractPublicHttpsUrl(output, command) !== undefined) {
-        settle({ stdout: output });
-      }
-    });
-    child.stderr.on('data', () => {
-      if (extractPublicHttpsUrl(output, command) !== undefined) {
-        settle({ stdout: output });
-      }
-    });
+    child.stdout.on('data', settleIfReadyOrFailed);
+    child.stderr.on('data', settleIfReadyOrFailed);
   });
+}
+
+function hasExplicitCallbackServerStartupError(output: string): boolean {
+  return /(?:^|\n)(?:Error:|error:|OAuth callback server failed\.|Missing required configuration\.|.*\bEADDRINUSE\b)/u.test(output);
 }
 
 function defaultListenServer(server: Server, options: { readonly host: string; readonly port: number }): Promise<void> {

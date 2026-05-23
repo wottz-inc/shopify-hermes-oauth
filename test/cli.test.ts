@@ -1,10 +1,13 @@
 import { createHmac } from 'node:crypto';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { type Server } from 'node:http';
 import { type AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { runShopifyHermesOauthCli, type CliDependencies } from '../src/cli.js';
+import { defaultStartProcess, runShopifyHermesOauthCli, type CliDependencies } from '../src/cli.js';
 import { exchangeShopifyOAuthToken } from '../src/internal/shopify-oauth-token-exchange.js';
 
 function createHarness(overrides: Partial<CliDependencies> = {}) {
@@ -123,11 +126,59 @@ async function closeServer(server: Server | undefined): Promise<void> {
   });
 }
 
+async function withTemporaryPathExecutable(name: string, source: string, run: () => Promise<void>): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), 'shopify-hermes-oauth-test-'));
+  const executable = join(directory, name);
+  await writeFile(executable, source, { mode: 0o755 });
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${directory}:${previousPath ?? ''}`;
+
+  try {
+    await run();
+  } finally {
+    process.env.PATH = previousPath;
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as Error & { readonly code?: string }).code === 'ESRCH') {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+async function expectProcessToExit(pid: number): Promise<void> {
+  const deadline = Date.now() + 2_000;
+
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) {
+      expect(isProcessAlive(pid)).toBe(false);
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  expect(isProcessAlive(pid)).toBe(false);
+}
+
+async function readPidFile(path: string): Promise<number> {
+  return Number.parseInt((await readFile(path, 'utf8')).trim(), 10);
+}
+
 function expectNoOldStandaloneMcpAliases(markdown: string): void {
   for (const alias of ['shops_list', 'shops_verify', 'report_products', 'report_orders', 'report_inventory']) {
     expect(markdown).not.toMatch(new RegExp(`(^|[^.\\w])${alias}([^.\\w]|$)`, 'u'));
   }
 }
+
+const DEV_SERVER_READY_OUTPUT = 'OAuth callback server listening: http://127.0.0.1:3456\n';
 
 describe('CLI dev tunnel', () => {
   it('starts cloudflared before serve and passes the public app URL to serve', async () => {
@@ -139,7 +190,7 @@ describe('CLI dev tunnel', () => {
       commandExists: (command) => command === 'cloudflared' || command === 'ngrok',
       startProcess: (command, args) => {
         harness.startedProcesses.push({ command, args });
-        return { stdout: command === 'cloudflared' ? 'INF Requesting new quick Tunnel on trycloudflare.com... https://hermes-shopify.trycloudflare.com' : '' };
+        return { stdout: command === 'cloudflared' ? 'INF Requesting new quick Tunnel on trycloudflare.com... https://hermes-shopify.trycloudflare.com' : DEV_SERVER_READY_OUTPUT };
       },
     });
 
@@ -163,7 +214,7 @@ describe('CLI dev tunnel', () => {
       commandExists: (command) => command === 'ngrok',
       startProcess: (command, args) => {
         harness.startedProcesses.push({ command, args });
-        return { stdout: command === 'ngrok' ? 'Forwarding https://hermes-shopify.ngrok-free.app -> http://127.0.0.1:3456' : '' };
+        return { stdout: command === 'ngrok' ? 'Forwarding https://hermes-shopify.ngrok-free.app -> http://127.0.0.1:3456' : DEV_SERVER_READY_OUTPUT };
       },
     });
 
@@ -188,7 +239,7 @@ describe('CLI dev tunnel', () => {
         return {
           stdout: command === 'cloudflared'
             ? 'Docs: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/ Try: https://hermes-shopify.trycloudflare.com'
-            : '',
+            : DEV_SERVER_READY_OUTPUT,
         };
       },
     });
@@ -210,7 +261,7 @@ describe('CLI dev tunnel', () => {
         return {
           stdout: command === 'ngrok'
             ? 'Inspect traffic at https://dashboard.ngrok.com Forwarding https://hermes-shopify.ngrok.app -> http://127.0.0.1:3456'
-            : '',
+            : DEV_SERVER_READY_OUTPUT,
         };
       },
     });
@@ -232,7 +283,7 @@ describe('CLI dev tunnel', () => {
         return {
           stdout: command === 'cloudflared'
             ? 'Docs: https://trycloudflare.com Quick tunnel: https://hermes-shopify.trycloudflare.com'
-            : '',
+            : DEV_SERVER_READY_OUTPUT,
         };
       },
     });
@@ -258,7 +309,7 @@ describe('CLI dev tunnel', () => {
         return {
           stdout: command === 'ngrok'
             ? `Docs: https://${bareHostname}/docs Dashboard: https://dashboard.ngrok.com Forwarding https://hermes-shopify.${bareHostname} -> http://127.0.0.1:3456`
-            : '',
+            : DEV_SERVER_READY_OUTPUT,
         };
       },
     });
@@ -390,6 +441,40 @@ describe('CLI dev tunnel', () => {
     expect(harness.stderr.join('\n')).toContain('Local OAuth callback server failed to start.');
   });
 
+  it('fails safely when the public-url-aligned local server does not print readiness', async () => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'cloudflared',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return command === 'cloudflared'
+          ? { stdout: 'https://hermes-shopify.trycloudflare.com' }
+          : { stdout: 'booting without a listening signal' };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(1);
+    expect(harness.stderr.join('\n')).toContain('Local OAuth callback server did not become ready within 5 seconds.');
+  });
+
+  it('continues only after the public-url-aligned local server prints readiness', async () => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'cloudflared',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return command === 'cloudflared'
+          ? { stdout: 'https://hermes-shopify.trycloudflare.com' }
+          : { stdout: 'OAuth callback server listening: http://127.0.0.1:3456\nOAuth callback URL: https://hermes-shopify.trycloudflare.com/auth/callback' };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.stdout.join('\n')).toContain('Keep this command running while completing the Shopify install.');
+  });
+
   it('prints dev usage for missing tunnel flag', async () => {
     const harness = createHarness();
 
@@ -398,6 +483,80 @@ describe('CLI dev tunnel', () => {
     expect(exitCode).toBe(2);
     expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth dev --tunnel');
   });
+});
+
+describe('defaultStartProcess', () => {
+  it('waits for a slow callback-server readiness signal before resolving', async () => {
+    await withTemporaryPathExecutable('shopify-hermes-oauth', `#!/usr/bin/env node
+setTimeout(() => {
+  console.log('OAuth callback server listening: http://127.0.0.1:3456');
+}, 750);
+setTimeout(() => {}, 2000);
+`, async () => {
+      const startedAt = Date.now();
+      const result = await defaultStartProcess('shopify-hermes-oauth', ['serve']);
+
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(700);
+      expect(result).toEqual({ stdout: 'OAuth callback server listening: http://127.0.0.1:3456\n' });
+    });
+  });
+
+  it('fails safely when the callback server prints an explicit startup error', async () => {
+    await withTemporaryPathExecutable('shopify-hermes-oauth', `#!/usr/bin/env node
+setTimeout(() => {
+  console.error('Error: listen EADDRINUSE: address already in use 127.0.0.1:3456');
+}, 25);
+setTimeout(() => {}, 2000);
+`, async () => {
+      const result = await defaultStartProcess('shopify-hermes-oauth', ['serve']);
+
+      expect(result).toEqual({
+        stdout: 'Error: listen EADDRINUSE: address already in use 127.0.0.1:3456\n',
+        status: 1,
+      });
+    });
+  });
+
+  it('kills the callback server process after an explicit startup error', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'shopify-hermes-oauth-test-'));
+    const pidFile = join(directory, 'callback-server.pid');
+
+    await withTemporaryPathExecutable('shopify-hermes-oauth', `#!/usr/bin/env node
+const { writeFileSync } = require('node:fs');
+writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+setTimeout(() => {
+  console.error('Error: listen EADDRINUSE: address already in use 127.0.0.1:3456');
+}, 25);
+setInterval(() => {}, 1000);
+`, async () => {
+      const result = await defaultStartProcess('shopify-hermes-oauth', ['serve']);
+      const pid = await readPidFile(pidFile);
+
+      expect(result).toEqual({
+        stdout: 'Error: listen EADDRINUSE: address already in use 127.0.0.1:3456\n',
+        status: 1,
+      });
+      await expectProcessToExit(pid);
+    });
+  });
+
+  it('kills the callback server process after readiness timeout', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'shopify-hermes-oauth-test-'));
+    const pidFile = join(directory, 'callback-server.pid');
+
+    await withTemporaryPathExecutable('shopify-hermes-oauth', `#!/usr/bin/env node
+const { writeFileSync } = require('node:fs');
+writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+console.log('booting without a listening signal');
+setInterval(() => {}, 1000);
+`, async () => {
+      const result = await defaultStartProcess('shopify-hermes-oauth', ['serve']);
+      const pid = await readPidFile(pidFile);
+
+      expect(result).toEqual({ stdout: 'booting without a listening signal\n' });
+      await expectProcessToExit(pid);
+    });
+  }, 10_000);
 });
 
 describe('CLI serve', () => {
