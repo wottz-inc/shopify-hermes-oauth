@@ -34,6 +34,7 @@ const INIT_ENV_KEYS = [
 
 const DEFAULT_SHOPIFY_HERMES_APP_URL = 'https://your-public-app-url.example.com';
 const DEFAULT_SHOPIFY_HERMES_SCOPES = 'read_products,read_orders,read_inventory,read_locations';
+const MAX_SHOPIFY_HERMES_SCOPES = 32;
 const DEFAULT_SHOPIFY_HERMES_API_VERSION = '2026-01';
 
 type RequiredConfigKey = (typeof REQUIRED_CONFIG_KEYS)[number];
@@ -683,7 +684,13 @@ function parseServeArgs(args: readonly string[]): ServeArgs | undefined {
 }
 
 function parseScopeList(value: string): readonly string[] {
-  return value.split(',').map((scope) => scope.trim()).filter((scope) => scope.length > 0);
+  const scopes = value.split(',').map((scope) => scope.trim()).filter((scope) => scope.length > 0);
+
+  if (scopes.length > MAX_SHOPIFY_HERMES_SCOPES) {
+    throw new Error('Invalid Shopify OAuth scope configuration.');
+  }
+
+  return scopes;
 }
 
 async function runHermes(args: readonly string[], context: CliContext): Promise<number> {

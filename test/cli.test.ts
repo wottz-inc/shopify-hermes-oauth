@@ -422,6 +422,93 @@ describe('CLI serve', () => {
     expect(output).not.toContain('super-secret-value');
   });
 
+  it('uses the default OAuth scopes when SHOPIFY_HERMES_SCOPES is unset', async () => {
+    let server: Server | undefined;
+    let baseUrl = '';
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://public-app.example.test',
+      },
+      listenServer: async (createdServer) => {
+        server = createdServer;
+        await new Promise<void>((resolve) => createdServer.listen(0, '127.0.0.1', resolve));
+        const address = createdServer.address() as AddressInfo;
+        baseUrl = `http://127.0.0.1:${address.port.toString(10)}`;
+      },
+    });
+
+    try {
+      const exitCode = await runShopifyHermesOauthCli(['serve', '--host', '127.0.0.1', '--port', '3456'], harness.deps);
+      expect(exitCode).toBe(0);
+
+      const response = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, { redirect: 'manual' });
+      const location = response.headers.get('location');
+
+      expect(location).not.toBeNull();
+      expect(new URL(location ?? '').searchParams.get('scope')).toBe('read_products,read_orders,read_inventory,read_locations');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('trims scopes and drops blanks from SHOPIFY_HERMES_SCOPES', async () => {
+    let server: Server | undefined;
+    let baseUrl = '';
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://public-app.example.test',
+        SHOPIFY_HERMES_SCOPES: ' read_products, ,read_orders,, read_inventory ',
+      },
+      listenServer: async (createdServer) => {
+        server = createdServer;
+        await new Promise<void>((resolve) => createdServer.listen(0, '127.0.0.1', resolve));
+        const address = createdServer.address() as AddressInfo;
+        baseUrl = `http://127.0.0.1:${address.port.toString(10)}`;
+      },
+    });
+
+    try {
+      const exitCode = await runShopifyHermesOauthCli(['serve', '--host', '127.0.0.1', '--port', '3456'], harness.deps);
+      expect(exitCode).toBe(0);
+
+      const response = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, { redirect: 'manual' });
+      const location = response.headers.get('location');
+
+      expect(location).not.toBeNull();
+      expect(new URL(location ?? '').searchParams.get('scope')).toBe('read_products,read_orders,read_inventory');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('rejects configured OAuth scope lists with more than 32 scopes using a generic error', async () => {
+    const excessiveScopes = Array.from({ length: 33 }, (_, index) => `read_scope_${index.toString(10)}`).join(',');
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://public-app.example.test',
+        SHOPIFY_HERMES_SCOPES: excessiveScopes,
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['serve', '--host', '127.0.0.1', '--port', '3456'], harness.deps);
+    const errorOutput = harness.stderr.join('\n');
+
+    expect(exitCode).toBe(1);
+    expect(harness.listenedServers).toEqual([]);
+    expect(errorOutput).toContain('Invalid Shopify OAuth scope configuration.');
+    expect(errorOutput).not.toContain('super-secret-value');
+    expect(errorOutput).not.toContain('read_scope_0');
+  });
+
   it('prints serve usage for invalid arguments before listening', async () => {
     const harness = createHarness();
 
