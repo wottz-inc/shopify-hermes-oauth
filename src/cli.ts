@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { resolveShopifyHermesPaths } from './hermes-home.js';
+import { exchangeShopifyOAuthToken } from './internal/shopify-oauth-token-exchange.js';
 import { startStdioMcpServer, type McpServerDependencies } from './mcp/server.js';
 import { InMemoryOAuthStateStore } from './oauth/state-store.js';
 import { formatInventoryReport, generateInventoryReport, InventoryReportError } from './reports/inventory.js';
@@ -683,43 +684,6 @@ function parseServeArgs(args: readonly string[]): ServeArgs | undefined {
 
 function parseScopeList(value: string): readonly string[] {
   return value.split(',').map((scope) => scope.trim()).filter((scope) => scope.length > 0);
-}
-
-interface ShopifyOAuthExchangeInput {
-  readonly fetch: typeof globalThis.fetch;
-  readonly shop: string;
-  readonly code: string;
-  readonly redirectUri: string;
-  readonly clientId: string;
-  readonly clientSecret: string;
-}
-
-async function exchangeShopifyOAuthToken(input: ShopifyOAuthExchangeInput): Promise<{ readonly accessToken: string; readonly scopes?: string }> {
-  const response = await input.fetch(`https://${input.shop}/admin/oauth/access_token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      client_id: input.clientId,
-      client_secret: input.clientSecret,
-      code: input.code,
-      redirect_uri: input.redirectUri,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Shopify OAuth token exchange failed with HTTP ${String(response.status)}.`);
-  }
-
-  const payload = await response.json() as { readonly access_token?: unknown; readonly scope?: unknown };
-
-  if (typeof payload.access_token !== 'string' || payload.access_token.length === 0) {
-    throw new Error('Shopify OAuth token exchange response did not include an access token.');
-  }
-
-  return {
-    accessToken: payload.access_token,
-    ...(typeof payload.scope === 'string' ? { scopes: payload.scope } : {}),
-  };
 }
 
 async function runHermes(args: readonly string[], context: CliContext): Promise<number> {

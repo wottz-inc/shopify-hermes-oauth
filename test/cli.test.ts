@@ -5,6 +5,7 @@ import { type AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 
 import { runShopifyHermesOauthCli, type CliDependencies } from '../src/cli.js';
+import { exchangeShopifyOAuthToken } from '../src/internal/shopify-oauth-token-exchange.js';
 
 function createHarness(overrides: Partial<CliDependencies> = {}) {
   const stdout: string[] = [];
@@ -493,6 +494,58 @@ describe('CLI serve', () => {
     } finally {
       await closeServer(server);
     }
+  });
+});
+
+describe('Shopify OAuth token exchange', () => {
+  it('normalizes the shop domain before constructing the token endpoint', async () => {
+    const tokenRequests: { readonly url: string; readonly init?: RequestInit }[] = [];
+    const tokenFetch: typeof globalThis.fetch = (url, init) => {
+      const requestUrl = typeof url === 'string' || url instanceof URL ? url.toString() : url.url;
+      tokenRequests.push({ url: requestUrl, init });
+
+      return Promise.resolve(new Response(JSON.stringify({ access_token: 'shpat_mocked_access_token', scope: 'read_products' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    };
+
+    await expect(exchangeShopifyOAuthToken({
+      fetch: tokenFetch,
+      shop: 'Example',
+      code: 'oauth-code',
+      redirectUri: 'https://public-app.example.test/auth/callback',
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+    })).resolves.toEqual({ accessToken: 'shpat_mocked_access_token', scopes: 'read_products' });
+
+    expect(tokenRequests).toHaveLength(1);
+    expect(tokenRequests[0]?.url).toBe('https://example.myshopify.com/admin/oauth/access_token');
+  });
+
+  it.each([
+    'https://example.myshopify.com',
+    'example.myshopify.com/admin/oauth/access_token',
+    'example.myshopify.com/path',
+    'example.myshopify.com?host=evil',
+    'evil.example.com',
+  ])('rejects invalid shop value %s before fetching', async (shop) => {
+    let fetchCalls = 0;
+    const tokenFetch: typeof globalThis.fetch = () => {
+      fetchCalls += 1;
+      return Promise.reject(new Error('fetch should not be called'));
+    };
+
+    await expect(exchangeShopifyOAuthToken({
+      fetch: tokenFetch,
+      shop,
+      code: 'oauth-code',
+      redirectUri: 'https://public-app.example.test/auth/callback',
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+    })).rejects.toThrow('Invalid Shopify shop domain');
+
+    expect(fetchCalls).toBe(0);
   });
 });
 
