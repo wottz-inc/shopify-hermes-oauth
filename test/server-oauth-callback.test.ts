@@ -151,6 +151,140 @@ describe('OAuth callback HMAC validation', () => {
     expect(dependencies.config.clientId).toBe('test-client-id');
   });
 
+  it('rejects very large safe-integer callback timestamps without trusting unsafe millisecond arithmetic', async () => {
+    let hmacValidatorCalls = 0;
+    let consumedState: string | undefined;
+    let tokenExchangeCalls = 0;
+    let storedTokenCalls = 0;
+    const giantTimestamp = Number.MAX_SAFE_INTEGER.toString(10);
+    const unsafeMatchingMilliseconds = Number.MAX_SAFE_INTEGER * 1_000;
+    const dependencies = {
+      ...baseDependencies(),
+      now: () => unsafeMatchingMilliseconds,
+      stateStore: {
+        ...baseDependencies().stateStore,
+        consume: (state: string) => {
+          consumedState = state;
+          return {
+            state,
+            shop: 'example.myshopify.com',
+            expiresAt: Date.now() + 60_000,
+          };
+        },
+      },
+      tokenExchange: () => {
+        tokenExchangeCalls += 1;
+        return { accessToken: 'offline-token' };
+      },
+      tokenStore: {
+        storeToken: () => {
+          storedTokenCalls += 1;
+        },
+      },
+    } satisfies OAuthHttpServerDependencies;
+    const server = await listen(createOAuthHttpServerForTesting({
+      ...dependencies,
+      hmacValidator: () => {
+        hmacValidatorCalls += 1;
+        return true;
+      },
+    }));
+    const baseUrl = serverBaseUrl(server);
+    const callbackUrl = new URL('/auth/callback', baseUrl);
+    callbackUrl.search = new URLSearchParams({
+      shop: 'example.myshopify.com',
+      code: 'oauth-code',
+      state: 'state-value',
+      timestamp: giantTimestamp,
+      hmac: '0'.repeat(64),
+    }).toString();
+
+    const response = await fetch(callbackUrl);
+    const body = await response.text();
+
+    expect(response.status).toBe(400);
+    expect(body).toBe('Invalid OAuth callback');
+    expect(hmacValidatorCalls).toBe(0);
+    expect(consumedState).toBeUndefined();
+    expect(tokenExchangeCalls).toBe(0);
+    expect(storedTokenCalls).toBe(0);
+  });
+
+  it('rejects stale callback timestamps with the generic callback error response', async () => {
+    let hmacValidatorCalls = 0;
+    const server = await listen(createOAuthHttpServerForTesting({
+      ...baseDependencies(),
+      hmacValidator: () => {
+        hmacValidatorCalls += 1;
+        return true;
+      },
+    }));
+    const baseUrl = serverBaseUrl(server);
+    const callbackUrl = new URL('/auth/callback', baseUrl);
+    callbackUrl.search = new URLSearchParams({
+      shop: 'example.myshopify.com',
+      code: 'oauth-code',
+      state: 'state-value',
+      timestamp: '1699999000',
+      hmac: '0'.repeat(64),
+    }).toString();
+
+    const response = await fetch(callbackUrl);
+    const body = await response.text();
+
+    expect(response.status).toBe(400);
+    expect(body).toBe('Invalid OAuth callback');
+    expect(hmacValidatorCalls).toBe(0);
+  });
+
+  it('accepts current callback timestamps when validation succeeds', async () => {
+    const consumedStates: string[] = [];
+    const exchangedCodes: string[] = [];
+    const storedShops: string[] = [];
+    const server = await listen(createOAuthHttpServerForTesting({
+      ...baseDependencies(),
+      stateStore: {
+        ...baseDependencies().stateStore,
+        consume: (state: string) => {
+          consumedStates.push(state);
+          return {
+            state,
+            shop: 'example.myshopify.com',
+            expiresAt: Date.now() + 60_000,
+          };
+        },
+      },
+      tokenExchange: ({ code }) => {
+        exchangedCodes.push(code);
+        return { accessToken: 'offline-token' };
+      },
+      tokenStore: {
+        storeToken: ({ shop }) => {
+          storedShops.push(shop);
+        },
+      },
+      hmacValidator: () => true,
+    }));
+    const baseUrl = serverBaseUrl(server);
+    const callbackUrl = new URL('/auth/callback', baseUrl);
+    callbackUrl.search = new URLSearchParams({
+      shop: 'example.myshopify.com',
+      code: 'oauth-code',
+      state: 'state-value',
+      timestamp: '1700000000',
+      hmac: '0'.repeat(64),
+    }).toString();
+
+    const response = await fetch(callbackUrl);
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toBe('OAuth install complete');
+    expect(consumedStates).toEqual(['state-value']);
+    expect(exchangedCodes).toEqual(['oauth-code']);
+    expect(storedShops).toEqual(['example.myshopify.com']);
+  });
+
   it('accepts a valid callback through the default official Shopify HMAC helper path', async () => {
     const consumedStates: string[] = [];
     const exchangedCodes: string[] = [];

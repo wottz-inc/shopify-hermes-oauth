@@ -11,6 +11,7 @@ const START_PATH = '/auth/start';
 const HEALTH_PATH = '/health';
 const SHOPIFY_OAUTH_PATH = '/admin/oauth/authorize';
 const DEFAULT_MAX_CALLBACK_AGE_MS = 5 * 60 * 1_000;
+const MAX_SAFE_TIMESTAMP_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1_000);
 
 export interface OAuthHttpServerConfig {
   readonly clientId: string;
@@ -236,13 +237,16 @@ async function validateCallbackRequest(
   const shop = normalizeShopDomain(url.searchParams.get('shop') ?? '');
   const code = requiredParam(url, 'code');
   const state = requiredParam(url, 'state');
-  // Shopify callback timestamps are seconds since epoch; convert to milliseconds for Date.now comparisons below.
+  // Shopify callback timestamps are seconds since epoch; keep freshness arithmetic in seconds.
   const timestamp = parseTimestamp(requiredParam(url, 'timestamp'));
   requiredParam(url, 'hmac');
   const now = dependencies.now ?? Date.now;
   const maxAgeMs = dependencies.maxCallbackAgeMs ?? DEFAULT_MAX_CALLBACK_AGE_MS;
+  const nowMs = now();
+  const earliestFreshTimestamp = Math.ceil((nowMs - maxAgeMs) / 1_000);
+  const latestFreshTimestamp = Math.floor((nowMs + maxAgeMs) / 1_000);
 
-  if (Math.abs(now() - timestamp * 1_000) > maxAgeMs) {
+  if (timestamp < earliestFreshTimestamp || timestamp > latestFreshTimestamp) {
     throw new Error('Stale OAuth callback');
   }
 
@@ -301,7 +305,7 @@ function parseTimestamp(value: string): number {
 
   const timestamp = Number(value);
 
-  if (!Number.isSafeInteger(timestamp)) {
+  if (!Number.isSafeInteger(timestamp) || timestamp > MAX_SAFE_TIMESTAMP_SECONDS) {
     throw new Error('Invalid timestamp');
   }
 
