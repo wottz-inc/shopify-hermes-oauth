@@ -83,7 +83,7 @@ export function createOAuthHttpServer(dependencies: OAuthHttpServerDependencies)
   };
 
   return createServer((request, response) => {
-    void routeRequest(request, response, resolvedDependencies);
+    void routeRequestSafely(request, response, resolvedDependencies);
   });
 }
 
@@ -91,8 +91,49 @@ export function createOAuthHttpServerForTesting(
   dependencies: OAuthHttpServerInternalDependencies,
 ): Server {
   return createServer((request, response) => {
-    void routeRequest(request, response, dependencies);
+    void routeRequestSafely(request, response, dependencies);
   });
+}
+
+async function routeRequestSafely(
+  request: IncomingMessage,
+  response: ServerResponse,
+  dependencies: OAuthHttpServerInternalDependencies,
+): Promise<void> {
+  try {
+    await routeRequest(request, response, dependencies);
+  } catch {
+    trySendGenericError(response);
+  }
+}
+
+function trySendGenericError(response: ServerResponse): void {
+  try {
+    if (!response.headersSent) {
+      sendText(response, 500, 'Internal server error');
+      return;
+    }
+
+    response.end();
+  } catch {
+    closeResponseSilently(response);
+    // Best-effort generic fallback: do not turn response-write failures into
+    // another unhandled rejection or leak internal exception details.
+  }
+}
+
+function closeResponseSilently(response: ServerResponse): void {
+  try {
+    response.destroy();
+  } catch {
+    // Ignore best-effort close failures.
+  }
+
+  try {
+    response.socket?.destroy();
+  } catch {
+    // Ignore best-effort close failures.
+  }
 }
 
 async function routeRequest(

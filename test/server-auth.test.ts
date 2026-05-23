@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { type AddressInfo } from 'node:net';
+import { Socket, type AddressInfo } from 'node:net';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -31,6 +31,119 @@ afterEach(async () => {
 });
 
 describe('OAuth HTTP server routes', () => {
+  it('returns a generic 500 and does not leak unhandled rejections when a route response write fails once', async () => {
+    const deps = makeDeps();
+    const server = createOAuthHttpServer(deps);
+    server.prependListener('request', (_request, response) => {
+      const originalWriteHead = response.writeHead.bind(response);
+      let failedOnce = false;
+      response.writeHead = ((...args: Parameters<typeof response.writeHead>) => {
+        if (!failedOnce) {
+          failedOnce = true;
+          throw new Error(`route failure containing ${clientSecret}`);
+        }
+
+        return originalWriteHead(...args);
+      }) as typeof response.writeHead;
+    });
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port.toString(10)}`;
+
+    try {
+      const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(1_000) });
+      const body = await response.text();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(response.status).toBe(500);
+      expect(body).toBe('Internal server error');
+      expect(body).not.toContain(clientSecret);
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
+  it('returns a generic 500 for a malformed request URL route write failure without unhandled rejections', async () => {
+    const deps = makeDeps();
+    const server = createOAuthHttpServer(deps);
+    server.prependListener('request', (_request, response) => {
+      const originalWriteHead = response.writeHead.bind(response);
+      let failedOnce = false;
+      response.writeHead = ((...args: Parameters<typeof response.writeHead>) => {
+        if (!failedOnce) {
+          failedOnce = true;
+          throw new Error(`malformed URL route failure containing ${clientSecret}`);
+        }
+
+        return originalWriteHead(...args);
+      }) as typeof response.writeHead;
+    });
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as AddressInfo;
+
+    try {
+      const rawResponse = await sendRawHttpRequest(
+        address.port,
+        'GET http://[::1 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n',
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(rawResponse).toContain('HTTP/1.1 500 Internal Server Error');
+      expect(rawResponse).toContain('Internal server error');
+      expect(rawResponse).not.toContain(clientSecret);
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
+  it('swallows fallback response write failures, destroys the response, and does not leak an unhandled rejection', async () => {
+    const deps = makeDeps();
+    const server = createOAuthHttpServer(deps);
+    let responseDestroyed = false;
+    server.prependListener('request', (_request, response) => {
+      const originalDestroy = response.destroy.bind(response);
+      response.destroy = (...args: Parameters<typeof response.destroy>) => {
+        responseDestroyed = true;
+        return originalDestroy(...args);
+      };
+      response.writeHead = () => {
+        throw new Error(`response write failed with ${clientSecret}`);
+      };
+    });
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as AddressInfo;
+
+    try {
+      await sendRawHttpRequestAndClose(address.port, 'GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(unhandledRejections).toEqual([]);
+      expect(responseDestroyed).toBe(true);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
   it('returns safe metadata from /health without secrets', async () => {
     const { baseUrl } = await listen(makeDeps());
 
@@ -110,7 +223,7 @@ describe('OAuth HTTP server routes', () => {
       shop: 'example.myshopify.com',
       code: 'oauth-code',
       state: 'state-123',
-      timestamp: '1_700_000_000',
+      timestamp: '1700000000',
       hmac: 'invalid-hmac',
     });
 
@@ -221,6 +334,47 @@ async function listen(deps: OAuthHttpServerDependencies): Promise<{ baseUrl: str
   const address = server.address() as AddressInfo;
 
   return { baseUrl: `http://127.0.0.1:${address.port.toString(10)}` };
+}
+
+async function sendRawHttpRequest(port: number, request: string): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const socket = new Socket();
+    const cleanup = (): void => {
+      socket.off('error', reject);
+      socket.destroy();
+    };
+    socket.once('error', reject);
+    socket.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+    socket.once('close', () => {
+      cleanup();
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+    socket.connect(port, '127.0.0.1', () => {
+      socket.write(request);
+    });
+  });
+}
+
+async function sendRawHttpRequestAndClose(port: number, request: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const socket = new Socket();
+    const cleanup = (): void => {
+      socket.off('error', reject);
+      socket.destroy();
+    };
+    socket.once('error', reject);
+    socket.connect(port, '127.0.0.1', () => {
+      socket.write(request, () => {
+        setImmediate(() => {
+          cleanup();
+          resolve();
+        });
+      });
+    });
+  });
 }
 
 function signedCallbackUrl(
