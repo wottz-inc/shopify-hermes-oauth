@@ -5,6 +5,7 @@ import { type Readable, type Writable } from 'node:stream';
 import { type AuditEventInput } from '../audit.js';
 import { type ProductsReportFormat } from '../reports/products.js';
 import { type VerifyShopResult } from '../shops/verify.js';
+import { summarizeShopMetadata, type AllowedShopMetadata } from '../shops/metadata.js';
 import { type StoredShopToken, type TokenStore } from '../tokens/local-token-store.js';
 
 export type McpToolName =
@@ -52,7 +53,7 @@ export interface McpShopSummary {
   readonly scopes: readonly string[];
   readonly storedAt: string;
   readonly updatedAt: string;
-  readonly metadata?: StoredShopToken['metadata'];
+  readonly metadata?: AllowedShopMetadata;
 }
 
 export class McpToolError extends Error {
@@ -293,14 +294,6 @@ function summarizeShop(token: StoredShopToken): McpShopSummary {
     storedAt: token.storedAt,
     updatedAt: token.updatedAt,
     ...(token.metadata === undefined ? {} : { metadata: summarizeShopMetadata(token.metadata) }),
-  };
-}
-
-function summarizeShopMetadata(metadata: NonNullable<StoredShopToken['metadata']>): StoredShopToken['metadata'] {
-  return {
-    ...(metadata.shopName === undefined ? {} : { shopName: metadata.shopName }),
-    ...(metadata.currencyCode === undefined ? {} : { currencyCode: metadata.currencyCode }),
-    ...(metadata.myshopifyDomain === undefined ? {} : { myshopifyDomain: metadata.myshopifyDomain }),
   };
 }
 

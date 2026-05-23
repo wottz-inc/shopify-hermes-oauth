@@ -150,6 +150,49 @@ describe('verifyShop', () => {
     }]);
   });
 
+  it('drops pre-existing non-allowlisted metadata when refreshing verified shop metadata', async () => {
+    const store = new MemoryTokenStore([{
+      shop: 'example.myshopify.com',
+      accessToken: 'shpat_do_not_leak',
+      scopes: ['read_products'],
+      metadata: {
+        shopName: 'Old Name',
+        currencyCode: 'CAD',
+        myshopifyDomain: 'old-example.myshopify.com',
+        accessToken: 'persisted-secret',
+        privateNote: 'do not keep',
+      },
+    }]);
+    const adminClient = new FakeAdminClient({
+      name: 'Example Shop',
+      myshopifyDomain: 'example.myshopify.com',
+      currencyCode: 'USD',
+    });
+
+    await verifyShop({
+      shop: 'example',
+      tokenStore: store,
+      adminClient,
+      appendAuditEvent: () => undefined,
+    });
+
+    await expect(store.getToken('example')).resolves.toMatchObject({
+      metadata: {
+        shopName: 'Example Shop',
+        myshopifyDomain: 'example.myshopify.com',
+        currencyCode: 'USD',
+      },
+    });
+    const refreshedToken = await store.getToken('example');
+    expect(refreshedToken?.metadata).not.toHaveProperty('accessToken');
+    expect(refreshedToken?.metadata).not.toHaveProperty('privateNote');
+    expect(refreshedToken?.metadata).toEqual({
+      shopName: 'Example Shop',
+      myshopifyDomain: 'example.myshopify.com',
+      currencyCode: 'USD',
+    });
+  });
+
   it('audits redacted Admin GraphQL failures and does not expose the stored token', async () => {
     const accessToken = 'shpat_do_not_leak';
     const auditEvents: unknown[] = [];

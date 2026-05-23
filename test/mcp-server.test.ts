@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 
 import { callTool, listTools, McpToolError, startStdioMcpServer, type McpServerDependencies } from '../src/mcp/server.js';
+import { ALLOWED_SHOP_METADATA } from '../src/shops/metadata.js';
 
 function createDeps(): McpServerDependencies {
   return {
@@ -107,6 +108,8 @@ describe('curated MCP server', () => {
         },
       ],
     });
+    const [shopSummary] = (result as { readonly shops: readonly { readonly metadata?: Record<string, string> }[] }).shops;
+    expect(Object.keys(shopSummary?.metadata ?? {}).sort()).toEqual([...ALLOWED_SHOP_METADATA].sort());
     expect(serialized).not.toContain('accessToken');
     expect(serialized).not.toContain('shpat_never-print-me');
     expect(serialized).not.toContain('authorization');

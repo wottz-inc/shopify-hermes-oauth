@@ -1,3 +1,4 @@
+import { shopMetadataFromAdmin, summarizeShopMetadata } from './metadata.js';
 import { type AuditEventInput } from '../audit.js';
 import { redactSensitiveErrorMessage, type AdminShopMetadata, type ShopifyAdminClient } from '../shopify/admin-client.js';
 import { normalizeTokenStoreShopDomain, type TokenStore } from '../tokens/local-token-store.js';
@@ -53,26 +54,22 @@ export async function verifyShop(options: VerifyShopOptions): Promise<VerifyShop
     throw new ShopVerificationError(message);
   }
 
+  const safeMetadata = shopMetadataFromAdmin(metadata);
+
   await options.tokenStore.storeToken({
     shop,
     accessToken: storedToken.accessToken,
     scopes: storedToken.scopes,
     metadata: {
-      ...storedToken.metadata,
-      shopName: metadata.name,
-      myshopifyDomain: metadata.myshopifyDomain,
-      currencyCode: metadata.currencyCode,
+      ...(storedToken.metadata === undefined ? {} : summarizeShopMetadata(storedToken.metadata)),
+      ...safeMetadata,
     },
   });
   await options.appendAuditEvent({
     action: 'shops.verify',
     shop,
     result: 'success',
-    metadata: {
-      shopName: metadata.name,
-      myshopifyDomain: metadata.myshopifyDomain,
-      currencyCode: metadata.currencyCode,
-    },
+    metadata: safeMetadata,
   });
 
   return { shop, metadata };
