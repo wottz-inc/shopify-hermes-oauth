@@ -1,10 +1,10 @@
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ensureDataDirectory, writeJsonAtomic } from '../src/storage/local-files.js';
+import { ensureDataDirectory, withFileLock, writeJsonAtomic } from '../src/storage/local-files.js';
 
 const tempRoots: string[] = [];
 
@@ -81,5 +81,101 @@ describe('secure local file utilities', () => {
     await expect(writeJsonAtomic(file, { toJSON: () => undefined })).rejects.toThrow(TypeError);
     await expect(readFile(file, 'utf8')).resolves.toBe('{\n  "version": 1\n}\n');
     expect(await readdir(root)).toEqual(['config.json']);
+  });
+
+  it('recovers an owner-only stale lock left by a crashed writer', async () => {
+    const root = await makeTempRoot();
+    const file = join(root, 'tokens.json');
+    const lockFile = `${file}.lock`;
+    await writeFile(
+      lockFile,
+      JSON.stringify({
+        owner: 'crashed-owner',
+        pid: 999_999,
+        hostname: 'previous-host',
+        createdAt: '2026-05-22T00:00:00.000Z',
+      }),
+      { mode: 0o600 },
+    );
+
+    await expect(withFileLock(file, () => Promise.resolve('recovered'))).resolves.toBe('recovered');
+
+    await expect(readFile(lockFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('recovers a stale malformed lock left by a crash during lock creation', async () => {
+    const root = await makeTempRoot();
+    const file = join(root, 'tokens.json');
+    const lockFile = `${file}.lock`;
+    await writeFile(lockFile, '{', { mode: 0o600 });
+
+    await expect(
+      withFileLock(file, () => Promise.resolve('recovered'), {
+        lockStaleMs: 10,
+        stat: () => ({ mtimeMs: Date.now() - 60_000 }),
+      }),
+    ).resolves.toBe('recovered');
+
+    await expect(readFile(lockFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('preserves the operation error when lock cleanup also fails', async () => {
+    const root = await makeTempRoot();
+    const file = join(root, 'tokens.json');
+    const operationError = new Error('simulated operation failure');
+
+    await expect(
+      withFileLock(
+        file,
+        () => Promise.reject(operationError),
+        {
+          unlink: () => {
+            throw new Error('simulated cleanup failure');
+          },
+        },
+      ),
+    ).rejects.toBe(operationError);
+  });
+
+  it('times out without removing an active non-stale lock', async () => {
+    const root = await makeTempRoot();
+    const file = join(root, 'tokens.json');
+    const existingLockError = Object.assign(new Error('lock exists'), { code: 'EEXIST' });
+    let unlinkAttempted = false;
+
+    await expect(
+      withFileLock(file, () => Promise.resolve('not-run'), {
+        writeFile: () => {
+          throw existingLockError;
+        },
+        readFile: () =>
+          JSON.stringify({
+            owner: 'active-owner',
+            pid: 12345,
+            hostname: 'active-host',
+            createdAt: new Date().toISOString(),
+          }),
+        unlink: () => {
+          unlinkAttempted = true;
+          throw new Error('active lock should not be removed');
+        },
+        lockRetryIntervalMs: 1,
+        lockTimeoutMs: 5,
+      }),
+    ).rejects.toThrow('Timed out waiting for token store lock.');
+    expect(unlinkAttempted).toBe(false);
+  });
+
+  it('throws lock cleanup errors only after successful operations', async () => {
+    const root = await makeTempRoot();
+    const file = join(root, 'tokens.json');
+
+    await expect(
+      withFileLock(file, () => Promise.resolve('completed'), {
+        unlink: () => {
+          throw new Error('simulated cleanup failure');
+        },
+      }),
+    ).rejects.toThrow('simulated cleanup failure');
   });
 });

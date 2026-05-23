@@ -1,5 +1,5 @@
 import { normalizeShopDomain } from '../shop-domain.js';
-import { type LocalFileDependencies, readJsonFile, writeJsonAtomic } from '../storage/local-files.js';
+import { type LocalFileDependencies, readJsonFile, withFileLock, writeJsonAtomic } from '../storage/local-files.js';
 
 export interface TokenMetadata {
   readonly shopName?: string;
@@ -58,24 +58,27 @@ export class LocalJsonTokenStore implements TokenStore {
     const accessToken = normalizeAccessToken(input.accessToken);
     const scopes = normalizeScopes(input.scopes);
     const metadata = normalizeMetadata(input.metadata);
-    const file = await this.#readStoreFile();
-    const existing = file.shops[shop];
-    const now = this.#now();
-    const record: StoredShopToken = {
-      shop,
-      accessToken,
-      scopes,
-      storedAt: existing?.storedAt ?? now,
-      updatedAt: now,
-      ...(metadata === undefined ? {} : { metadata }),
-    };
 
-    await this.#writeStoreFile({
-      version: 1,
-      shops: {
-        ...file.shops,
-        [shop]: record,
-      },
+    await this.#withWriteLock(async () => {
+      const file = await this.#readStoreFile();
+      const existing = file.shops[shop];
+      const now = this.#now();
+      const record: StoredShopToken = {
+        shop,
+        accessToken,
+        scopes,
+        storedAt: existing?.storedAt ?? now,
+        updatedAt: now,
+        ...(metadata === undefined ? {} : { metadata }),
+      };
+
+      await this.#writeStoreFile({
+        version: 1,
+        shops: {
+          ...file.shops,
+          [shop]: record,
+        },
+      });
     });
   }
 
@@ -97,17 +100,20 @@ export class LocalJsonTokenStore implements TokenStore {
 
   public async deleteToken(shopInput: string): Promise<boolean> {
     const shop = normalizeTokenStoreShopDomain(shopInput);
-    const file = await this.#readStoreFile();
 
-    if (file.shops[shop] === undefined) {
-      return false;
-    }
+    return await this.#withWriteLock(async () => {
+      const file = await this.#readStoreFile();
 
-    const remainingShops = Object.fromEntries(
-      Object.entries(file.shops).filter(([storedShop]) => storedShop !== shop),
-    );
-    await this.#writeStoreFile({ version: 1, shops: remainingShops });
-    return true;
+      if (file.shops[shop] === undefined) {
+        return false;
+      }
+
+      const remainingShops = Object.fromEntries(
+        Object.entries(file.shops).filter(([storedShop]) => storedShop !== shop),
+      );
+      await this.#writeStoreFile({ version: 1, shops: remainingShops });
+      return true;
+    });
   }
 
   async #readStoreFile(): Promise<TokenStoreFile> {
@@ -122,6 +128,14 @@ export class LocalJsonTokenStore implements TokenStore {
 
   async #writeStoreFile(file: TokenStoreFile): Promise<void> {
     await writeJsonAtomic(this.#path, file, this.#fileDependencies);
+  }
+
+  async #withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    // Store and delete use a lock file to serialize read-modify-write cycles across
+    // LocalJsonTokenStore instances and processes. If delete races with store, the
+    // operations are applied in lock acquisition order; each operation reads the
+    // state committed by the previous lock holder before writing its own update.
+    return await withFileLock(this.#path, operation, this.#fileDependencies);
   }
 }
 

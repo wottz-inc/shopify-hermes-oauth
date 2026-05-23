@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,6 +7,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { LocalJsonTokenStore } from '../src/tokens/local-token-store.js';
 
 const tempRoots: string[] = [];
+
+function tokenLength(token: { readonly accessToken: string } | undefined): number | undefined {
+  return token?.accessToken.length;
+}
 
 async function makeStore(): Promise<{ readonly file: string; readonly store: LocalJsonTokenStore }> {
   const root = await mkdtemp(join(tmpdir(), 'shopify-hermes-tokens-'));
@@ -30,21 +34,31 @@ describe('LocalJsonTokenStore', () => {
       metadata: { shopName: 'Example Shop', currencyCode: 'USD', myshopifyDomain: 'example.myshopify.com' },
     });
 
-    await expect(readFile(file, 'utf8')).resolves.toContain('shpat_test_secret');
+    const serialized = JSON.parse(await readFile(file, 'utf8')) as { readonly shops: Record<string, { readonly accessToken: string }> };
+    expect(serialized.shops['example.myshopify.com']?.accessToken).toHaveLength('shpat_test_secret'.length);
     expect((await stat(file)).mode & 0o777).toBe(0o600);
 
     const token = await store.getToken('example');
-    expect(token).toEqual({
+    expect(token).toMatchObject({
       shop: 'example.myshopify.com',
-      accessToken: 'shpat_test_secret',
       scopes: ['read_products', 'read_orders'],
       storedAt: '2026-05-22T12:00:00.000Z',
       updatedAt: '2026-05-22T12:00:00.000Z',
       metadata: { shopName: 'Example Shop', currencyCode: 'USD', myshopifyDomain: 'example.myshopify.com' },
     });
+    expect(tokenLength(token)).toBe('shpat_test_secret'.length);
 
     const listed = await store.listTokens();
-    expect(listed).toEqual([token]);
+    expect(listed).toHaveLength(1);
+    expect(listed.map(({ shop, scopes, storedAt, updatedAt, metadata }) => ({ shop, scopes, storedAt, updatedAt, metadata }))).toEqual([
+      {
+        shop: 'example.myshopify.com',
+        scopes: ['read_products', 'read_orders'],
+        storedAt: '2026-05-22T12:00:00.000Z',
+        updatedAt: '2026-05-22T12:00:00.000Z',
+        metadata: { shopName: 'Example Shop', currencyCode: 'USD', myshopifyDomain: 'example.myshopify.com' },
+      },
+    ]);
 
     expect(await store.deleteToken('EXAMPLE.myshopify.com')).toBe(true);
     expect(await store.getToken('example.myshopify.com')).toBeUndefined();
@@ -64,11 +78,119 @@ describe('LocalJsonTokenStore', () => {
 
     await expect(store.getToken('example')).resolves.toMatchObject({
       shop: 'example.myshopify.com',
-      accessToken: 'second-token',
       scopes: ['read_orders', 'read_customers'],
       storedAt: '2026-05-22T12:00:00.000Z',
       updatedAt: '2026-05-22T12:05:00.000Z',
     });
+    const updated = await store.getToken('example');
+    expect(tokenLength(updated)).toBe('second-token'.length);
+  });
+
+  it('preserves both shops when two store instances write concurrently to the same file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shopify-hermes-tokens-'));
+    tempRoots.push(root);
+    const file = join(root, 'tokens.json');
+    await writeFile(file, '{"version":1,"shops":{}}\n', { mode: 0o600 });
+
+    let releaseFirstWrite: (() => void) | undefined;
+    const firstMayWrite = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    let resolveSecondStoreScheduled: (() => void) | undefined;
+    const secondStoreScheduled = new Promise<void>((resolve) => {
+      resolveSecondStoreScheduled = resolve;
+    });
+    let secondStore: Promise<void> | undefined;
+
+    const firstStore = new LocalJsonTokenStore({
+      path: file,
+      now: () => '2026-05-22T12:00:00.000Z',
+      fileDependencies: {
+        async writeFile(path, content, options) {
+          if (path !== `${file}.lock`) {
+            secondStore ??= new LocalJsonTokenStore({
+              path: file,
+              now: () => '2026-05-22T12:01:00.000Z',
+            }).storeToken({ shop: 'bravo', accessToken: 'second-token', scopes: ['read_orders'] });
+            resolveSecondStoreScheduled?.();
+            await firstMayWrite;
+          }
+
+          await writeFile(path, content, options);
+        },
+      },
+    });
+
+    const firstStorePromise = firstStore.storeToken({
+      shop: 'alpha',
+      accessToken: 'first-token',
+      scopes: ['read_products'],
+    });
+    await secondStoreScheduled;
+    releaseFirstWrite?.();
+
+    await firstStorePromise;
+    await secondStore;
+
+    const listed = await new LocalJsonTokenStore({ path: file }).listTokens();
+    expect(listed).toHaveLength(2);
+    expect(listed.map(({ shop, scopes }) => ({ shop, scopes }))).toEqual([
+      { shop: 'alpha.myshopify.com', scopes: ['read_products'] },
+      { shop: 'bravo.myshopify.com', scopes: ['read_orders'] },
+    ]);
+    expect(listed.map((token) => token.accessToken.length)).toEqual([11, 12]);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+  });
+
+  it('serializes concurrent delete and store operations so deleting one shop does not discard another store', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shopify-hermes-tokens-'));
+    tempRoots.push(root);
+    const file = join(root, 'tokens.json');
+    const initialStore = new LocalJsonTokenStore({ path: file, now: () => '2026-05-22T12:00:00.000Z' });
+    await initialStore.storeToken({ shop: 'alpha', accessToken: 'initial-token', scopes: ['read_products'] });
+
+    let releaseDeleteWrite: (() => void) | undefined;
+    const deleteMayWrite = new Promise<void>((resolve) => {
+      releaseDeleteWrite = resolve;
+    });
+    let resolveConcurrentStoreScheduled: (() => void) | undefined;
+    const concurrentStoreScheduled = new Promise<void>((resolve) => {
+      resolveConcurrentStoreScheduled = resolve;
+    });
+    let concurrentStore: Promise<void> | undefined;
+
+    const deletingStore = new LocalJsonTokenStore({
+      path: file,
+      fileDependencies: {
+        async writeFile(path, content, options) {
+          if (path !== `${file}.lock`) {
+            concurrentStore ??= new LocalJsonTokenStore({
+              path: file,
+              now: () => '2026-05-22T12:01:00.000Z',
+            }).storeToken({ shop: 'bravo', accessToken: 'created-token', scopes: ['read_orders'] });
+            resolveConcurrentStoreScheduled?.();
+            await deleteMayWrite;
+          }
+
+          await writeFile(path, content, options);
+        },
+      },
+    });
+
+    const deletePromise = deletingStore.deleteToken('alpha');
+    await concurrentStoreScheduled;
+    releaseDeleteWrite?.();
+
+    await expect(deletePromise).resolves.toBe(true);
+    await concurrentStore;
+
+    const listed = await new LocalJsonTokenStore({ path: file }).listTokens();
+    expect(listed).toHaveLength(1);
+    expect(listed.map(({ shop, scopes }) => ({ shop, scopes }))).toEqual([
+      { shop: 'bravo.myshopify.com', scopes: ['read_orders'] },
+    ]);
+    expect(listed.map((token) => token.accessToken.length)).toEqual([13]);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
   });
 
   it('returns defensive copies from get and list', async () => {
@@ -89,14 +211,15 @@ describe('LocalJsonTokenStore', () => {
     (fromGet as unknown as { metadata: { shopName: string } }).metadata.shopName = 'Mutated';
     (fromList as unknown as { accessToken: string }).accessToken = 'mutated-token';
 
-    await expect(store.getToken('example')).resolves.toEqual({
+    const stored = await store.getToken('example');
+    expect(stored).toMatchObject({
       shop: 'example.myshopify.com',
-      accessToken: 'secret-token',
       scopes: ['read_products'],
       storedAt: '2026-05-22T12:00:00.000Z',
       updatedAt: '2026-05-22T12:00:00.000Z',
       metadata: { shopName: 'Original' },
     });
+    expect(tokenLength(stored)).toBe('secret-token'.length);
   });
 
   it('rejects blank tokens and invalid scopes or metadata', async () => {

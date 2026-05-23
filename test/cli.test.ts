@@ -38,6 +38,12 @@ function createHarness(overrides: Partial<CliDependencies> = {}) {
     },
     readFile: (path) => files.get(path),
     writeFile: (path, content, options) => {
+      if (options?.flag === 'wx' && files.has(path)) {
+        const error = new Error(`File exists: ${path}`) as Error & { code: string };
+        error.code = 'EEXIST';
+        throw error;
+      }
+
       files.set(path, content);
       if (options?.mode !== undefined) {
         fileModes.set(path, options.mode);
@@ -55,6 +61,15 @@ function createHarness(overrides: Partial<CliDependencies> = {}) {
         fileModes.set(to, mode);
         fileModes.delete(from);
       }
+    },
+    unlinkFile: (path) => {
+      if (!files.delete(path)) {
+        const error = new Error(`File not found: ${path}`) as Error & { code: string };
+        error.code = 'ENOENT';
+        throw error;
+      }
+
+      fileModes.delete(path);
     },
     chmod: (path, mode) => {
       fileModes.set(path, mode);

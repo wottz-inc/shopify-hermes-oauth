@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod as fsChmod, mkdir as fsMkdir, readFile as fsReadFile, rename as fsRename, writeFile as fsWriteFile } from 'node:fs/promises';
+import { chmod as fsChmod, mkdir as fsMkdir, readFile as fsReadFile, rename as fsRename, unlink as fsUnlink, writeFile as fsWriteFile } from 'node:fs/promises';
 import { type Server } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,8 +53,9 @@ export interface CliDependencies {
   readonly startProcess?: (command: string, args: readonly string[]) => StartedProcessResult | Promise<StartedProcessResult>;
   readonly listenServer?: (server: Server, options: { readonly host: string; readonly port: number }) => void | Promise<void>;
   readonly readFile?: (path: string) => string | undefined | Promise<string | undefined>;
-  readonly writeFile?: (path: string, content: string, options?: { readonly mode?: number }) => void | Promise<void>;
+  readonly writeFile?: (path: string, content: string, options?: { readonly mode?: number; readonly flag?: string }) => void | Promise<void>;
   readonly renameFile?: (from: string, to: string) => void | Promise<void>;
+  readonly unlinkFile?: (path: string) => void | Promise<void>;
   readonly chmod?: (path: string, mode: number) => void | Promise<void>;
   readonly mkdir?: (path: string) => void | Promise<void>;
   readonly fetch?: typeof globalThis.fetch;
@@ -73,8 +74,9 @@ interface CliContext {
   readonly listenServer: (server: Server, options: { readonly host: string; readonly port: number }) => Promise<void>;
   readonly readFile: (path: string) => Promise<string | undefined>;
   readonly writeEnvFile: (path: string, content: string) => Promise<void>;
-  readonly writeJsonFile: (path: string, content: string) => Promise<void>;
+  readonly writeJsonFile: (path: string, content: string, options?: { readonly flag?: string }) => Promise<void>;
   readonly renameFile: (from: string, to: string) => Promise<void>;
+  readonly unlinkFile: (path: string) => Promise<void>;
   readonly chmod: (path: string, mode: number) => Promise<void>;
   readonly mkdir: (path: string) => Promise<void>;
   readonly fetch: typeof globalThis.fetch;
@@ -1036,6 +1038,7 @@ async function runInit(context: CliContext): Promise<number> {
 
 function createCliContext(dependencies: CliDependencies): CliContext {
   const renameFile = dependencies.renameFile ?? fsRename;
+  const unlinkFile = dependencies.unlinkFile ?? fsUnlink;
   const chmod = dependencies.chmod ?? fsChmod;
 
   return {
@@ -1079,16 +1082,19 @@ function createCliContext(dependencies: CliDependencies): CliContext {
       await renameFile(tempPath, path);
       await chmod(path, 0o600);
     },
-    writeJsonFile: async (path, content) => {
+    writeJsonFile: async (path, content, options) => {
       if (dependencies.writeFile !== undefined) {
-        await dependencies.writeFile(path, content, { mode: 0o600 });
+        await dependencies.writeFile(path, content, { mode: 0o600, flag: options?.flag });
         return;
       }
 
-      await fsWriteFile(path, content, { encoding: 'utf8', mode: 0o600 });
+      await fsWriteFile(path, content, { encoding: 'utf8', mode: 0o600, flag: options?.flag });
     },
     renameFile: async (from, to) => {
       await renameFile(from, to);
+    },
+    unlinkFile: async (path) => {
+      await unlinkFile(path);
     },
     chmod: async (path, mode) => {
       await chmod(path, mode);
@@ -1292,10 +1298,11 @@ function createTokenStoreForPath(path: string, context: CliContext): LocalJsonTo
 
         return content;
       },
-      writeFile: async (path, content) => {
-        await context.writeJsonFile(path, content);
+      writeFile: async (path, content, options) => {
+        await context.writeJsonFile(path, content, { flag: options.flag });
       },
       rename: context.renameFile,
+      unlink: context.unlinkFile,
       chmod: context.chmod,
       mkdir: async (path) => {
         await context.mkdir(path);
