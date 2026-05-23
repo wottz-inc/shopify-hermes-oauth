@@ -88,6 +88,8 @@ export type {
   InventoryReportVariables,
 } from './reports/inventory.js';
 
+export { OrdersReportError } from './reports/orders.js';
+
 export { ShopVerificationError, verifyShop } from './shops/verify.js';
 export type { VerifyShopOptions, VerifyShopResult } from './shops/verify.js';
 
