@@ -609,15 +609,12 @@ function isProviderPublicTunnelUrl(url: URL, provider: string): boolean {
   const hostname = url.hostname.toLowerCase();
 
   if (provider === 'cloudflared') {
-    return hostname === 'trycloudflare.com' || hostname.endsWith('.trycloudflare.com');
+    return hostname.endsWith('.trycloudflare.com');
   }
 
   if (provider === 'ngrok') {
-    return hostname === 'ngrok-free.app'
-      || hostname.endsWith('.ngrok-free.app')
-      || hostname === 'ngrok.app'
+    return hostname.endsWith('.ngrok-free.app')
       || hostname.endsWith('.ngrok.app')
-      || hostname === 'ngrok.io'
       || hostname.endsWith('.ngrok.io');
   }
 

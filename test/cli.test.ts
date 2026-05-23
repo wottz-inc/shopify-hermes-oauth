@@ -207,6 +207,80 @@ describe('CLI dev tunnel', () => {
     });
   });
 
+  it('rejects bare cloudflared provider URLs and uses the tunnel subdomain', async () => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'cloudflared',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return {
+          stdout: command === 'cloudflared'
+            ? 'Docs: https://trycloudflare.com Quick tunnel: https://hermes-shopify.trycloudflare.com'
+            : '',
+        };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.startedProcesses[1]).toEqual({
+      command: 'shopify-hermes-oauth',
+      args: ['serve', '--host', '127.0.0.1', '--port', '3456', '--app-url', 'https://hermes-shopify.trycloudflare.com'],
+    });
+  });
+
+  it.each([
+    ['ngrok.io'],
+    ['ngrok.app'],
+    ['ngrok-free.app'],
+  ])('rejects bare %s URLs and uses the ngrok tunnel subdomain', async (bareHostname) => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'ngrok',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return {
+          stdout: command === 'ngrok'
+            ? `Docs: https://${bareHostname}/docs Dashboard: https://dashboard.ngrok.com Forwarding https://hermes-shopify.${bareHostname} -> http://127.0.0.1:3456`
+            : '',
+        };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(harness.startedProcesses[1]).toEqual({
+      command: 'shopify-hermes-oauth',
+      args: ['serve', '--host', '127.0.0.1', '--port', '3456', '--app-url', `https://hermes-shopify.${bareHostname}`],
+    });
+  });
+
+  it.each([
+    ['cloudflared', 'https://trycloudflare.com'],
+    ['ngrok', 'https://ngrok.io'],
+    ['ngrok', 'https://ngrok.app'],
+    ['ngrok', 'https://ngrok-free.app'],
+  ])('fails safely when %s only prints a bare provider URL %s', async (provider, bareUrl) => {
+    const harness = createHarness({
+      commandExists: (command) => command === provider,
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return { stdout: command === provider ? `Open dashboard ${bareUrl}` : '' };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(1);
+    expect(harness.startedProcesses).toEqual([
+      {
+        command: provider,
+        args: provider === 'cloudflared' ? ['tunnel', '--url', 'http://127.0.0.1:3456'] : ['http', 'http://127.0.0.1:3456'],
+      },
+    ]);
+    expect(harness.stderr.join('\n')).toContain(`${provider} did not print a public HTTPS URL during startup.`);
+  });
+
   it('prints manual fallback instructions without starting a local server when no tunnel tool is installed', async () => {
     const harness = createHarness();
 
