@@ -31,5 +31,6 @@ If neither tunnel tool is installed, it does not start a misleading local-only O
 - Hermes-native: uses `HERMES_HOME`, `~/.hermes/.env`, `hermes mcp add`, and an optional Hermes skill.
 - Minimal human setup: automate everything except unavoidable Shopify app creation/callback approval/store install approval.
 - Read-only by default.
+- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, and `read_locations`.
 - No required private infrastructure, hosted forge, hosted service, or third-party secret manager.
 - No raw write-capable Shopify Admin GraphQL exposed to agents.

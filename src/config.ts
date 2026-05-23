@@ -7,6 +7,7 @@ import {
 } from './hermes-home.js';
 
 const REDACTED = '[REDACTED]';
+const DEFAULT_SHOPIFY_HERMES_SCOPES = ['read_products', 'read_orders', 'read_inventory', 'read_locations'] as const;
 const REQUIRED_ENV_KEYS = [
   'SHOPIFY_HERMES_CLIENT_ID',
   'SHOPIFY_HERMES_CLIENT_SECRET',
@@ -179,7 +180,7 @@ function mergeShopifyHermesEnv(
 
 function parseScopes(value: string | undefined): readonly string[] {
   if (value === undefined || value.trim().length === 0) {
-    return [];
+    return [...DEFAULT_SHOPIFY_HERMES_SCOPES];
   }
 
   return value

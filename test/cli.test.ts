@@ -470,9 +470,12 @@ describe('CLI init', () => {
     expect(exitCode).toBe(0);
     expect(harness.madeDirs).toEqual(['/tmp/hermes/shopify-hermes-oauth']);
     expect(envFile).toBe(
-      '# existing file\nSHOPIFY_HERMES_CLIENT_ID=existing-id\nUNRELATED=value\n\nSHOPIFY_HERMES_CLIENT_SECRET=super-secret-value\nSHOPIFY_HERMES_APP_URL=https://app.example.test\nSHOPIFY_HERMES_SCOPES=read_products,read_orders,read_inventory,read_locations,read_customers,read_discounts,read_reports\nSHOPIFY_HERMES_DATA_DIR=/tmp/hermes/shopify-hermes-oauth\nSHOPIFY_HERMES_API_VERSION=2026-01\n',
+      '# existing file\nSHOPIFY_HERMES_CLIENT_ID=existing-id\nUNRELATED=value\n\nSHOPIFY_HERMES_CLIENT_SECRET=super-secret-value\nSHOPIFY_HERMES_APP_URL=https://app.example.test\nSHOPIFY_HERMES_SCOPES=read_products,read_orders,read_inventory,read_locations\nSHOPIFY_HERMES_DATA_DIR=/tmp/hermes/shopify-hermes-oauth\nSHOPIFY_HERMES_API_VERSION=2026-01\n',
     );
     expect(envFile).not.toContain('write_');
+    expect(envFile).not.toContain('read_customers');
+    expect(envFile).not.toContain('read_discounts');
+    expect(envFile).not.toContain('read_reports');
     expect(harness.fileModes.get('/tmp/hermes/.env')).toBe(0o600);
     expect(harness.renamedFiles).toHaveLength(1);
     expect(harness.renamedFiles[0]?.to).toBe('/tmp/hermes/.env');
@@ -578,7 +581,10 @@ describe('CLI init', () => {
     expect(exitCode).toBe(0);
     expect(envFile).toContain('SHOPIFY_HERMES_CLIENT_ID=client-from-env');
     expect(envFile).toContain('SHOPIFY_HERMES_CLIENT_SECRET=replace-with-shopify-client-secret');
-    expect(envFile).toContain('SHOPIFY_HERMES_SCOPES=read_products,read_orders,read_inventory,read_locations,read_customers,read_discounts,read_reports');
+    expect(envFile).toContain('SHOPIFY_HERMES_SCOPES=read_products,read_orders,read_inventory,read_locations');
+    expect(envFile).not.toContain('read_customers');
+    expect(envFile).not.toContain('read_discounts');
+    expect(envFile).not.toContain('read_reports');
     expect(envFile).toContain('SHOPIFY_HERMES_API_VERSION=2026-01');
   });
 
@@ -626,6 +632,9 @@ describe('CLI hermes install', () => {
     expect(skill).toContain('Prefer the direct-token `shopify` skill');
     expect(skill).toContain('For durable access, multiple stores, scheduled reports, or avoiding pasted per-store tokens, use this OAuth connector.');
     expect(skill).toContain('Do not ask users to paste Shopify access tokens into chat.');
+    expect(skill).toContain('Default OAuth installs should request only the v0.1 least-privilege scopes: `read_products`, `read_orders`, `read_inventory`, and `read_locations`.');
+    expect(skill).not.toContain('read_products,read_orders,read_inventory,read_locations,read_customers');
+    expect(skill).not.toContain('`read_customers`');
     expect(skill).toContain('writes missing `.env` keys from current environment values or safe placeholders without printing secrets');
     expect(skill).toContain('it is not an interactive prompt');
     expect(skill).toContain('shopify-hermes-oauth init');
@@ -1591,7 +1600,7 @@ describe('CLI report orders', () => {
         'example.myshopify.com': {
           shop: 'example.myshopify.com',
           accessToken,
-          scopes: ['read_orders', 'read_customers'],
+          scopes: ['read_orders'],
           storedAt: '2026-05-22T12:00:00.000Z',
           updatedAt: '2026-05-22T12:00:00.000Z',
         },
@@ -1602,8 +1611,10 @@ describe('CLI report orders', () => {
     const output = harness.stdout.join('\n');
 
     expect(exitCode).toBe(0);
-    expect(output).toContain('| ID | GID | Name | Created At | Financial Status | Fulfillment Status | Total | Currency | Customer | Email | Line Items |');
-    expect(output).toContain('| 2001 | gid://shopify/Order/2001 | #1001 | 2026-05-20T10:30:00Z | PAID | UNFULFILLED | 42.50 | USD | Ada Lovelace | ada@example.test | 2 items: T-Shirt x2; Mug x1 |');
+    expect(output).toContain('| ID | GID | Name | Created At | Financial Status | Fulfillment Status | Total | Currency | Line Items |');
+    expect(output).toContain('| 2001 | gid://shopify/Order/2001 | #1001 | 2026-05-20T10:30:00Z | PAID | UNFULFILLED | 42.50 | USD | 2 items: T-Shirt x2; Mug x1 |');
+    expect(output).not.toContain('Ada Lovelace');
+    expect(output).not.toContain('ada@example.test');
     expect(JSON.stringify(requests)).toContain('created_at:>=');
     expect(JSON.stringify(requests)).toContain('created_at:<=');
     expect(output).not.toContain(accessToken);

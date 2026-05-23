@@ -97,12 +97,14 @@ Default `.env` keys:
 SHOPIFY_HERMES_CLIENT_ID=
 SHOPIFY_HERMES_CLIENT_SECRET=
 SHOPIFY_HERMES_APP_URL=
-SHOPIFY_HERMES_SCOPES=read_products,read_orders,read_inventory,read_locations,read_customers,read_discounts,read_reports
+SHOPIFY_HERMES_SCOPES=read_products,read_orders,read_inventory,read_locations
 SHOPIFY_HERMES_API_VERSION=2026-01
 SHOPIFY_HERMES_DATA_DIR=
 ```
 
 No per-shop access token should be pasted into `.env` in normal OAuth operation.
+
+The default scope set is least-privilege for v0.1 report/MCP surfaces: products, orders, inventory, and locations only. Customer, discounts, and reports scopes are intentionally not requested by default unless a future feature consumes them and documents an explicit opt-in.
 
 ### 5.3 Hermes MCP configuration
 
@@ -358,8 +360,9 @@ Include:
 - financial status;
 - fulfilment status;
 - total amount/currency;
-- customer display name/email when scope allows;
 - line item summary.
+
+The v0.1 orders report intentionally excludes customer display name/email so the default install can remain least-privilege and avoid requesting `read_customers`.
 
 ### Inventory report
 

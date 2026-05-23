@@ -80,6 +80,24 @@ describe('Hermes home resolver', () => {
 });
 
 describe('Shopify Hermes config loading', () => {
+  it('uses the least-privilege v0.1 default scopes when SHOPIFY_HERMES_SCOPES is absent', () => {
+    const config = loadShopifyHermesConfig({
+      env: { HERMES_HOME: '/tmp/hermes' },
+      homeDir: '/home/alice',
+      readFile: () =>
+        [
+          'SHOPIFY_HERMES_CLIENT_ID=file-client-id',
+          'SHOPIFY_HERMES_CLIENT_SECRET=file-client-secret',
+          'SHOPIFY_HERMES_APP_URL=https://example.test',
+        ].join('\n'),
+    });
+
+    expect(config.scopes).toEqual(['read_products', 'read_orders', 'read_inventory', 'read_locations']);
+    expect(config.scopes).not.toContain('read_customers');
+    expect(config.scopes).not.toContain('read_discounts');
+    expect(config.scopes).not.toContain('read_reports');
+  });
+
   it('loads SHOPIFY_HERMES_* config from .env and lets environment override it', () => {
     const config = loadShopifyHermesConfig({
       env: {

@@ -15,10 +15,6 @@ export const ORDERS_REPORT_QUERY = `
               currencyCode
             }
           }
-          customer {
-            displayName
-            email
-          }
           lineItems(first: 50) {
             edges {
               node {
@@ -81,8 +77,6 @@ export interface OrderReportItem {
   readonly fulfillmentStatus: string;
   readonly totalAmount: string;
   readonly currencyCode: string;
-  readonly customerDisplayName: string;
-  readonly customerEmail: string;
   readonly lineItemsSummary: string;
 }
 
@@ -231,8 +225,6 @@ function parseOrder(value: unknown): OrderReportItem {
 
   const totalPriceSet = readRecord(value.totalPriceSet, 'order total price set');
   const shopMoney = readRecord(totalPriceSet.shopMoney, 'order shop money');
-  const customer = isRecord(value.customer) ? value.customer : undefined;
-
   return {
     gid: readString(value.id, 'order id'),
     id: extractNumericId(readString(value.id, 'order id')),
@@ -242,8 +234,6 @@ function parseOrder(value: unknown): OrderReportItem {
     fulfillmentStatus: readString(value.displayFulfillmentStatus, 'order fulfillment status'),
     totalAmount: readString(shopMoney.amount, 'order total amount'),
     currencyCode: readString(shopMoney.currencyCode, 'order currency code'),
-    customerDisplayName: typeof customer?.displayName === 'string' ? customer.displayName : '',
-    customerEmail: typeof customer?.email === 'string' ? customer.email : '',
     lineItemsSummary: summarizeLineItems(value.lineItems),
   };
 }
@@ -283,8 +273,8 @@ function hasMoreLineItems(value: Record<string, unknown>): boolean {
 
 function formatMarkdown(report: OrdersReport): string {
   const rows = [
-    '| ID | GID | Name | Created At | Financial Status | Fulfillment Status | Total | Currency | Customer | Email | Line Items |',
-    '| --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- |',
+    '| ID | GID | Name | Created At | Financial Status | Fulfillment Status | Total | Currency | Line Items |',
+    '| --- | --- | --- | --- | --- | --- | ---: | --- | --- |',
   ];
 
   for (const order of report.orders) {
@@ -297,8 +287,6 @@ function formatMarkdown(report: OrdersReport): string {
       markdownCell(order.fulfillmentStatus),
       markdownCell(order.totalAmount),
       markdownCell(order.currencyCode),
-      markdownCell(order.customerDisplayName),
-      markdownCell(order.customerEmail),
       markdownCell(order.lineItemsSummary),
     ].join(' | ')} |`);
   }
@@ -307,7 +295,7 @@ function formatMarkdown(report: OrdersReport): string {
 }
 
 function formatCsv(report: OrdersReport): string {
-  const rows = ['id,gid,name,createdAt,financialStatus,fulfillmentStatus,totalAmount,currencyCode,customerDisplayName,customerEmail,lineItemsSummary'];
+  const rows = ['id,gid,name,createdAt,financialStatus,fulfillmentStatus,totalAmount,currencyCode,lineItemsSummary'];
 
   for (const order of report.orders) {
     rows.push([
@@ -319,8 +307,6 @@ function formatCsv(report: OrdersReport): string {
       order.fulfillmentStatus,
       order.totalAmount,
       order.currencyCode,
-      order.customerDisplayName,
-      order.customerEmail,
       order.lineItemsSummary,
     ].map(csvCell).join(','));
   }

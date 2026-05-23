@@ -44,7 +44,7 @@ describe('orders report service', () => {
     await expect(generateOrdersReport({ client, window: { from: '2026-04-22', to: '2026-05-22' } })).resolves.toEqual({
       window: { from: '2026-04-22', to: '2026-05-22', query: 'created_at:>=2026-04-22 created_at:<=2026-05-22' },
       orders: [
-        expect.objectContaining({ id: '2001', gid: 'gid://shopify/Order/2001', name: '#1001', customerDisplayName: 'Ada Lovelace', customerEmail: 'ada@example.test', lineItemsSummary: '2 items: T-Shirt x2; Mug x1' }),
+        expect.objectContaining({ id: '2001', gid: 'gid://shopify/Order/2001', name: '#1001', lineItemsSummary: '2 items: T-Shirt x2; Mug x1' }),
         expect.objectContaining({ id: '2002', gid: 'gid://shopify/Order/2002', name: '#1002', fulfillmentStatus: 'FULFILLED' }),
       ],
     });
@@ -63,14 +63,14 @@ describe('orders report service', () => {
 
     const report = { window: empty.window, orders: [orderItem()] };
     expect(formatOrdersReport(report, 'markdown')).toBe([
-      '| ID | GID | Name | Created At | Financial Status | Fulfillment Status | Total | Currency | Customer | Email | Line Items |',
-      '| --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- |',
-      '| 2001 | gid://shopify/Order/2001 | #1001 | 2026-05-20T10:30:00Z | PAID | UNFULFILLED | 42.50 | USD | Ada Lovelace | ada@example.test | 2 items: T-Shirt x2; Mug x1 |',
+      '| ID | GID | Name | Created At | Financial Status | Fulfillment Status | Total | Currency | Line Items |',
+      '| --- | --- | --- | --- | --- | --- | ---: | --- | --- |',
+      '| 2001 | gid://shopify/Order/2001 | #1001 | 2026-05-20T10:30:00Z | PAID | UNFULFILLED | 42.50 | USD | 2 items: T-Shirt x2; Mug x1 |',
     ].join('\n'));
     expect(formatOrdersReport(report, 'json')).toBe(JSON.stringify(report, null, 2));
     expect(formatOrdersReport(report, 'csv')).toBe([
-      'id,gid,name,createdAt,financialStatus,fulfillmentStatus,totalAmount,currencyCode,customerDisplayName,customerEmail,lineItemsSummary',
-      '"2001","gid://shopify/Order/2001","#1001","2026-05-20T10:30:00Z","PAID","UNFULFILLED","42.50","USD","Ada Lovelace","ada@example.test","2 items: T-Shirt x2; Mug x1"',
+      'id,gid,name,createdAt,financialStatus,fulfillmentStatus,totalAmount,currencyCode,lineItemsSummary',
+      '"2001","gid://shopify/Order/2001","#1001","2026-05-20T10:30:00Z","PAID","UNFULFILLED","42.50","USD","2 items: T-Shirt x2; Mug x1"',
     ].join('\n'));
   });
 
@@ -86,9 +86,11 @@ describe('orders report service', () => {
     await expect(generateOrdersReport({ client: advancing, window: { from: '2026-05-01', to: '2026-05-02' }, maxPages: 1 })).rejects.toThrow('Shopify Admin GraphQL orders pagination exceeded the maximum page count.');
   });
 
-  it('requests read-only order/customer fields and neutralizes CSV formula injection', () => {
+  it('requests read-only order fields without customer data and neutralizes CSV formula injection', () => {
     expect(ORDERS_REPORT_QUERY).toContain('orders(');
-    expect(ORDERS_REPORT_QUERY).toContain('customer {');
+    expect(ORDERS_REPORT_QUERY).not.toContain('customer');
+    expect(ORDERS_REPORT_QUERY).not.toContain('displayName');
+    expect(ORDERS_REPORT_QUERY).not.toContain('email');
     expect(ORDERS_REPORT_QUERY).not.toContain('mutation');
 
     const csv = formatOrdersReport({
@@ -96,33 +98,31 @@ describe('orders report service', () => {
       orders: [{
         ...orderItem(),
         name: ' =cmd',
-        customerDisplayName: '  @evil',
-        customerEmail: '\t=cmd',
         lineItemsSummary: ' -bad x1',
       }],
     }, 'csv');
 
     expect(csv).toContain('"\' =cmd"');
-    expect(csv).toContain('"\'  @evil"');
-    expect(csv).toContain('"\'\\t=cmd"');
     expect(csv).toContain('"\' -bad x1"');
   });
 
-  it('treats absent customer email and display name as optional', async () => {
+  it('omits customer fields from generated order output even when Shopify returns them', async () => {
     const client: OrdersReportGraphqlClient = {
       query: () => Promise.resolve({
         data: {
           orders: {
-            edges: [{ cursor: 'cursor-1', node: { ...orderNode(), customer: null } }],
+            edges: [{ cursor: 'cursor-1', node: { ...orderNode(), customer: { displayName: 'Ada Lovelace', email: 'ada@example.test' } } }],
             pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
           },
         },
       }),
     };
 
-    await expect(generateOrdersReport({ client, window: { from: '2026-05-01', to: '2026-05-02' } })).resolves.toEqual(expect.objectContaining({
-      orders: [expect.objectContaining({ customerDisplayName: '', customerEmail: '' })],
-    }));
+    const report = await generateOrdersReport({ client, window: { from: '2026-05-01', to: '2026-05-02' } });
+
+    expect(report.orders[0]).not.toHaveProperty('customerDisplayName');
+    expect(report.orders[0]).not.toHaveProperty('customerEmail');
+    expect(formatOrdersReport(report, 'json')).not.toContain('customer');
   });
 });
 
@@ -136,8 +136,6 @@ function orderItem() {
     fulfillmentStatus: 'UNFULFILLED',
     totalAmount: '42.50',
     currencyCode: 'USD',
-    customerDisplayName: 'Ada Lovelace',
-    customerEmail: 'ada@example.test',
     lineItemsSummary: '2 items: T-Shirt x2; Mug x1',
   };
 }

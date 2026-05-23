@@ -32,7 +32,7 @@ const INIT_ENV_KEYS = [
 ] as const;
 
 const DEFAULT_SHOPIFY_HERMES_APP_URL = 'https://your-public-app-url.example.com';
-const DEFAULT_SHOPIFY_HERMES_SCOPES = 'read_products,read_orders,read_inventory,read_locations,read_customers,read_discounts,read_reports';
+const DEFAULT_SHOPIFY_HERMES_SCOPES = 'read_products,read_orders,read_inventory,read_locations';
 const DEFAULT_SHOPIFY_HERMES_API_VERSION = '2026-01';
 
 type RequiredConfigKey = (typeof REQUIRED_CONFIG_KEYS)[number];
@@ -810,6 +810,7 @@ function localHermesSkillContent(): string {
     "- Do not ask users to paste Shopify access tokens into chat.",
     "- Do not print OAuth secrets, access tokens, or token-store contents.",
     "- Keep operations read-only unless the user explicitly requests otherwise and the connector exposes a safe command or MCP tool for it.",
+    "- Default OAuth installs should request only the v0.1 least-privilege scopes: `read_products`, `read_orders`, `read_inventory`, and `read_locations`.",
     "- Verify the target shop before reports or MCP calls.",
     "- Use `<shop>.myshopify.com` domains; do not guess store domains from brand names.",
     "",
