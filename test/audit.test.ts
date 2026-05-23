@@ -103,6 +103,30 @@ describe('JSONL audit writer', () => {
     await expect(readFile(auditLog, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it.each([
+    ['bare Google OAuth token', ['ya', '29.fake-opaque-token'].join('')],
+    ['embedded Google OAuth token', ['upstream returned ya', '29.fake-opaque-token in body'].join('')],
+    ['bare Slack token', ['xo', 'xb-fakeOpaqueToken'].join('')],
+    ['embedded Slack token', ['upstream returned xo', 'xb-fakeOpaqueToken in body'].join('')],
+    ['bare OpenAI API key', ['s', 'k-fakeOpaqueTokenValue'].join('')],
+    ['embedded OpenAI API key', ['upstream returned s', 'k-fakeOpaqueTokenValue in body'].join('')],
+    ['bare Basic credential', ['Basic', ' ZmFrZVVzZXI6ZmFrZVBhc3N3b3Jk'].join('')],
+    ['embedded Basic credential', ['upstream returned Basic', ' ZmFrZVVzZXI6ZmFrZVBhc3N3b3Jk'].join('')],
+  ] as const)('rejects widened secret patterns in safe-looking metadata values: %s', async (_name, value) => {
+    const root = await makeTempRoot();
+    const auditLog = join(root, 'audit.jsonl');
+
+    await expect(
+      appendAuditEvent(auditLog, {
+        action: 'debug',
+        result: 'failure',
+        metadata: { value },
+      }),
+    ).rejects.toThrow(AuditSecretError);
+
+    await expect(readFile(auditLog, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('rejects embedded Shopify token substrings even when the field name is not sensitive', async () => {
     const root = await makeTempRoot();
     const auditLog = join(root, 'audit.jsonl');

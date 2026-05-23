@@ -127,4 +127,50 @@ describe('Shopify Admin GraphQL client', () => {
     expect(redacted).toBe('{"clientSecret":"[REDACTED]","safe":"ok"}');
     expect(redacted).not.toContain(rawSecret);
   });
+
+  it('redacts generic OAuth, Slack, OpenAI, and Basic authorization token patterns', () => {
+    const oauthToken = ['ya', '29.fakeOpaqueOAuthTokenValue1234567890'].join('');
+    const slackBotToken = ['xo', 'xb-fakeOpaqueTokenValue'].join('');
+    const openAiToken = ['s', 'k-fakeOpaqueTokenValue7890'].join('');
+    const basicCredential = ['Basic', ' ZmFrZVVzZXI6ZmFrZVBhc3N3b3Jk'].join('');
+
+    const redacted = redactSensitiveText([
+      `oauth response ${oauthToken}`,
+      `slack response ${slackBotToken}`,
+      `openai response ${openAiToken}`,
+      `Authorization: ${basicCredential}`,
+    ].join('\n'));
+
+    for (const secret of [oauthToken, slackBotToken, openAiToken, basicCredential]) {
+      expect(redacted).not.toContain(secret);
+    }
+    expect(redacted).toContain('oauth response [REDACTED]');
+    expect(redacted).toContain('slack response [REDACTED]');
+    expect(redacted).toContain('openai response [REDACTED]');
+    expect(redacted).toContain('Authorization: [REDACTED]');
+  });
+
+  it('redacts long values adjacent to sensitive keys without known token prefixes', () => {
+    const opaqueSecret = 'opaqueSecretValueWithoutKnownPrefix1234567890';
+
+    expect(redactSensitiveText(`refresh_token=${opaqueSecret}`)).toBe('refresh_token=[REDACTED]');
+    expect(redactSensitiveText(`apiKey: ${opaqueSecret}`)).toBe('apiKey: [REDACTED]');
+    expect(redactSensitiveText('note=ordinary short business text')).toBe('note=ordinary short business text');
+  });
+
+  it('redacts full comma-delimited sensitive key values', () => {
+    const value = 'foo,bar';
+    const redacted = redactSensitiveText(`error token=${value} status=401`);
+
+    expect(redacted).toBe('error token=[REDACTED] status=401');
+    expect(redacted).not.toContain(value);
+  });
+
+  it('redacts single-quoted JSON-like secret keys', () => {
+    const rawSecret = 'single-quoted-secret-value';
+    const redacted = redactSensitiveText(`{'clientSecret':'${rawSecret}','safe':'ok'}`);
+
+    expect(redacted).toBe("{'clientSecret':'[REDACTED]','safe':'ok'}");
+    expect(redacted).not.toContain(rawSecret);
+  });
 });

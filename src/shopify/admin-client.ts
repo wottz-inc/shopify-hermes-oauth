@@ -106,12 +106,17 @@ async function postGraphql<T>(fetchImplementation: typeof globalThis.fetch, apiV
 
 export function redactSensitiveText(text: string): string {
   return text
-    .replace(/(Authorization\s*:\s*)Bearer\s+\S+/giu, '$1[REDACTED]')
+    .replace(/(Authorization\s*:\s*)(?:Bearer|Basic)\s+\S+/giu, '$1[REDACTED]')
     .replace(/(X-Shopify-Access-Token\s*:\s*)\S+/giu, '$1[REDACTED]')
     .replace(/(Cookie\s*:\s*)[^\r\n]+/giu, '$1[REDACTED]')
-    .replace(/((?:access[_-]?token|token|authorization|cookie|session|secret|password|api[_-]?key|private[_-]?key|credentials?)\s*[=:]\s*)(?:Bearer\s+)?\S+/giu, '$1[REDACTED]')
+    .replace(/((?:access[_-]?token|token|authorization|cookie|session|secret|password|api[_-]?key|private[_-]?key|credentials?)\s*[=:]\s*)(?:(?:Bearer|Basic)\s+)?\S+/giu, '$1[REDACTED]')
     .replace(/("[^"]*(?:access[_-]?token|token|authorization|cookie|session|secret|password|api[_-]?key|private[_-]?key|credentials?|x-shopify-access-token)[^"]*"\s*:\s*)"(?:[^"\\]|\\.)*"/giu, '$1"[REDACTED]"')
-    .replace(/\b(?:shpat|shpca|shpss|shppa)_[A-Za-z0-9_-]+\b/giu, '[REDACTED]');
+    .replace(/('[^']*(?:access[_-]?token|token|authorization|cookie|session|secret|password|api[_-]?key|private[_-]?key|credentials?|x-shopify-access-token)[^']*'\s*:\s*)'(?:[^'\\]|\\.)*'/giu, "$1'[REDACTED]'")
+    .replace(/\b(?:shpat|shpca|shpss|shppa)_[A-Za-z0-9_-]+\b/giu, '[REDACTED]')
+    .replace(/\bya29\.[A-Za-z0-9._-]+\b/giu, '[REDACTED]')
+    .replace(/\bxox[a-z]-[A-Za-z0-9-]+\b/giu, '[REDACTED]')
+    .replace(/\bsk-[A-Za-z0-9_-]{10,}\b/giu, '[REDACTED]')
+    .replace(/\bBasic\s+[A-Za-z0-9+/=]{12,}/giu, '[REDACTED]');
 }
 
 export function redactSensitiveErrorMessage(text: string): string {

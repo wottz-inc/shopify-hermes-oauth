@@ -348,8 +348,12 @@ function isSensitiveKey(key: string | undefined): boolean {
 
 function looksLikeSecretValue(value: string): boolean {
   return /(?:shpat|shpca|shpss|shppa)_[A-Za-z0-9_-]+/iu.test(value) ||
-    /^Bearer\s+\S+$/iu.test(value) ||
-    /(?:Authorization|X-Shopify-Access-Token)\s*:\s*(?:Bearer\s+)?\S+/iu.test(value) ||
+    /\bya29\.[A-Za-z0-9._-]+\b/iu.test(value) ||
+    /\bxox[a-z]-[A-Za-z0-9-]+\b/iu.test(value) ||
+    /\bsk-[A-Za-z0-9_-]{10,}\b/iu.test(value) ||
+    /^(?:Bearer|Basic)\s+\S+$/iu.test(value) ||
+    /(?:^|[^\w])Basic\s+[A-Za-z0-9+/]{8,}={0,2}(?=$|[^\w+/=])/iu.test(value) ||
+    /(?:Authorization|X-Shopify-Access-Token)\s*:\s*(?:(?:Bearer|Basic)\s+)?\S+/iu.test(value) ||
     /["']?(?:access[_-]?token|accessToken|client[_-]?secret|clientSecret|api[_-]?key|apiKey|private[_-]?key|privateKey)["']?\s*[=:]\s*["']?\S+/iu.test(value);
 }
 
