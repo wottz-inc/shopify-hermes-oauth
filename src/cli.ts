@@ -928,11 +928,9 @@ async function checkTokenStoreStatus(context: CliContext, tokenStorePath: string
 
 async function checkAuditWritable(context: CliContext, auditLogPath: string): Promise<boolean> {
   try {
-    await context.appendAuditEvent(auditLogPath, {
-      action: 'doctor.audit_check',
-      result: 'success',
-      metadata: auditMetadata({ mode: 'write-check' }),
-    });
+    await context.mkdir(dirname(auditLogPath));
+    await context.writeJsonFile(auditLogPath, '', { flag: 'a' });
+    await context.chmod(auditLogPath, 0o600);
     return true;
   } catch {
     return false;

@@ -45,7 +45,7 @@ function createHarness(overrides: Partial<CliDependencies> = {}) {
         throw error;
       }
 
-      files.set(path, content);
+      files.set(path, options?.flag === 'a' ? `${files.get(path) ?? ''}${content}` : content);
       if (options?.mode !== undefined) {
         fileModes.set(path, options.mode);
       }
@@ -596,6 +596,32 @@ describe('CLI doctor', () => {
     expect(output).not.toContain('super-secret-value');
   });
 
+  it('checks audit writability without appending a doctor event to the main audit log', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://app.example.test',
+      },
+      commandExists: (command) => command === 'hermes',
+      appendAuditEvent: () => {
+        throw new Error('doctor must not append an audit event');
+      },
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', '{"version":1,"shops":{}}');
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/audit.jsonl', '{"action":"shops.list"}\n');
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('Audit log: writable');
+    expect(harness.files.get('/tmp/hermes/shopify-hermes-oauth/audit.jsonl')).toBe('{"action":"shops.list"}\n');
+    expect(output).not.toContain('doctor.audit_check');
+    expect(output).not.toContain('super-secret-value');
+  });
+
   it('fails clearly when the token store contains invalid JSON without echoing contents', async () => {
     const leakedTokenLikeContent = '{"shops":{"example.myshopify.com":{"accessToken":"shpat_never_echo_this"';
     const harness = createHarness({
@@ -690,8 +716,15 @@ describe('CLI doctor', () => {
         SHOPIFY_HERMES_APP_URL: 'https://app.example.test',
       },
       commandExists: (command) => command === 'hermes',
+      writeFile: (path, content, options) => {
+        if (path === '/tmp/hermes/shopify-hermes-oauth/audit.jsonl' && options?.flag === 'a') {
+          throw Object.assign(new Error('EISDIR: illegal operation on a directory, open audit.jsonl'), { code: 'EISDIR' });
+        }
+
+        harness.files.set(path, content);
+      },
       appendAuditEvent: () => {
-        throw Object.assign(new Error('EISDIR: illegal operation on a directory, open audit.jsonl'), { code: 'EISDIR' });
+        throw new Error('doctor must not append an audit event');
       },
     });
     harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', '{"version":1,"shops":{}}');
@@ -704,6 +737,39 @@ describe('CLI doctor', () => {
     expect(output).toContain('Audit log: not writable');
     expect(output).toContain('Check audit log path: /tmp/hermes/shopify-hermes-oauth/audit.jsonl');
     expect(output).not.toContain('EISDIR');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('keeps audit writability probe failures generic when low-level details include secrets', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://app.example.test',
+      },
+      commandExists: (command) => command === 'hermes',
+      writeFile: (path, content, options) => {
+        if (path === '/tmp/hermes/shopify-hermes-oauth/audit.jsonl' && options?.flag === 'a') {
+          throw new Error('permission denied for shpat_never_echo_this');
+        }
+
+        harness.files.set(path, content);
+      },
+      appendAuditEvent: () => {
+        throw new Error('doctor must not append an audit event');
+      },
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', '{"version":1,"shops":{}}');
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Audit log: not writable');
+    expect(output).toContain('Check audit log path: /tmp/hermes/shopify-hermes-oauth/audit.jsonl');
+    expect(output).not.toContain('permission denied');
+    expect(output).not.toContain('shpat_never_echo_this');
     expect(output).not.toContain('super-secret-value');
   });
 });
