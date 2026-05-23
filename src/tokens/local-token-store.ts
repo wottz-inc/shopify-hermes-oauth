@@ -117,7 +117,7 @@ export class LocalJsonTokenStore implements TokenStore {
       return { version: 1, shops: {} };
     }
 
-    return parseStoreFile(raw);
+    return parseLocalJsonTokenStoreFile(raw);
   }
 
   async #writeStoreFile(file: TokenStoreFile): Promise<void> {
@@ -129,7 +129,7 @@ export function createLocalJsonTokenStore(options: LocalJsonTokenStoreOptions): 
   return new LocalJsonTokenStore(options);
 }
 
-function parseStoreFile(raw: unknown): TokenStoreFile {
+export function parseLocalJsonTokenStoreFile(raw: unknown): TokenStoreFile {
   if (!isRecord(raw) || raw.version !== 1 || !isRecord(raw.shops)) {
     throw new Error('Invalid token store file.');
   }

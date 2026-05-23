@@ -62,6 +62,7 @@ function createHarness(overrides: Partial<CliDependencies> = {}) {
     mkdir: (path) => {
       madeDirs.push(path);
     },
+    appendAuditEvent: () => undefined,
     ...overrides,
   };
 
@@ -522,6 +523,119 @@ describe('CLI doctor', () => {
 
     expect(exitCode).toBe(0);
     expect(output).toContain('Required configuration: ok');
+    expect(output).toContain('Token store: not initialized');
+    expect(output).toContain('Audit log: writable');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('fails clearly when the token store contains invalid JSON without echoing contents', async () => {
+    const leakedTokenLikeContent = '{"shops":{"example.myshopify.com":{"accessToken":"shpat_never_echo_this"';
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://app.example.test',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', leakedTokenLikeContent);
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Token store: corrupted/invalid JSON');
+    expect(output).toContain('Fix or remove /tmp/hermes/shopify-hermes-oauth/tokens.json before continuing.');
+    expect(output).not.toContain('shpat_never_echo_this');
+    expect(output).not.toContain(leakedTokenLikeContent);
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('fails clearly when the token store cannot be read without echoing low-level details', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://app.example.test',
+      },
+      commandExists: (command) => command === 'hermes',
+      readFile: (path) => {
+        if (path === '/tmp/hermes/shopify-hermes-oauth/tokens.json') {
+          throw Object.assign(new Error('EISDIR: illegal operation on a directory, read tokens.json'), { code: 'EISDIR' });
+        }
+
+        return harness.files.get(path);
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Token store: unreadable');
+    expect(output).toContain('Check token store path: /tmp/hermes/shopify-hermes-oauth/tokens.json');
+    expect(output).not.toContain('EISDIR');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('uses the runtime token-store parser when validating doctor token store contents', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://app.example.test',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'shpat_never_echo_this',
+          scopes: ['read_products'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+          metadata: { shopName: 123 },
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Token store: corrupted/invalid JSON');
+    expect(output).not.toContain('shpat_never_echo_this');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('fails clearly when the audit path is not writable', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://app.example.test',
+      },
+      commandExists: (command) => command === 'hermes',
+      appendAuditEvent: () => {
+        throw Object.assign(new Error('EISDIR: illegal operation on a directory, open audit.jsonl'), { code: 'EISDIR' });
+      },
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', '{"version":1,"shops":{}}');
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Token store: parseable/ok');
+    expect(output).toContain('Audit log: not writable');
+    expect(output).toContain('Check audit log path: /tmp/hermes/shopify-hermes-oauth/audit.jsonl');
+    expect(output).not.toContain('EISDIR');
     expect(output).not.toContain('super-secret-value');
   });
 });

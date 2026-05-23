@@ -16,7 +16,7 @@ import { formatProductsReport, generateProductsReport, type ProductsReportFormat
 import { createOAuthHttpServer } from './server.js';
 import { createShopifyAdminGraphqlClient, redactSensitiveErrorMessage } from './shopify/admin-client.js';
 import { verifyShop, type VerifyShopResult } from './shops/verify.js';
-import { LocalJsonTokenStore, normalizeTokenStoreShopDomain, type StoredShopToken } from './tokens/local-token-store.js';
+import { LocalJsonTokenStore, normalizeTokenStoreShopDomain, parseLocalJsonTokenStoreFile, type StoredShopToken } from './tokens/local-token-store.js';
 
 const REQUIRED_CONFIG_KEYS = [
   'SHOPIFY_HERMES_CLIENT_ID',
@@ -893,6 +893,8 @@ async function runDoctor(context: CliContext): Promise<number> {
   const hermesOk = await context.commandExists('hermes');
   const cloudflaredOk = await context.commandExists('cloudflared');
   const ngrokOk = await context.commandExists('ngrok');
+  const tokenStoreStatus = await checkTokenStoreStatus(context, paths.tokenStore);
+  const auditWritable = await checkAuditWritable(context, paths.auditLog);
 
   context.stdout('Shopify Hermes OAuth doctor');
   context.stdout(`Node.js >=20: ${nodeOk ? 'ok' : `missing (found ${context.nodeVersion}; install Node.js 20 or newer)`}`);
@@ -901,6 +903,8 @@ async function runDoctor(context: CliContext): Promise<number> {
   context.stdout(`ngrok: ${ngrokOk ? 'ok' : 'optional, not found'}`);
   context.stdout(`Hermes home: ${paths.hermesHome}`);
   context.stdout(`Data directory: ${paths.dataDir}`);
+  context.stdout(formatTokenStoreStatus(tokenStoreStatus));
+  context.stdout(auditWritable ? 'Audit log: writable' : `Audit log: not writable. Check audit log path: ${paths.auditLog}`);
 
   if (missingConfigKeys.length === 0) {
     context.stdout('Required configuration: ok');
@@ -908,7 +912,19 @@ async function runDoctor(context: CliContext): Promise<number> {
     context.stdout(`Missing required configuration: ${missingConfigKeys.join(', ')}`);
   }
 
-  if (!nodeOk || !hermesOk || missingConfigKeys.length > 0) {
+  if (tokenStoreStatus === 'corrupted') {
+    context.stderr(`Token store is corrupted or invalid JSON. Fix or remove ${paths.tokenStore} before continuing.`);
+  }
+
+  if (tokenStoreStatus === 'unreadable') {
+    context.stderr(`Token store is unreadable. Check token store path: ${paths.tokenStore}`);
+  }
+
+  if (!auditWritable) {
+    context.stderr(`Audit log is not writable. Check audit log path: ${paths.auditLog}`);
+  }
+
+  if (!nodeOk || !hermesOk || missingConfigKeys.length > 0 || tokenStoreStatus === 'corrupted' || tokenStoreStatus === 'unreadable' || !auditWritable) {
     printNextSteps(context, missingConfigKeys, { nodeOk, hermesOk, hasTunnel: cloudflaredOk || ngrokOk });
     return 1;
   }
@@ -918,6 +934,59 @@ async function runDoctor(context: CliContext): Promise<number> {
   }
 
   return 0;
+}
+
+type TokenStoreDoctorStatus = 'not-initialized' | 'ok' | 'corrupted' | 'unreadable';
+
+async function checkTokenStoreStatus(context: CliContext, tokenStorePath: string): Promise<TokenStoreDoctorStatus> {
+  let content: string | undefined;
+
+  try {
+    content = await context.readFile(tokenStorePath);
+  } catch {
+    return 'unreadable';
+  }
+
+  if (content === undefined) {
+    return 'not-initialized';
+  }
+
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    parseLocalJsonTokenStoreFile(parsed);
+    return 'ok';
+  } catch {
+    return 'corrupted';
+  }
+}
+
+async function checkAuditWritable(context: CliContext, auditLogPath: string): Promise<boolean> {
+  try {
+    await context.appendAuditEvent(auditLogPath, {
+      action: 'doctor.audit_check',
+      result: 'success',
+      metadata: auditMetadata({ mode: 'write-check' }),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function formatTokenStoreStatus(status: TokenStoreDoctorStatus): string {
+  if (status === 'not-initialized') {
+    return 'Token store: not initialized';
+  }
+
+  if (status === 'ok') {
+    return 'Token store: parseable/ok';
+  }
+
+  if (status === 'unreadable') {
+    return 'Token store: unreadable';
+  }
+
+  return 'Token store: corrupted/invalid JSON';
 }
 
 async function runInit(context: CliContext): Promise<number> {
