@@ -185,6 +185,42 @@ describe('products report service', () => {
     }));
   });
 
+  it('rejects non-plain product nodes before reading report fields', async () => {
+    class ProductNode {
+      public readonly id = 'gid://shopify/Product/1001';
+      public readonly title = 'A Shirt';
+      public readonly handle = 'a-shirt';
+      public readonly status = 'ACTIVE';
+      public readonly vendor = 'Example Vendor';
+      public readonly productType = 'Apparel';
+      public readonly totalInventory = 7;
+      public readonly variants = { edges: [], pageInfo: { hasNextPage: false } };
+    }
+
+    const invalidNodes = [
+      new Date('2026-01-02T03:04:05.000Z'),
+      new Map([['id', 'gid://shopify/Product/1001']]),
+      [],
+      null,
+      new ProductNode(),
+    ];
+
+    for (const node of invalidNodes) {
+      const client: ProductsReportGraphqlClient = {
+        query: () => Promise.resolve({
+          data: {
+            products: {
+              edges: [{ cursor: 'cursor-1', node }],
+              pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+            },
+          },
+        }),
+      };
+
+      await expect(generateProductsReport({ client })).rejects.toThrow('Shopify Admin GraphQL response included an invalid product node.');
+    }
+  });
+
   it('neutralizes CSV spreadsheet formula injection cells', () => {
     const report = {
       products: [

@@ -1,3 +1,5 @@
+import { isJsonPlainRecord as isRecord } from '../util/json.js';
+
 import { csvCell } from './csv.js';
 
 export const ORDERS_REPORT_QUERY = `
@@ -392,8 +394,4 @@ function sanitizeOutput(value: string): string {
   }
 
   return sanitized;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

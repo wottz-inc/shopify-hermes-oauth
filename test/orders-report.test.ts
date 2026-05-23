@@ -110,6 +110,43 @@ describe('orders report service', () => {
     }));
   });
 
+  it('rejects non-plain order nodes before reading report fields', async () => {
+    class OrderNode {
+      public readonly id = 'gid://shopify/Order/2001';
+      public readonly name = '#1001';
+      public readonly createdAt = '2026-05-20T10:30:00Z';
+      public readonly displayFinancialStatus = 'PAID';
+      public readonly displayFulfillmentStatus = 'UNFULFILLED';
+      public readonly totalPriceSet = { shopMoney: { amount: '42.50', currencyCode: 'USD' } };
+      public readonly lineItems = { edges: [], pageInfo: { hasNextPage: false } };
+    }
+
+    const invalidNodes = [
+      new Date('2026-01-02T03:04:05.000Z'),
+      new Map([['id', 'gid://shopify/Order/2001']]),
+      [],
+      null,
+      new OrderNode(),
+    ];
+
+    for (const node of invalidNodes) {
+      const client: OrdersReportGraphqlClient = {
+        query: () => Promise.resolve({
+          data: {
+            orders: {
+              edges: [{ cursor: 'cursor-1', node }],
+              pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+            },
+          },
+        }),
+      };
+
+      await expect(generateOrdersReport({ client, window: { from: '2026-05-01', to: '2026-05-02' } })).rejects.toThrow(
+        'Shopify Admin GraphQL response included an invalid order node.',
+      );
+    }
+  });
+
   it('fails safely for repeated cursors and max pages', async () => {
     const repeated: OrdersReportGraphqlClient = {
       query: () => Promise.resolve({ data: { orders: { edges: [{ cursor: 'cursor-1', node: orderNode() }], pageInfo: { hasNextPage: true, endCursor: 'cursor-1' } } } }),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ShopifyAdminGraphqlError, createShopifyAdminGraphqlClient, redactSensitiveText } from '../src/shopify/admin-client.js';
+import { ShopifyAdminGraphqlError, createShopifyAdminGraphqlClient, redactHttpBody, redactSensitiveText } from '../src/shopify/admin-client.js';
 
 const SHOP = 'example.myshopify.com';
 const TOKEN = 'shpat_super_secret_token';
@@ -26,6 +26,10 @@ function fetchInputToString(input: Parameters<typeof globalThis.fetch>[0]): stri
 }
 
 describe('Shopify Admin GraphQL client', () => {
+  class CustomBody {
+    public readonly accessToken = 'class-token-must-use-raw-redaction';
+  }
+
   it('posts the safe shop metadata query to the Admin GraphQL endpoint with the access token header', async () => {
     const calls: { readonly url: string; readonly init: RequestInit }[] = [];
     const fetch: typeof globalThis.fetch = (url, init) => {
@@ -85,6 +89,19 @@ describe('Shopify Admin GraphQL client', () => {
     }
   });
 
+  it.each([
+    ['null', null],
+    ['array', []],
+  ] as const)('throws a controlled error when shop metadata response JSON is %s', async (_name, body) => {
+    const fetch: typeof globalThis.fetch = () => Promise.resolve(jsonResponse(body));
+    const client = createShopifyAdminGraphqlClient({ apiVersion: '2026-01', fetch });
+
+    await expect(client.getShopMetadata({ shop: SHOP, accessToken: TOKEN })).rejects.toThrow(ShopifyAdminGraphqlError);
+    await expect(client.getShopMetadata({ shop: SHOP, accessToken: TOKEN })).rejects.toThrow(
+      'Shopify Admin GraphQL response did not include expected shop metadata.',
+    );
+  });
+
   it('redacts sensitive substrings from thrown network and HTTP error details', async () => {
     expect(redactSensitiveText(`Authorization: Bearer ${TOKEN}`)).toBe('Authorization: [REDACTED]');
     expect(redactSensitiveText(`X-Shopify-Access-Token: ${TOKEN}`)).toBe('X-Shopify-Access-Token: [REDACTED]');
@@ -118,6 +135,24 @@ describe('Shopify Admin GraphQL client', () => {
         expect(message).not.toContain(secret);
       }
     }
+  });
+
+  it.each([
+    ['Date', new Date('2026-01-02T03:04:05.000Z')],
+    ['Map', new Map([['accessToken', 'map-token-must-use-raw-redaction']])],
+    ['class instance', new CustomBody()],
+    ['null', null],
+  ] as const)('redacts %s HTTP bodies from raw text rather than treating them as plain records', (_name, parsedBody) => {
+    const raw = '{"accessToken":"raw-secret-must-not-leak","safe":"ok"}';
+    const redacted = redactHttpBody(parsedBody, raw);
+
+    expect(redacted).toBe('{"accessToken":"[REDACTED]","safe":"ok"}');
+    expect(redacted).not.toContain('raw-secret-must-not-leak');
+  });
+
+  it('continues to redact arrays and plain objects structurally', () => {
+    expect(redactHttpBody([{ accessToken: 'array-token-must-not-leak' }], '')).toBe('[{"[REDACTED]":"[REDACTED]"}]');
+    expect(redactHttpBody({ accessToken: 'object-token-must-not-leak' }, '')).toBe('{"[REDACTED]":"[REDACTED]"}');
   });
 
   it('redacts camelCase secret keys from raw JSON-like strings', () => {

@@ -8,6 +8,7 @@ import { type VerifyShopResult } from '../shops/verify.js';
 import { summarizeShopMetadata, type AllowedShopMetadata } from '../shops/metadata.js';
 import { redactSensitiveText } from '../shopify/admin-client.js';
 import { type StoredShopToken, type TokenStore } from '../tokens/local-token-store.js';
+import { isJsonPlainRecord as isRecord } from '../util/json.js';
 
 export type McpToolName =
   | 'shopify.list_shops'
@@ -436,8 +437,4 @@ function readJsonRpcId(value: unknown): string | number | null {
 
 function isNotification(value: unknown): boolean {
   return isRecord(value) && !Object.hasOwn(value, 'id');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -1,4 +1,5 @@
 import { normalizeTokenStoreShopDomain } from '../tokens/local-token-store.js';
+import { isJsonPlainRecord } from '../util/json.js';
 
 export const SHOP_METADATA_QUERY = '{ shop { name myshopifyDomain currencyCode } }';
 
@@ -32,13 +33,7 @@ export interface ShopifyAdminGraphqlClientOptions {
 }
 
 interface GraphqlResponse {
-  readonly data?: {
-    readonly shop?: {
-      readonly name?: unknown;
-      readonly myshopifyDomain?: unknown;
-      readonly currencyCode?: unknown;
-    };
-  };
+  readonly data?: unknown;
   readonly errors?: unknown;
 }
 
@@ -97,7 +92,7 @@ async function postGraphql<T>(fetchImplementation: typeof globalThis.fetch, apiV
     throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL HTTP ${response.status.toString(10)}: ${redactHttpBody(body, bodyText)}`);
   }
 
-  if (isRecord(body) && body.errors !== undefined) {
+  if (isJsonPlainRecord(body) && body.errors !== undefined) {
     throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL returned errors: ${redactGraphqlErrors(body.errors)}`);
   }
 
@@ -125,18 +120,20 @@ export function redactSensitiveErrorMessage(text: string): string {
 }
 
 export function redactHttpBody(parsedBody: unknown, rawBodyText: string): string {
-  if (isRecord(parsedBody) || Array.isArray(parsedBody)) {
+  if (isJsonPlainRecord(parsedBody) || Array.isArray(parsedBody)) {
     return JSON.stringify(redactUnknown(parsedBody));
   }
 
   return redactSensitiveText(rawBodyText);
 }
 
-function parseShopMetadata(response: GraphqlResponse): AdminShopMetadata {
-  const shop = response.data?.shop;
+function parseShopMetadata(response: unknown): AdminShopMetadata {
+  const data = isJsonPlainRecord(response) ? response.data : undefined;
+  const shop = isJsonPlainRecord(data) ? data.shop : undefined;
 
   if (
-    typeof shop?.name !== 'string' ||
+    !isJsonPlainRecord(shop) ||
+    typeof shop.name !== 'string' ||
     typeof shop.myshopifyDomain !== 'string' ||
     typeof shop.currencyCode !== 'string'
   ) {
@@ -164,7 +161,7 @@ function redactUnknown(value: unknown): unknown {
     return value.map((item) => redactUnknown(item));
   }
 
-  if (isRecord(value)) {
+  if (isJsonPlainRecord(value)) {
     const output: Record<string, unknown> = {};
 
     for (const [key, item] of Object.entries(value)) {
@@ -196,8 +193,4 @@ function redactError(error: unknown): string {
 
 function isSensitiveKey(key: string): boolean {
   return /(?:secret|token|authorization|password|api[_-]?key|private[_-]?key|cookie|session|credentials?)/iu.test(key);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

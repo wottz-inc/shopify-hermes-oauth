@@ -3,6 +3,7 @@ import { chmod as fsChmod, open as fsOpen } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { ensureDataDirectory } from './storage/local-files.js';
+import { isJsonPlainRecord } from './util/json.js';
 
 const AUDIT_FILE_MODE = 0o600;
 
@@ -112,7 +113,7 @@ function canonicalizeAuditEvent(event: AuditEventInput): AuditEventInput {
   }
 
   if (metadata !== undefined) {
-    if (!isPlainObject(metadata)) {
+    if (!isJsonPlainRecord(metadata)) {
       throw new AuditValidationError('Audit metadata must be an object when provided.');
     }
 
@@ -156,7 +157,7 @@ function canonicalizeAuditMetadata(value: unknown, path: string, seen: WeakMap<o
     return canonicalizeAuditMetadataArray(value, path, seen);
   }
 
-  if (isPlainObject(value)) {
+  if (isJsonPlainRecord(value)) {
     return canonicalizeAuditMetadataObject(value, path, seen);
   }
 
@@ -298,7 +299,7 @@ function findSecretLikePathRecursive(
     return undefined;
   }
 
-  if (isPlainObject(value)) {
+  if (isJsonPlainRecord(value)) {
     if (seen.has(value)) {
       return undefined;
     }
@@ -321,15 +322,6 @@ function findSecretLikePathRecursive(
   }
 
   return undefined;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (!isObjectLike(value) || Array.isArray(value)) {
-    return false;
-  }
-
-  const prototype = Object.getPrototypeOf(value) as unknown;
-  return prototype === Object.prototype || prototype === null;
 }
 
 function isObjectLike(value: unknown): value is object {

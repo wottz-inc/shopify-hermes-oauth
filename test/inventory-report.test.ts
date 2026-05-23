@@ -179,6 +179,41 @@ describe('inventory report service', () => {
     await expect(generateInventoryReport({ client })).rejects.not.toThrow('Sensitive Shirt');
   });
 
+  it.each([
+    ['product', (node: unknown) => node, 'invalid product node'],
+    ['variant', (node: unknown) => inventoryProductNode({ variantNode: node }), 'invalid variant node'],
+    ['inventory level', (node: unknown) => inventoryProductNode({ inventoryLevels: { edges: [{ node }] } }), 'invalid inventory level node'],
+  ] as const)('rejects non-plain inventory %s nodes before reading report fields', async (_name, buildNode, errorDetail) => {
+    class InventoryNode {
+      public readonly id = 'gid://shopify/Product/1001';
+    }
+
+    const invalidNodes = [
+      new Date('2026-01-02T03:04:05.000Z'),
+      new Map([['id', 'gid://shopify/Product/1001']]),
+      [],
+      null,
+      new InventoryNode(),
+    ];
+
+    for (const invalidNode of invalidNodes) {
+      const client: InventoryReportGraphqlClient = {
+        query: () => Promise.resolve({
+          data: {
+            products: {
+              edges: [{ cursor: 'cursor-1', node: buildNode(invalidNode) }],
+              pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+            },
+          },
+        }),
+      };
+
+      await expect(generateInventoryReport({ client })).rejects.toThrow(
+        `Shopify Admin GraphQL response included an ${errorDetail}.`,
+      );
+    }
+  });
+
   it('fails safely for repeated cursors, max pages, and invalid page sizes/thresholds', async () => {
     const repeated: InventoryReportGraphqlClient = {
       query: () => Promise.resolve({ data: { products: { edges: [{ cursor: 'cursor-1', node: inventoryProductNode() }], pageInfo: { hasNextPage: true, endCursor: 'cursor-1' } } } }),
@@ -247,27 +282,32 @@ function inventoryProductNode(overrides: Partial<{
   readonly inventoryItemId: string;
   readonly available: number;
   readonly inventoryLevels: unknown;
+  readonly variantNode: unknown;
 }> = {}) {
+  const variantNode = Object.hasOwn(overrides, 'variantNode')
+    ? overrides.variantNode
+    : {
+      id: overrides.variantId ?? 'gid://shopify/ProductVariant/2001',
+      title: overrides.variantTitle ?? 'Red / S',
+      sku: Object.hasOwn(overrides, 'sku') ? overrides.sku : 'SKU-RED-S',
+      inventoryItem: {
+        id: overrides.inventoryItemId ?? 'gid://shopify/InventoryItem/3001',
+        inventoryLevels: overrides.inventoryLevels ?? {
+          edges: [
+            { node: { location: { name: 'Main Warehouse' }, quantities: [{ name: 'available', quantity: overrides.available ?? 3 }, { name: 'on_hand', quantity: 7 }, { name: 'committed', quantity: 4 }] } },
+            { node: { location: { name: 'Retail Store' }, available: 12, onHand: 12, committed: 0 } },
+          ],
+          pageInfo: { hasNextPage: false, endCursor: 'level-cursor-1' },
+        },
+      },
+    };
+
   return {
     id: overrides.id ?? 'gid://shopify/Product/1001',
     title: overrides.title ?? 'A Shirt',
     variants: {
       edges: [{
-        node: {
-          id: overrides.variantId ?? 'gid://shopify/ProductVariant/2001',
-          title: overrides.variantTitle ?? 'Red / S',
-          sku: Object.hasOwn(overrides, 'sku') ? overrides.sku : 'SKU-RED-S',
-          inventoryItem: {
-            id: overrides.inventoryItemId ?? 'gid://shopify/InventoryItem/3001',
-            inventoryLevels: overrides.inventoryLevels ?? {
-              edges: [
-                { node: { location: { name: 'Main Warehouse' }, quantities: [{ name: 'available', quantity: overrides.available ?? 3 }, { name: 'on_hand', quantity: 7 }, { name: 'committed', quantity: 4 }] } },
-                { node: { location: { name: 'Retail Store' }, available: 12, onHand: 12, committed: 0 } },
-              ],
-              pageInfo: { hasNextPage: false, endCursor: 'level-cursor-1' },
-            },
-          },
-        },
+        node: variantNode,
       }],
       pageInfo: { hasNextPage: false, endCursor: 'variant-cursor-1' },
     },

@@ -1,3 +1,5 @@
+import { isJsonPlainRecord as isRecord } from '../util/json.js';
+
 import { csvCell } from './csv.js';
 
 export const INVENTORY_REPORT_QUERY = `
@@ -335,6 +337,10 @@ function readString(value: unknown, field: string): string {
 
 function readRecord(value: unknown, field: string): Record<string, unknown> {
   if (!isRecord(value)) {
+    if (field.endsWith(' node')) {
+      throw new InventoryReportError(`Shopify Admin GraphQL response included an invalid ${field}.`);
+    }
+
     throw new InventoryReportError(`Shopify Admin GraphQL response did not include expected ${field}.`);
   }
 
@@ -374,8 +380,4 @@ function sanitizeOutput(value: string): string {
   }
 
   return sanitized;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

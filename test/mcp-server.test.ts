@@ -450,6 +450,20 @@ describe('curated MCP server', () => {
     }
   });
 
+  it.each([
+    ['Date', new Date('2026-01-02T03:04:05.000Z')],
+    ['Map', new Map([['shop', 'alpha.myshopify.com']])],
+    ['array', []],
+    ['null', null],
+    ['class instance', new (class CustomArgs { public readonly shop = 'alpha.myshopify.com'; })()],
+  ] as const)('rejects non-plain MCP arguments: %s', async (_name, args) => {
+    await expect(callTool('shopify.list_shops', args, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.verify_shop', args, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.report_products', args, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.report_orders', args, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.report_inventory', args, createDeps())).rejects.toThrow(McpToolError);
+  });
+
   it('serves lightweight stdio JSON-RPC requests and suppresses notifications', async () => {
     const input = new PassThrough();
     const output = new PassThrough();
