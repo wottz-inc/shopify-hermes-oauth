@@ -73,7 +73,7 @@ describe('inventory report service', () => {
         }),
       ],
     });
-    expect(calls).toEqual([{ after: null, first: 50 }, { after: 'cursor-1', first: 50 }]);
+    expect(calls).toEqual([{ after: null, first: 25 }, { after: 'cursor-1', first: 25 }]);
   });
 
   it('formats markdown, json, and csv deterministically including missing SKU and formula-safe cells', () => {
@@ -129,7 +129,7 @@ describe('inventory report service', () => {
     }));
   });
 
-  it('fails safely with GID-only product context instead of silently truncating products with more than 100 variants', async () => {
+  it('fails safely with GID-only product context instead of silently truncating products with more than 10 variants', async () => {
     const product = inventoryProductNode({ title: 'Sensitive Shirt \u0000 Drop' });
     const variants = product.variants as { readonly edges: readonly unknown[]; readonly pageInfo?: unknown };
     const client: InventoryReportGraphqlClient = {
@@ -147,12 +147,12 @@ describe('inventory report service', () => {
     };
 
     await expect(generateInventoryReport({ client })).rejects.toThrow(
-      'Shopify Admin GraphQL variants connection was truncated for product gid://shopify/Product/1001. v0.1 inventory reports support at most 100 variants per product.',
+      'Shopify Admin GraphQL variants connection was truncated for product gid://shopify/Product/1001. v0.1 inventory reports support at most 10 variants per product.',
     );
     await expect(generateInventoryReport({ client })).rejects.not.toThrow('Sensitive Shirt');
   });
 
-  it('fails safely with GID-only product and variant context instead of silently truncating more than 50 inventory levels', async () => {
+  it('fails safely with GID-only product and variant context instead of silently truncating more than 10 inventory levels', async () => {
     const client: InventoryReportGraphqlClient = {
       query: () => Promise.resolve({
         data: {
@@ -174,7 +174,7 @@ describe('inventory report service', () => {
     };
 
     await expect(generateInventoryReport({ client })).rejects.toThrow(
-      'Shopify Admin GraphQL inventory levels connection was truncated for product gid://shopify/Product/1001, variant gid://shopify/ProductVariant/2001, inventory item gid://shopify/InventoryItem/3001. v0.1 inventory reports support at most 50 inventory levels per variant.',
+      'Shopify Admin GraphQL inventory levels connection was truncated for product gid://shopify/Product/1001, variant gid://shopify/ProductVariant/2001, inventory item gid://shopify/InventoryItem/3001. v0.1 inventory reports support at most 10 inventory levels per variant.',
     );
     await expect(generateInventoryReport({ client })).rejects.not.toThrow('Sensitive Shirt');
   });
@@ -223,7 +223,8 @@ describe('inventory report service', () => {
     const empty: InventoryReportGraphqlClient = {
       query: () => Promise.resolve({ data: { products: { edges: [], pageInfo: { hasNextPage: false } } } }),
     };
-    await expect(generateInventoryReport({ client: empty, pageSize: 0 })).rejects.toThrow('Inventory report page size must be an integer between 1 and 250.');
+    await expect(generateInventoryReport({ client: empty, pageSize: 0 })).rejects.toThrow('Inventory report page size must be an integer between 1 and 25.');
+    await expect(generateInventoryReport({ client: empty, pageSize: 26 })).rejects.toThrow('Inventory report page size must be an integer between 1 and 25.');
     await expect(generateInventoryReport({ client: empty, lowStockThreshold: -1 })).rejects.toThrow('Inventory report low-stock threshold must be a non-negative integer.');
 
     let page = 0;
@@ -237,8 +238,10 @@ describe('inventory report service', () => {
     await expect(generateInventoryReport({ client: advancing, maxPages: 1 })).rejects.toThrow('Shopify Admin GraphQL products pagination exceeded the maximum page count.');
   });
 
-  it('uses read-only product variant inventory item inventory level fields', () => {
+  it('uses read-only cost-bounded product variant inventory item inventory level fields', () => {
     expect(INVENTORY_REPORT_QUERY).toContain('products(');
+    expect(INVENTORY_REPORT_QUERY).toContain('variants(first: 10)');
+    expect(INVENTORY_REPORT_QUERY).toContain('inventoryLevels(first: 10)');
     expect(INVENTORY_REPORT_QUERY).toContain('inventoryItem');
     expect(INVENTORY_REPORT_QUERY).toContain('inventoryLevels');
     expect(INVENTORY_REPORT_QUERY).toContain('quantities(names: ["available", "on_hand", "committed"])');
