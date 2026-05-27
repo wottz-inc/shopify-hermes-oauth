@@ -10,7 +10,7 @@ export const INVENTORY_REPORT_QUERY = `
         node {
           id
           title
-          variants(first: 100) {
+          variants(first: 10) {
             edges {
               node {
                 id
@@ -18,7 +18,7 @@ export const INVENTORY_REPORT_QUERY = `
                 sku
                 inventoryItem {
                   id
-                  inventoryLevels(first: 50) {
+                  inventoryLevels(first: 10) {
                     edges {
                       node {
                         location {
@@ -117,9 +117,9 @@ export class InventoryReportError extends Error {
   }
 }
 
-const DEFAULT_INVENTORY_PAGE_SIZE = 50;
-const MAX_INVENTORY_PAGE_SIZE = 250;
-const DEFAULT_MAX_INVENTORY_PAGES = 1_000;
+const DEFAULT_INVENTORY_PAGE_SIZE = 25;
+const MAX_INVENTORY_PAGE_SIZE = 25;
+const DEFAULT_MAX_INVENTORY_PAGES = 2_000;
 const DEFAULT_LOW_STOCK_THRESHOLD = 5;
 
 export async function generateInventoryReport(options: InventoryReportOptions): Promise<InventoryReport> {
@@ -128,7 +128,9 @@ export async function generateInventoryReport(options: InventoryReportOptions): 
   const lowStockThreshold = options.lowStockThreshold ?? DEFAULT_LOW_STOCK_THRESHOLD;
 
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MAX_INVENTORY_PAGE_SIZE) {
-    throw new InventoryReportError('Inventory report page size must be an integer between 1 and 250.');
+    throw new InventoryReportError(
+      `Inventory report page size must be an integer between 1 and ${String(MAX_INVENTORY_PAGE_SIZE)}.`,
+    );
   }
 
   if (!Number.isInteger(maxPages) || maxPages < 1) {
@@ -194,7 +196,7 @@ function parseProductRows(value: unknown, lowStockThreshold: number): InventoryR
   const productTitle = readString(value.title, 'product title');
   assertConnectionNotTruncated(
     value.variants,
-    `variants connection was truncated for product ${productGid}. v0.1 inventory reports support at most 100 variants per product`,
+    `variants connection was truncated for product ${productGid}. v0.1 inventory reports support at most 10 variants per product`,
   );
   const variants = readConnectionEdges(value.variants);
   const rows: InventoryReportRow[] = [];
@@ -206,7 +208,7 @@ function parseProductRows(value: unknown, lowStockThreshold: number): InventoryR
     const inventoryItemGid = readString(inventoryItem.id, 'inventory item id');
     assertConnectionNotTruncated(
       inventoryItem.inventoryLevels,
-      `inventory levels connection was truncated for product ${productGid}, variant ${variantGid}, inventory item ${inventoryItemGid}. v0.1 inventory reports support at most 50 inventory levels per variant`,
+      `inventory levels connection was truncated for product ${productGid}, variant ${variantGid}, inventory item ${inventoryItemGid}. v0.1 inventory reports support at most 10 inventory levels per variant`,
     );
     const levels = readConnectionEdges(inventoryItem.inventoryLevels);
 
