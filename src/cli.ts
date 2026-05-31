@@ -1751,7 +1751,24 @@ function getNodeMajor(version: string): number {
 function missingRequiredConfigKeys(
   values: Readonly<Record<string, string | undefined>>,
 ): RequiredConfigKey[] {
-  return REQUIRED_CONFIG_KEYS.filter((key) => !isPresent(values[key]));
+  return REQUIRED_CONFIG_KEYS.filter((key) => !isConfiguredRequiredValue(key, values[key]));
+}
+
+function isConfiguredRequiredValue(key: RequiredConfigKey, value: string | undefined): boolean {
+  if (!isPresent(value)) {
+    return false;
+  }
+
+  const trimmedValue = value.trim();
+
+  switch (key) {
+    case 'SHOPIFY_HERMES_CLIENT_ID':
+      return trimmedValue !== 'replace-with-shopify-client-id';
+    case 'SHOPIFY_HERMES_CLIENT_SECRET':
+      return trimmedValue !== 'replace-with-shopify-client-secret';
+    case 'SHOPIFY_HERMES_APP_URL':
+      return isKnownAppUrl(trimmedValue);
+  }
 }
 
 function parseShopifyHermesEnv(content: string): Record<string, string> {
