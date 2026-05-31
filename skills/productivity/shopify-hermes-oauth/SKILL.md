@@ -1,6 +1,6 @@
 ---
 name: shopify-hermes-oauth
-description: Safe Shopify OAuth connector for Hermes: setup, health checks, store verification, read-only reports, MCP tools, and when to prefer the direct-token shopify skill.
+description: Shopify OAuth connector for Hermes: setup, health checks, shop verification, reports, MCP tools, and direct-token use.
 version: 0.1.0
 author: Nous Research
 license: MIT
@@ -64,7 +64,7 @@ If providing your own tunnel, run the callback server explicitly:
 shopify-hermes-oauth serve --host 127.0.0.1 --port 3456 --app-url <public-https-url>
 ```
 
-Configure the Shopify app with the public Application URL and `<public-https-url>/auth/callback`. To approve an install, open `/auth/start?shop=<shop>.myshopify.com` while the callback server is running.
+Configure the Shopify app with the public Application URL and `<public-https-url>/auth/callback`. For staging/production, use App Automation Token CI/CD (`SHOPIFY_APP_AUTOMATION_TOKEN`); see `docs/shopify-app-automation-token-ci-cd.md`. To approve an install, open `/auth/start?shop=<shop>.myshopify.com` while the callback server is running.
 
 ## Shop verification
 
