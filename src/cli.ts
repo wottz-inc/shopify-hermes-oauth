@@ -42,6 +42,7 @@ type InitEnvKey = (typeof INIT_ENV_KEYS)[number];
 interface StartedProcessResult {
   readonly stdout?: string;
   readonly status?: number | null;
+  readonly close?: () => void | Promise<void>;
 }
 
 export interface CliDependencies {
@@ -61,6 +62,7 @@ export interface CliDependencies {
   readonly chmod?: (path: string, mode: number) => void | Promise<void>;
   readonly mkdir?: (path: string) => void | Promise<void>;
   readonly fetch?: typeof globalThis.fetch;
+  readonly healthCheckTimeoutMs?: number;
   readonly appendAuditEvent?: (path: string, event: AuditEventInput) => void | Promise<void>;
 }
 
@@ -82,6 +84,7 @@ interface CliContext {
   readonly chmod: (path: string, mode: number) => Promise<void>;
   readonly mkdir: (path: string) => Promise<void>;
   readonly fetch: typeof globalThis.fetch;
+  readonly healthCheckTimeoutMs: number;
   readonly appendAuditEvent: (path: string, event: AuditEventInput) => Promise<void>;
 }
 
@@ -491,6 +494,8 @@ async function startTunnelBackedDevServer(context: CliContext, provider: string,
   const publicUrl = extractPublicHttpsUrl(tunnel.stdout ?? '', provider);
 
   if (publicUrl === undefined) {
+    await closeStartedProcesses(tunnel);
+
     if (processExitedUnsuccessfully(tunnel)) {
       context.stderr(`${provider} failed before printing a public HTTPS URL. Check ${provider} setup, then rerun \`shopify-hermes-oauth dev --tunnel\`.`);
       return 1;
@@ -505,17 +510,82 @@ async function startTunnelBackedDevServer(context: CliContext, provider: string,
   const server = await context.startProcess('shopify-hermes-oauth', devServerArgs(publicUrl));
 
   if (processExitedUnsuccessfully(server)) {
+    await closeStartedProcesses(server, tunnel);
     context.stderr(`Local OAuth callback server failed to start. Run \`shopify-hermes-oauth serve --host ${DEV_HOST} --port ${DEV_PORT} --app-url ${publicUrl}\` for details.`);
     return 1;
   }
 
   if (!hasCallbackServerReadiness(server.stdout ?? '')) {
+    await closeStartedProcesses(server, tunnel);
     context.stderr(`Local OAuth callback server did not become ready within 5 seconds. Run \`shopify-hermes-oauth serve --host ${DEV_HOST} --port ${DEV_PORT} --app-url ${publicUrl}\` for details.`);
     return 1;
   }
 
   printTunnelUrls(context, publicUrl);
+
+  const health = await checkPublicTunnelHealth(context, publicUrl);
+  if (!health.ok) {
+    await closeStartedProcesses(server, tunnel);
+    context.stderr(`Health status: ${health.status} (${health.url})`);
+    context.stderr('Public tunnel health check failed. The tunnel is reachable, but the OAuth callback server is not responding through it.');
+    context.stderr('Make sure the callback server is still running, then rerun `shopify-hermes-oauth dev --tunnel`.');
+    return 1;
+  }
+
+  context.stdout(`Health status: OK (${health.url})`);
+  context.stdout(`Install URL: ${installUrl(publicUrl)}`);
+  context.stdout('Keep this command running while completing the Shopify install.');
   return 0;
+}
+
+async function closeStartedProcesses(...processes: readonly StartedProcessResult[]): Promise<void> {
+  for (const process of processes) {
+    if (process.close === undefined) {
+      continue;
+    }
+
+    try {
+      await process.close();
+    } catch {
+      // Best-effort cleanup: preserve the original startup/health failure.
+    }
+  }
+}
+
+interface PublicTunnelHealthResult {
+  readonly ok: boolean;
+  readonly status: string;
+  readonly url: string;
+}
+
+async function checkPublicTunnelHealth(context: CliContext, publicUrl: string): Promise<PublicTunnelHealthResult> {
+  const url = new URL('/health', ensureTrailingSlash(publicUrl)).toString();
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutRace = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error('Public tunnel health check timed out.'));
+    }, context.healthCheckTimeoutMs);
+  });
+
+  try {
+    const response = await Promise.race([
+      context.fetch(url, { signal: controller.signal }),
+      timeoutRace,
+    ]);
+    if (!response.ok) {
+      return { ok: false, status: response.status.toString(10), url };
+    }
+
+    return { ok: true, status: 'OK', url };
+  } catch {
+    return { ok: false, status: 'unreachable', url };
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function hasCallbackServerReadiness(output: string): boolean {
@@ -596,7 +666,10 @@ async function runServe(args: readonly string[], context: CliContext): Promise<n
 function printTunnelUrls(context: CliContext, publicUrl: string): void {
   context.stdout(`Application URL: ${publicUrl}`);
   context.stdout(`Allowed redirection URL: ${new URL('/auth/callback', ensureTrailingSlash(publicUrl)).toString()}`);
-  context.stdout('Keep this command running while completing the Shopify install.');
+}
+
+function installUrl(publicUrl: string): string {
+  return `${new URL('/auth/start', ensureTrailingSlash(publicUrl)).toString()}?shop=<shop>.myshopify.com`;
 }
 
 function extractPublicHttpsUrl(output: string, provider: string): string | undefined {
@@ -1222,6 +1295,7 @@ function createCliContext(dependencies: CliDependencies): CliContext {
       await fsMkdir(path, { recursive: true });
     },
     fetch: dependencies.fetch ?? globalThis.fetch,
+    healthCheckTimeoutMs: dependencies.healthCheckTimeoutMs ?? 3_000,
     appendAuditEvent: async (path, event) => {
       if (dependencies.appendAuditEvent !== undefined) {
         await dependencies.appendAuditEvent(path, event);
@@ -1600,7 +1674,10 @@ export async function defaultStartProcess(command: string, args: readonly string
         closeSpawnedProcess();
       }
 
-      resolve(result);
+      const resolvedResult = options.closeChild === true || result.status !== undefined
+        ? result
+        : { ...result, close: closeSpawnedProcess };
+      resolve(resolvedResult);
     };
     const timeout = setTimeout(() => {
       settle({ stdout: output }, { closeChild: command === 'shopify-hermes-oauth' });
