@@ -1000,6 +1000,7 @@ function localHermesSkillContent(): string {
     "## Safety rules",
     "",
     "- Do not ask users to paste Shopify access tokens into chat.",
+    "- Do not ask users to paste Shopify client secrets into chat.",
     "- Do not print OAuth secrets, access tokens, or token-store contents.",
     "- Keep operations read-only unless the user explicitly requests otherwise and the connector exposes a safe command or MCP tool for it.",
     "- Default OAuth installs should request only the v0.1 least-privilege Required Admin API Scopes: `read_products`, `read_orders`, `read_inventory`, and `read_locations`; Optional Shopify scopes alone are insufficient.",
@@ -1017,6 +1018,8 @@ function localHermesSkillContent(): string {
     "```",
     "",
     "`init` prepares Hermes-local configuration/data directories and writes missing `.env` keys from current environment values or safe placeholders without printing secrets; it is not an interactive prompt. `doctor` checks local configuration, Node/Hermes integration, and connector readiness. `hermes install` registers the MCP server, equivalent to running the connector with `mcp serve`.",
+    "",
+    "For VPS/chat-first use, recommend Hermes Bitwarden Secrets Manager mode instead of asking for secrets in chat. Store `SHOPIFY_HERMES_CLIENT_ID`, `SHOPIFY_HERMES_CLIENT_SECRET`, and `SHOPIFY_HERMES_APP_URL` as Bitwarden project variables (`BWS_PROJECT_ID`); include `--server-url <self-hosted-url>` for a self-hosted Bitwarden endpoint. Check `hermes secrets bitwarden status` and `hermes secrets bitwarden sync`, then run `shopify-hermes-oauth doctor`. Do not write secrets back to `.env` in Bitwarden mode; status should list variable names only.",
     "",
     "For OAuth callback setup during development, start a public HTTPS tunnel and local callback server:",
     "",
@@ -1086,14 +1089,18 @@ function localHermesSkillContent(): string {
 }
 
 async function runDoctor(context: CliContext): Promise<number> {
-  const envFileContent = await context.readFile(resolveShopifyHermesPaths({
+  const initialPaths = resolveShopifyHermesPaths({
     env: context.env,
     homeDir: context.homeDir,
-  }).envFile);
+  });
+  const envFileContent = await context.readFile(initialPaths.envFile);
   const envFileValues = parseShopifyHermesEnv(envFileContent ?? '');
   const mergedEnv = mergeShopifyHermesEnv(envFileValues, context.env);
   const paths = resolveShopifyHermesPaths({ env: mergedEnv, homeDir: context.homeDir });
   const missingConfigKeys = missingRequiredConfigKeys(mergedEnv);
+  const hermesBitwardenEnabled = missingConfigKeys.length > 0
+    ? hermesBitwardenSecretsManagerAppearsConfigured(context.env, await readOptionalFile(context, join(initialPaths.hermesHome, 'config.yaml')))
+    : false;
   const nodeOk = getNodeMajor(context.nodeVersion) >= 20;
   const hermesOk = await context.commandExists('hermes');
   const cloudflaredOk = await context.commandExists('cloudflared');
@@ -1130,7 +1137,7 @@ async function runDoctor(context: CliContext): Promise<number> {
   }
 
   if (!nodeOk || !hermesOk || missingConfigKeys.length > 0 || tokenStoreStatus === 'corrupted' || tokenStoreStatus === 'unreadable' || !auditWritable) {
-    printNextSteps(context, missingConfigKeys, { nodeOk, hermesOk, hasTunnel: cloudflaredOk || ngrokOk });
+    printNextSteps(context, missingConfigKeys, { nodeOk, hermesOk, hasTunnel: cloudflaredOk || ngrokOk, hermesBitwardenEnabled });
     return 1;
   }
 
@@ -1142,6 +1149,62 @@ async function runDoctor(context: CliContext): Promise<number> {
 }
 
 type TokenStoreDoctorStatus = 'not-initialized' | 'ok' | 'corrupted' | 'unreadable';
+
+async function readOptionalFile(context: CliContext, path: string): Promise<string | undefined> {
+  try {
+    return await context.readFile(path);
+  } catch {
+    return undefined;
+  }
+}
+
+function hasHermesBitwardenSecretsManagerEnabled(configContent: string | undefined): boolean {
+  if (configContent === undefined) {
+    return false;
+  }
+
+  const stack: { readonly indent: number; readonly key: string }[] = [];
+
+  for (const rawLine of configContent.split(/\r?\n/u)) {
+    const line = stripYamlComment(rawLine);
+    if (line.trim().length === 0) {
+      continue;
+    }
+
+    const match = /^(\s*)([^:]+):\s*(.*?)\s*$/u.exec(line);
+    if (match === null) {
+      continue;
+    }
+
+    const indent = match[1]?.length ?? 0;
+    const key = (match[2] ?? '').trim();
+    const value = (match[3] ?? '').trim();
+    while (stack.length > 0 && indent <= (stack.at(-1)?.indent ?? -1)) {
+      stack.pop();
+    }
+
+    const nestedPath = [...stack.map((entry) => entry.key), key].join('.');
+    const flatPath = key;
+    if ((nestedPath === 'secrets.bitwarden.enabled' || flatPath === 'secrets.bitwarden.enabled') && /^true$/iu.test(value)) {
+      return true;
+    }
+
+    if (value.length === 0) {
+      stack.push({ indent, key });
+    }
+  }
+
+  return false;
+}
+
+function hermesBitwardenSecretsManagerAppearsConfigured(
+  env: Readonly<Record<string, string | undefined>>,
+  configContent: string | undefined,
+): boolean {
+  return isPresent(env.BWS_ACCESS_TOKEN)
+    || isPresent(env.BWS_PROJECT_ID)
+    || hasHermesBitwardenSecretsManagerEnabled(configContent);
+}
 
 async function checkTokenStoreStatus(context: CliContext, tokenStorePath: string): Promise<TokenStoreDoctorStatus> {
   let content: string | undefined;
@@ -1198,6 +1261,10 @@ async function runInit(context: CliContext): Promise<number> {
   const envFileValues = parseShopifyHermesEnv(existingEnvFile ?? '');
   const mergedEnv = mergeShopifyHermesEnv(envFileValues, context.env);
   const paths = resolveShopifyHermesPaths({ env: mergedEnv, homeDir: context.homeDir });
+  const hermesBitwardenConfigured = hermesBitwardenSecretsManagerAppearsConfigured(
+    context.env,
+    await readOptionalFile(context, join(initialPaths.hermesHome, 'config.yaml')),
+  );
   const existingValues = getExistingInitEnvValues(existingEnvFile ?? '');
   const keysNeedingWrite = INIT_ENV_KEYS.filter((key) => !isPresent(existingValues.get(key)));
   const nodeOk = getNodeMajor(context.nodeVersion) >= 20;
@@ -1211,7 +1278,7 @@ async function runInit(context: CliContext): Promise<number> {
     let updatedEnvFile: string;
 
     try {
-      updatedEnvFile = updateMissingEnvKeys(existingEnvFile ?? '', keysNeedingWrite, mergedEnv, paths.dataDir);
+      updatedEnvFile = updateMissingEnvKeys(existingEnvFile ?? '', keysNeedingWrite, mergedEnv, paths.dataDir, hermesBitwardenConfigured);
     } catch (error) {
       if (error instanceof UnsafeEnvValueError) {
         context.stderr(error.message);
@@ -1229,7 +1296,12 @@ async function runInit(context: CliContext): Promise<number> {
 
   context.stdout(`Created or verified data directory: ${paths.dataDir}`);
   printSetupChecks(context, { nodeOk, hermesOk, cloudflaredOk, ngrokOk });
-  context.stdout('Manual Shopify setup is still required: create a Shopify app in your Shopify Partner dashboard, set the app URL to SHOPIFY_HERMES_APP_URL, and add the OAuth callback URL below.');
+  if (hermesBitwardenConfigured) {
+    printInitBitwardenGuidance(context);
+  } else {
+    context.stdout('Manual Shopify setup is still required: create a Shopify app in your Shopify Partner dashboard, set the app URL to SHOPIFY_HERMES_APP_URL, and add the OAuth callback URL below.');
+    context.stdout('For local .env setup, replace placeholders with Shopify app values; do not paste Shopify client secrets into chat.');
+  }
   printCallbackInstructions(context, mergedEnv);
   context.stdout('Next Hermes MCP step: run `shopify-hermes-oauth hermes install` to configure MCP when available.');
   context.stdout('Run `shopify-hermes-oauth doctor` after filling in any placeholder values.');
@@ -1846,6 +1918,7 @@ function updateMissingEnvKeys(
   keysNeedingWrite: readonly InitEnvKey[],
   mergedEnv: Readonly<Record<string, string | undefined>>,
   dataDir: string,
+  useSafeShopifyPlaceholders: boolean,
 ): string {
   const remainingKeys = new Set(keysNeedingWrite);
   const updatedLines = existingContent.split(/\r?\n/u).map((rawLine) => {
@@ -1856,9 +1929,9 @@ function updateMissingEnvKeys(
     }
 
     remainingKeys.delete(parsedLine.key);
-    return formatDotEnvAssignment(parsedLine.key, getInitEnvValue(parsedLine.key, mergedEnv, dataDir));
+    return formatDotEnvAssignment(parsedLine.key, getInitEnvValue(parsedLine.key, mergedEnv, dataDir, useSafeShopifyPlaceholders));
   });
-  const linesToAppend = [...remainingKeys].map((key) => formatDotEnvAssignment(key, getInitEnvValue(key, mergedEnv, dataDir)));
+  const linesToAppend = [...remainingKeys].map((key) => formatDotEnvAssignment(key, getInitEnvValue(key, mergedEnv, dataDir, useSafeShopifyPlaceholders)));
 
   if (linesToAppend.length === 0) {
     return `${updatedLines.join('\n').replace(/\n*$/u, '')}\n`;
@@ -1888,10 +1961,11 @@ function getInitEnvValue(
   key: InitEnvKey,
   mergedEnv: Readonly<Record<string, string | undefined>>,
   dataDir: string,
+  useSafeShopifyPlaceholders: boolean,
 ): string {
   const configuredValue = mergedEnv[key];
 
-  if (isPresent(configuredValue)) {
+  if ((!useSafeShopifyPlaceholders || !isRequiredConfigKey(key)) && isPresent(configuredValue)) {
     return configuredValue;
   }
 
@@ -1927,6 +2001,13 @@ function printSetupChecks(
   context.stdout(`ngrok: ${status.ngrokOk ? 'ok' : 'optional, not found'}`);
 }
 
+function printInitBitwardenGuidance(context: CliContext): void {
+  context.stdout('Hermes Bitwarden Secrets Manager appears configured.');
+  context.stdout('For VPS/chat-first Hermes deployments, prefer Hermes Bitwarden Secrets Manager instead of storing real Shopify credentials in `.env` or pasting client secrets into chat.');
+  context.stdout('Store SHOPIFY_HERMES_CLIENT_ID, SHOPIFY_HERMES_CLIENT_SECRET, and SHOPIFY_HERMES_APP_URL as Bitwarden project variables, then run `hermes secrets bitwarden status` and `hermes secrets bitwarden sync`.');
+  context.stdout('The generated `.env` uses safe placeholders for Shopify app credentials and should not be overwritten with synced secret values.');
+}
+
 function printCallbackInstructions(context: CliContext, mergedEnv: Readonly<Record<string, string | undefined>>): void {
   const appUrl = mergedEnv.SHOPIFY_HERMES_APP_URL;
 
@@ -1949,7 +2030,7 @@ function isKnownAppUrl(value: string | undefined): value is string {
 function printNextSteps(
   context: CliContext,
   missingConfigKeys: readonly RequiredConfigKey[],
-  status: { readonly nodeOk: boolean; readonly hermesOk: boolean; readonly hasTunnel: boolean },
+  status: { readonly nodeOk: boolean; readonly hermesOk: boolean; readonly hasTunnel: boolean; readonly hermesBitwardenEnabled?: boolean },
 ): void {
   context.stdout('Next steps:');
 
@@ -1962,8 +2043,15 @@ function printNextSteps(
   }
 
   if (missingConfigKeys.length > 0) {
-    context.stdout('- Create a Shopify app in your Shopify Partner dashboard to get the client ID and client secret.');
-    context.stdout('- Run `shopify-hermes-oauth init` to create missing .env keys, then replace placeholders with Shopify app values.');
+    if (status.hermesBitwardenEnabled === true) {
+      context.stdout('- Hermes Bitwarden Secrets Manager appears enabled, but the current process environment does not include required Shopify connector variables:');
+      context.stdout(`  ${missingConfigKeys.join(', ')}`);
+      context.stdout('- Launch the connector from Hermes after secrets are loaded, or run `hermes secrets bitwarden status` and `hermes secrets bitwarden sync` to verify/sync them.');
+      context.stdout('- Do not paste Shopify client secrets into chat; status output lists variable names only.');
+    } else {
+      context.stdout('- Create a Shopify app in your Shopify Partner dashboard to get the client ID and client secret.');
+      context.stdout('- Run `shopify-hermes-oauth init` to create missing .env keys, then replace placeholders with Shopify app values.');
+    }
   }
 
   if (!status.hasTunnel) {
@@ -1973,6 +2061,10 @@ function printNextSteps(
 
 function isInitEnvKey(key: string): key is InitEnvKey {
   return (INIT_ENV_KEYS as readonly string[]).includes(key);
+}
+
+function isRequiredConfigKey(key: string): key is RequiredConfigKey {
+  return (REQUIRED_CONFIG_KEYS as readonly string[]).includes(key);
 }
 
 function isPresent(value: string | undefined): value is string {

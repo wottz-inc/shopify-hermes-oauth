@@ -19,6 +19,7 @@ Prefer the direct-token `shopify` skill for one-off custom Admin GraphQL or curl
 ## Safety rules
 
 - Do not ask users to paste Shopify access tokens into chat.
+- Do not ask users to paste Shopify client secrets into chat.
 - Do not print OAuth secrets, access tokens, or token-store contents.
 - Keep operations read-only unless the user explicitly requests otherwise and the connector exposes a safe command or MCP tool for it.
 - Default OAuth installs should request only the v0.1 least-privilege Required Admin API Scopes: `read_products`, `read_orders`, `read_inventory`, and `read_locations`; Optional Shopify scopes alone are insufficient.
@@ -36,6 +37,8 @@ shopify-hermes-oauth hermes install
 ```
 
 `init` prepares Hermes-local configuration/data directories and writes missing `.env` keys from current environment values or safe placeholders without printing secrets; it is not an interactive prompt. `doctor` checks local configuration, Node/Hermes integration, and connector readiness. `hermes install` registers the MCP server, equivalent to running the connector with `mcp serve`.
+
+For VPS/chat-first use, recommend Hermes Bitwarden Secrets Manager mode instead of asking for secrets in chat. Store `SHOPIFY_HERMES_CLIENT_ID`, `SHOPIFY_HERMES_CLIENT_SECRET`, and `SHOPIFY_HERMES_APP_URL` as Bitwarden project variables (`BWS_PROJECT_ID`); include `--server-url <self-hosted-url>` for a self-hosted Bitwarden endpoint. Check `hermes secrets bitwarden status` and `hermes secrets bitwarden sync`, then run `shopify-hermes-oauth doctor`. Do not write secrets back to `.env` in Bitwarden mode; status should list variable names only.
 
 For OAuth callback setup during development, start a public HTTPS tunnel and local callback server:
 

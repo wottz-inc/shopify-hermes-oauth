@@ -963,6 +963,119 @@ describe('Shopify OAuth token exchange', () => {
 });
 
 describe('CLI doctor', () => {
+  it('detects Hermes Bitwarden mode from safe env markers without printing marker values', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        BWS_ACCESS_TOKEN: 'bws-token-must-not-print',
+        BWS_PROJECT_ID: 'project-id-must-not-print',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Hermes Bitwarden Secrets Manager appears enabled');
+    expect(output).toContain('SHOPIFY_HERMES_CLIENT_ID, SHOPIFY_HERMES_CLIENT_SECRET, SHOPIFY_HERMES_APP_URL');
+    expect(output).not.toContain('bws-token-must-not-print');
+    expect(output).not.toContain('project-id-must-not-print');
+  });
+
+  it('does not treat sibling enabled flags as nested Hermes Bitwarden enablement', async () => {
+    const harness = createHarness({
+      env: { HERMES_HOME: '/tmp/hermes' },
+      commandExists: (command) => command === 'hermes',
+    });
+    harness.files.set('/tmp/hermes/config.yaml', [
+      'secrets: bitwarden: enabled: false',
+      'secrets:',
+      '  bitwarden:',
+      '    enabled: false',
+      '    project_id: project-id-must-not-print',
+      '  other_provider:',
+      '    enabled: true',
+    ].join('\n'));
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(output).not.toContain('Hermes Bitwarden Secrets Manager appears enabled');
+    expect(output).toContain('Run `shopify-hermes-oauth init` to create missing .env keys');
+    expect(output).not.toContain('project-id-must-not-print');
+  });
+
+  it('supports comments and blank lines in nested Hermes Bitwarden config detection', async () => {
+    const harness = createHarness({
+      env: { HERMES_HOME: '/tmp/hermes' },
+      commandExists: (command) => command === 'hermes',
+    });
+    harness.files.set('/tmp/hermes/config.yaml', [
+      'secrets: # secret backends',
+      '',
+      '  bitwarden: # configured by Hermes',
+      '    # safe boolean marker only',
+      '    enabled: true # values must not be printed',
+    ].join('\n'));
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Hermes Bitwarden Secrets Manager appears enabled');
+  });
+
+  it('warns safely when required env is absent but Hermes Bitwarden Secrets Manager is enabled', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        BWS_ACCESS_TOKEN: 'bws-never-echo-this',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+    harness.files.set('/tmp/hermes/config.yaml', [
+      'secrets:',
+      '  bitwarden:',
+      '    enabled: true',
+      '    access_token: bws-configured-token-never-echo-this',
+      '    project_id: project-id-never-echo-this',
+    ].join('\n'));
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Missing required configuration: SHOPIFY_HERMES_CLIENT_ID, SHOPIFY_HERMES_CLIENT_SECRET, SHOPIFY_HERMES_APP_URL');
+    expect(output).toContain('Hermes Bitwarden Secrets Manager appears enabled');
+    expect(output).toContain('current process environment does not include required Shopify connector variables');
+    expect(output).toContain('Launch the connector from Hermes after secrets are loaded');
+    expect(output).toContain('hermes secrets bitwarden status');
+    expect(output).toContain('hermes secrets bitwarden sync');
+    expect(output).toContain('SHOPIFY_HERMES_CLIENT_ID');
+    expect(output).toContain('SHOPIFY_HERMES_CLIENT_SECRET');
+    expect(output).toContain('SHOPIFY_HERMES_APP_URL');
+    expect(output).not.toContain('bws-never-echo-this');
+    expect(output).not.toContain('bws-configured-token-never-echo-this');
+    expect(output).not.toContain('project-id-never-echo-this');
+  });
+
+  it('detects flat Hermes Bitwarden configuration for safe missing-env guidance', async () => {
+    const harness = createHarness({
+      env: { HERMES_HOME: '/tmp/hermes' },
+      commandExists: (command) => command === 'hermes',
+    });
+    harness.files.set('/tmp/hermes/config.yaml', 'secrets.bitwarden.enabled: true\n');
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Hermes Bitwarden Secrets Manager appears enabled');
+    expect(output).toContain('SHOPIFY_HERMES_CLIENT_ID, SHOPIFY_HERMES_CLIENT_SECRET, SHOPIFY_HERMES_APP_URL');
+  });
+
   it('reports actionable setup status without invoking real commands', async () => {
     const harness = createHarness({
       env: {
@@ -1245,6 +1358,63 @@ describe('CLI doctor', () => {
 });
 
 describe('CLI init', () => {
+  it('does not persist Shopify secrets from process env when Hermes Bitwarden mode appears configured', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        BWS_ACCESS_TOKEN: 'bws-token-must-not-print',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id-from-bitwarden-sync',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'client-secret-from-bitwarden-sync',
+        SHOPIFY_HERMES_APP_URL: 'https://from-bitwarden.example.test',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['init'], harness.deps);
+    const envFile = harness.files.get('/tmp/hermes/.env') ?? '';
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(0);
+    expect(envFile).toContain('SHOPIFY_HERMES_CLIENT_ID=replace-with-shopify-client-id');
+    expect(envFile).toContain('SHOPIFY_HERMES_CLIENT_SECRET=replace-with-shopify-client-secret');
+    expect(envFile).toContain('SHOPIFY_HERMES_APP_URL=https://your-public-app-url.example.com');
+    expect(envFile).not.toContain('client-id-from-bitwarden-sync');
+    expect(envFile).not.toContain('client-secret-from-bitwarden-sync');
+    expect(envFile).not.toContain('https://from-bitwarden.example.test');
+    expect(output).toContain('Hermes Bitwarden Secrets Manager appears configured');
+    expect(output).toContain('hermes secrets bitwarden status');
+    expect(output).toContain('hermes secrets bitwarden sync');
+    expect(output).not.toContain('bws-token-must-not-print');
+    expect(output).not.toContain('client-secret-from-bitwarden-sync');
+  });
+
+  it('recommends Bitwarden onboarding for VPS/chat-first users only when Bitwarden appears configured', async () => {
+    const bitwardenHarness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        BWS_PROJECT_ID: 'project-id-must-not-print',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+
+    const bitwardenExitCode = await runShopifyHermesOauthCli(['init'], bitwardenHarness.deps);
+    const bitwardenOutput = `${bitwardenHarness.stdout.join('\n')}\n${bitwardenHarness.stderr.join('\n')}`;
+
+    expect(bitwardenExitCode).toBe(0);
+    expect(bitwardenOutput).toContain('For VPS/chat-first Hermes deployments, prefer Hermes Bitwarden Secrets Manager');
+    expect(bitwardenOutput).toContain('hermes secrets bitwarden status');
+    expect(bitwardenOutput).not.toContain('project-id-must-not-print');
+
+    const envHarness = createHarness();
+
+    const envExitCode = await runShopifyHermesOauthCli(['init'], envHarness.deps);
+    const envOutput = `${envHarness.stdout.join('\n')}\n${envHarness.stderr.join('\n')}`;
+
+    expect(envExitCode).toBe(0);
+    expect(envOutput).toContain('replace placeholders with Shopify app values');
+    expect(envOutput).not.toContain('For VPS/chat-first Hermes deployments, prefer Hermes Bitwarden Secrets Manager');
+  });
+
   it('creates the data directory and appends only missing .env keys', async () => {
     const harness = createHarness({
       env: {
