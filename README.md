@@ -32,6 +32,8 @@ If neither tunnel tool is installed, it does not start a misleading local-only O
 - Minimal human setup: automate everything except unavoidable Shopify app creation/callback approval/store install approval.
 - Read-only by default.
 - Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, and `read_locations`.
+- Required Admin API Scopes are the Shopify app scopes that grant Admin API access for OAuth installs. Optional scopes are not a substitute for required Admin API scopes; optional-only app configuration can fail the callback with Shopify's `At least one scope is required` validation.
+- Use the store's canonical Admin `*.myshopify.com` domain for `/auth/start?shop=...`. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.
 - No required private infrastructure, hosted forge, hosted service, or third-party secret manager.
 - No raw write-capable Shopify Admin GraphQL exposed to agents.
 

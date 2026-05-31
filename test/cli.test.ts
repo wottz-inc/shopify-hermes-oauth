@@ -769,6 +769,37 @@ describe('Shopify OAuth token exchange', () => {
     expect(tokenRequests[0]?.url).toBe('https://example.myshopify.com/admin/oauth/access_token');
   });
 
+  it('classifies Shopify missing required Admin API scope exchange errors without leaking the response body', async () => {
+    const tokenFetch: typeof globalThis.fetch = () => Promise.resolve(new Response(JSON.stringify({
+      error: 'invalid_request',
+      error_description: 'At least one scope is required',
+      code: 'oauth-code-should-not-leak',
+      client_secret: 'client-secret-should-not-leak',
+      access_token: 'shpat_token_should_not_leak',
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    let thrown: unknown;
+    try {
+      await exchangeShopifyOAuthToken({
+        fetch: tokenFetch,
+        shop: 'Example',
+        code: 'oauth-code-should-not-leak',
+        redirectUri: 'https://public-app.example.test/auth/callback',
+        clientId: 'client-id',
+        clientSecret: 'client-secret-should-not-leak',
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe('At least one scope is required');
+    expect((thrown as Error).message).not.toMatch(/oauth-code|client-secret|shpat_|access_token|client_secret|invalid_request/u);
+  });
+
   it.each([
     'https://example.myshopify.com',
     'example.myshopify.com/admin/oauth/access_token',
@@ -1200,7 +1231,9 @@ describe('CLI hermes install', () => {
     expect(skill).toContain('Prefer the direct-token `shopify` skill');
     expect(skill).toContain('For durable access, multiple stores, scheduled reports, or avoiding pasted per-store tokens, use this OAuth connector.');
     expect(skill).toContain('Do not ask users to paste Shopify access tokens into chat.');
-    expect(skill).toContain('Default OAuth installs should request only the v0.1 least-privilege scopes: `read_products`, `read_orders`, `read_inventory`, and `read_locations`.');
+    expect(skill).toContain('Default OAuth installs should request only the v0.1 least-privilege Required Admin API Scopes: `read_products`, `read_orders`, `read_inventory`, and `read_locations`; Optional Shopify scopes alone are insufficient.');
+    expect(skill).toContain('canonical Admin `*.myshopify.com` domain');
+    expect(skill).toContain('If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain');
     expect(skill).not.toContain('read_products,read_orders,read_inventory,read_locations,read_customers');
     expect(skill).not.toContain('`read_customers`');
     expect(skill).toContain('writes missing `.env` keys from current environment values or safe placeholders without printing secrets');
@@ -1220,6 +1253,10 @@ describe('CLI hermes install', () => {
     expect(skill).toContain('shopify-hermes-oauth report products <shop> --format markdown');
     expect(skill).toContain('shopify-hermes-oauth report orders <shop> --since 30d --format markdown');
     expect(skill).toContain('shopify-hermes-oauth report inventory <shop> --format markdown');
+    expect(skill).toContain('## Limits');
+    expect(skill).toContain('Products report: shows at most the first 100 variants per product');
+    expect(skill).toContain('Orders report: shows at most the first 50 line items per order');
+    expect(skill).toContain('Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels');
     expect(skill).toContain('Project docs: `README.md`, `docs/PRD.md`, `docs/shopify-app-setup.md`');
     expect(skill).not.toContain('shopify-hermes-oauth install-url');
     expect(skill).not.toContain('shopify-hermes-oauth serve --app-url <public-https-url>');

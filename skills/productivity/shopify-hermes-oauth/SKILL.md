@@ -21,9 +21,9 @@ Prefer the direct-token `shopify` skill for one-off custom Admin GraphQL or curl
 - Do not ask users to paste Shopify access tokens into chat.
 - Do not print OAuth secrets, access tokens, or token-store contents.
 - Keep operations read-only unless the user explicitly requests otherwise and the connector exposes a safe command or MCP tool for it.
-- Default OAuth installs should request only the v0.1 least-privilege scopes: `read_products`, `read_orders`, `read_inventory`, and `read_locations`.
+- Default OAuth installs should request only the v0.1 least-privilege Required Admin API Scopes: `read_products`, `read_orders`, `read_inventory`, and `read_locations`; Optional Shopify scopes alone are insufficient.
 - Verify the target shop before reports or MCP calls.
-- Use `<shop>.myshopify.com` domains; do not guess store domains from brand names.
+- Use the store's canonical Admin `*.myshopify.com` domain; do not guess store domains from brand names. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.
 
 ## Setup and health checks
 

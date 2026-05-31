@@ -234,6 +234,78 @@ describe('OAuth callback HMAC validation', () => {
     expect(hmacValidatorCalls).toBe(0);
   });
 
+  it('returns a safe actionable diagnostic when callback storage sees no Admin API scopes', async () => {
+    const server = await listen(createOAuthHttpServerForTesting({
+      ...baseDependencies(),
+      config: {
+        ...baseDependencies().config,
+        scopes: [],
+      },
+      tokenExchange: () => ({ accessToken: 'offline-token-secret', scopes: '' }),
+      hmacValidator: () => true,
+    }));
+    const baseUrl = serverBaseUrl(server);
+    const callbackUrl = new URL('/auth/callback', baseUrl);
+    callbackUrl.search = new URLSearchParams({
+      shop: 'example.myshopify.com',
+      code: 'oauth-code-secret',
+      state: 'state-value-secret',
+      timestamp: '1700000000',
+      hmac: 'hmac-secret-value',
+    }).toString();
+
+    const response = await fetch(callbackUrl);
+    const body = await response.text();
+
+    expect(response.status).toBe(400);
+    expect(body).toContain('Required Shopify Admin API scopes are missing');
+    expect(body).toContain('optional scopes alone are insufficient');
+    expect(body).toContain('read_products');
+    expect(body).toContain('read_orders');
+    expect(body).toContain('read_inventory');
+    expect(body).toContain('read_locations');
+    expect(body).not.toContain('oauth-code-secret');
+    expect(body).not.toContain('state-value-secret');
+    expect(body).not.toContain('hmac-secret-value');
+    expect(body).not.toContain('test-client-secret');
+    expect(body).not.toContain('offline-token-secret');
+  });
+
+  it('returns a safe canonical-shop retry diagnostic for callback/state shop mismatch', async () => {
+    const server = await listen(createOAuthHttpServerForTesting({
+      ...baseDependencies(),
+      stateStore: {
+        ...baseDependencies().stateStore,
+        consume: (state: string) => ({
+          state,
+          shop: 'original-shop.myshopify.com',
+          expiresAt: Date.now() + 60_000,
+        }),
+      },
+      hmacValidator: () => true,
+    }));
+    const baseUrl = serverBaseUrl(server);
+    const callbackUrl = new URL('/auth/callback', baseUrl);
+    callbackUrl.search = new URLSearchParams({
+      shop: 'canonical-shop.myshopify.com',
+      code: 'oauth-code-secret',
+      state: 'state-value-secret',
+      timestamp: '1700000000',
+      hmac: 'hmac-secret-value',
+    }).toString();
+
+    const response = await fetch(callbackUrl);
+    const body = await response.text();
+
+    expect(response.status).toBe(400);
+    expect(body).toContain('Shopify returned a different canonical shop domain');
+    expect(body).toContain('Retry the install using canonical-shop.myshopify.com');
+    expect(body).not.toContain('original-shop.myshopify.com');
+    expect(body).not.toContain('oauth-code-secret');
+    expect(body).not.toContain('state-value-secret');
+    expect(body).not.toContain('hmac-secret-value');
+  });
+
   it('accepts current callback timestamps when validation succeeds', async () => {
     const consumedStates: string[] = [];
     const exchangedCodes: string[] = [];

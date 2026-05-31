@@ -1,5 +1,11 @@
 import { normalizeTokenStoreShopDomain } from '../tokens/local-token-store.js';
 
+export class MissingRequiredAdminApiScopesError extends Error {
+  constructor() {
+    super('At least one scope is required');
+  }
+}
+
 export interface ShopifyOAuthExchangeInput {
   readonly fetch: typeof globalThis.fetch;
   readonly shop: string;
@@ -23,6 +29,10 @@ export async function exchangeShopifyOAuthToken(input: ShopifyOAuthExchangeInput
   });
 
   if (!response.ok) {
+    if (await responseBodyMentionsMissingRequiredAdminApiScopes(response)) {
+      throw new MissingRequiredAdminApiScopesError();
+    }
+
     throw new Error(`Shopify OAuth token exchange failed with HTTP ${String(response.status)}.`);
   }
 
@@ -36,4 +46,16 @@ export async function exchangeShopifyOAuthToken(input: ShopifyOAuthExchangeInput
     accessToken: payload.access_token,
     ...(typeof payload.scope === 'string' ? { scopes: payload.scope } : {}),
   };
+}
+
+async function responseBodyMentionsMissingRequiredAdminApiScopes(response: Response): Promise<boolean> {
+  let body: string;
+
+  try {
+    body = await response.text();
+  } catch {
+    return false;
+  }
+
+  return body.toLowerCase().includes('at least one scope is required');
 }

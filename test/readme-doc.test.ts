@@ -26,11 +26,22 @@ describe('SAFETY-CRITICAL README documentation contracts', () => {
 
     expectAllPresent(markdown, [
       'Least-privilege default OAuth scopes',
+      'Required Admin API Scopes',
+      'Optional scopes are not a substitute for required Admin API scopes',
       'read_products',
       'read_orders',
       'read_inventory',
       'read_locations',
       'No raw write-capable Shopify Admin GraphQL exposed to agents',
+    ]);
+  });
+
+  it('documents canonical Shopify Admin shop domain usage', () => {
+    const markdown = readReadme();
+
+    expectAllPresent(markdown, [
+      'canonical Admin `*.myshopify.com` domain',
+      'If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain',
     ]);
   });
 
