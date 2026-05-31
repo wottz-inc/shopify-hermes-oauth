@@ -111,6 +111,10 @@ describe('shopify-hermes-oauth Hermes skill', () => {
       'hermes secrets bitwarden status',
       'hermes secrets bitwarden sync',
       'Do not write secrets back to `.env`',
+      'npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz',
+      'Hermes profile-local npm bin directories such as `$HERMES_HOME/node/bin` or `~/.hermes/node/bin` may be visible to Hermes but not to an ordinary SSH shell',
+      'export PATH="$HERMES_HOME/node/bin:$PATH"',
+      'Connector CLI: installed but not on PATH',
     ]) {
       expect(markdown).toContain(required);
     }

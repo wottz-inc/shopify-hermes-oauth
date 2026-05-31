@@ -63,6 +63,22 @@ Run this command in your local terminal or SSH/Termius shell, not in chat: `shop
 
 After it succeeds, reply `done` in chat without sharing the client ID or client secret. Do not paste Shopify client secrets into chat.
 
+## Local/source install and PATH diagnostics
+
+For a source checkout, prefer packaging the same artifact shape that npm publishes instead of relying on `npm link` behavior:
+
+```bash
+npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz
+```
+
+Hermes profile-local npm bin directories such as `$HERMES_HOME/node/bin` or `~/.hermes/node/bin` may be visible to Hermes but not to an ordinary SSH shell. If a plain SSH/Termius shell says `shopify-hermes-oauth: command not found`, either add the profile-local bin directory to that shell PATH:
+
+```bash
+export PATH="$HERMES_HOME/node/bin:$PATH"
+```
+
+or install globally from the source package with the `npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz` command above. Run `shopify-hermes-oauth doctor`; if it prints `Connector CLI: installed but not on PATH`, use the PATH export it prints or add an equivalent shell/profile wrapper.
+
 ## Token-store lock waits
 
 Local token-store writes use an owner-only lock file. The default lock-acquisition timeout is 10 seconds so interactive CLI commands fail promptly when another process leaves an active or unrecoverable lock behind. Batch jobs or tests that need longer waits can override this through the local file dependency hook (`lockTimeoutMs`) while retaining the same stale-lock recovery behavior.
