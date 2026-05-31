@@ -1684,6 +1684,7 @@ describe('CLI hermes install', () => {
     expect(skill).not.toContain('`read_customers`');
     expect(skill).toContain('writes missing `.env` keys from current environment values or safe placeholders without printing secrets');
     expect(skill).toContain('it is not an interactive prompt');
+    expect(skill).toContain('shopify-hermes-oauth credentials set');
     expect(skill).toContain('shopify-hermes-oauth init');
     expect(skill).toContain('shopify-hermes-oauth doctor');
     expect(skill).toContain('shopify-hermes-oauth hermes install');
@@ -1703,7 +1704,7 @@ describe('CLI hermes install', () => {
     expect(skill).toContain('Products report: shows at most the first 100 variants per product');
     expect(skill).toContain('Orders report: shows at most the first 50 line items per order');
     expect(skill).toContain('Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels');
-    expect(skill).toContain('Project docs: `README.md`, `docs/PRD.md`, `docs/shopify-app-setup.md`');
+    expect(skill).toContain('Docs: `README.md`, `docs/shopify-app-setup.md`, `docs/shopify-cli-assisted-setup.md`');
     expect(skill).not.toContain('shopify-hermes-oauth install-url');
     expect(skill).not.toContain('shopify-hermes-oauth serve --app-url <public-https-url>');
     expect(skill).not.toContain('prompts for Shopify app credentials');
