@@ -1,0 +1,10 @@
+client_id = "<production-client-id>"
+name = "Hermes Shopify OAuth (production)"
+application_url = "https://app.example.com"
+embedded = false
+
+[access_scopes]
+scopes = "read_products,read_orders,read_inventory,read_locations"
+
+[auth]
+redirect_urls = ["https://app.example.com/auth/callback"]

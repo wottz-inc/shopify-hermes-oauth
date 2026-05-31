@@ -1,0 +1,10 @@
+client_id = "<staging-client-id>"
+name = "Hermes Shopify OAuth (staging)"
+application_url = "https://staging.example.com"
+embedded = false
+
+[access_scopes]
+scopes = "read_products,read_orders,read_inventory,read_locations"
+
+[auth]
+redirect_urls = ["https://staging.example.com/auth/callback"]
