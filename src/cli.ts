@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { chmod as fsChmod, mkdir as fsMkdir, readFile as fsReadFile, rename as fsRename, unlink as fsUnlink, writeFile as fsWriteFile } from 'node:fs/promises';
 import { type Server } from 'node:http';
 import { dirname, join } from 'node:path';
+import { stdin as processStdin, stdout as processStdout } from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
@@ -39,6 +40,7 @@ const DEFAULT_SHOPIFY_HERMES_API_VERSION = '2026-01';
 
 type RequiredConfigKey = (typeof REQUIRED_CONFIG_KEYS)[number];
 type InitEnvKey = (typeof INIT_ENV_KEYS)[number];
+type CredentialEnvKey = 'SHOPIFY_HERMES_CLIENT_ID' | 'SHOPIFY_HERMES_CLIENT_SECRET';
 interface StartedProcessResult {
   readonly stdout?: string;
   readonly status?: number | null;
@@ -61,6 +63,7 @@ export interface CliDependencies {
   readonly unlinkFile?: (path: string) => void | Promise<void>;
   readonly chmod?: (path: string, mode: number) => void | Promise<void>;
   readonly mkdir?: (path: string) => void | Promise<void>;
+  readonly promptCredential?: (label: string) => string | Promise<string>;
   readonly fetch?: typeof globalThis.fetch;
   readonly healthCheckTimeoutMs?: number;
   readonly appendAuditEvent?: (path: string, event: AuditEventInput) => void | Promise<void>;
@@ -83,6 +86,7 @@ interface CliContext {
   readonly unlinkFile: (path: string) => Promise<void>;
   readonly chmod: (path: string, mode: number) => Promise<void>;
   readonly mkdir: (path: string) => Promise<void>;
+  readonly promptCredential: (label: string) => Promise<string>;
   readonly fetch: typeof globalThis.fetch;
   readonly healthCheckTimeoutMs: number;
   readonly appendAuditEvent: (path: string, event: AuditEventInput) => Promise<void>;
@@ -91,6 +95,12 @@ interface CliContext {
 class UnsafeEnvValueError extends Error {
   public constructor(key: string) {
     super(`${key} cannot contain newlines. Remove line breaks before running init again.`);
+  }
+}
+
+class NoInteractiveCredentialInputError extends Error {
+  public constructor() {
+    super('Cannot read credentials safely from this session.');
   }
 }
 
@@ -107,6 +117,10 @@ export async function runShopifyHermesOauthCli(
 
   if (command === 'init') {
     return runInit(context);
+  }
+
+  if (command === 'credentials') {
+    return runCredentials(args.slice(1), context);
   }
 
   if (command === 'shops') {
@@ -1255,6 +1269,53 @@ function formatTokenStoreStatus(status: TokenStoreDoctorStatus): string {
   return 'Token store: corrupted/invalid JSON';
 }
 
+async function runCredentials(args: readonly string[], context: CliContext): Promise<number> {
+  if (args[0] !== 'set' || args.length !== 1) {
+    context.stderr(credentialsUsage());
+    return 2;
+  }
+
+  let clientId: string;
+  let clientSecret: string;
+
+  try {
+    clientId = await context.promptCredential('Shopify client ID');
+    clientSecret = await context.promptCredential('Shopify client secret');
+  } catch (error) {
+    if (error instanceof NoInteractiveCredentialInputError) {
+      context.stderr(error.message);
+      context.stderr('Run `shopify-hermes-oauth credentials set` from your local terminal or SSH/Termius shell.');
+      context.stderr('Do not paste Shopify client secrets into chat or a heredoc.');
+      return 2;
+    }
+
+    throw error;
+  }
+
+  const credentials: Record<CredentialEnvKey, string> = {
+    SHOPIFY_HERMES_CLIENT_ID: clientId,
+    SHOPIFY_HERMES_CLIENT_SECRET: clientSecret,
+  };
+
+  try {
+    const paths = resolveShopifyHermesPaths({ env: context.env, homeDir: context.homeDir });
+    const existingEnvFile = await context.readFile(paths.envFile);
+    const updatedEnvFile = updateCredentialEnvKeys(existingEnvFile ?? '', credentials);
+
+    await context.writeEnvFile(paths.envFile, updatedEnvFile);
+    context.stdout(`Updated ${paths.envFile} with Shopify app credentials.`);
+    context.stdout('Success: credential handoff complete. Reply `done` in chat; do not share secrets.');
+    return 0;
+  } catch (error) {
+    if (error instanceof UnsafeEnvValueError) {
+      context.stderr(error.message.replace('running init again', 'running credentials set again'));
+      return 1;
+    }
+
+    throw error;
+  }
+}
+
 async function runInit(context: CliContext): Promise<number> {
   const initialPaths = resolveShopifyHermesPaths({ env: context.env, homeDir: context.homeDir });
   const existingEnvFile = await context.readFile(initialPaths.envFile);
@@ -1380,6 +1441,7 @@ function createCliContext(dependencies: CliDependencies): CliContext {
 
       await fsMkdir(path, { recursive: true });
     },
+    promptCredential: async (label) => dependencies.promptCredential?.(label) ?? defaultPromptCredential(label),
     fetch: dependencies.fetch ?? globalThis.fetch,
     healthCheckTimeoutMs: dependencies.healthCheckTimeoutMs ?? 3_000,
     appendAuditEvent: async (path, event) => {
@@ -1395,17 +1457,27 @@ function createCliContext(dependencies: CliDependencies): CliContext {
 
 function usage(): string {
   return [
-    'Usage: shopify-hermes-oauth <doctor|init|dev|serve|shops|report|mcp|hermes>',
+    'Usage: shopify-hermes-oauth <doctor|init|credentials|dev|serve|shops|report|mcp|hermes>',
     '',
     'Commands:',
-    '  doctor  Check Node, Hermes CLI, tunnel tools, paths, and required Shopify config.',
-    '  init    Create the data directory and append missing SHOPIFY_HERMES_* .env keys.',
-    '  dev     Start a local callback server and optional dev tunnel.',
-    '  serve   Listen for Shopify OAuth start/callback HTTP requests.',
-    '  shops   List or remove locally stored shop OAuth tokens (never prints token values).',
-    '  report  Generate read-only Shopify reports.',
-    '  mcp     Serve curated read-only Shopify MCP tools over stdio.',
-    '  hermes  Configure Hermes MCP and optional local skill integration.',
+    '  doctor       Check Node, Hermes CLI, tunnel tools, paths, and required Shopify config.',
+    '  init         Create the data directory and append missing SHOPIFY_HERMES_* .env keys.',
+    '  credentials  Safely prompt for Shopify app credentials and update $HERMES_HOME/.env.',
+    '  dev          Start a local callback server and optional dev tunnel.',
+    '  serve        Listen for Shopify OAuth start/callback HTTP requests.',
+    '  shops        List or remove locally stored shop OAuth tokens (never prints token values).',
+    '  report       Generate read-only Shopify reports.',
+    '  mcp          Serve curated read-only Shopify MCP tools over stdio.',
+    '  hermes       Configure Hermes MCP and optional local skill integration.',
+  ].join('\n');
+}
+
+function credentialsUsage(): string {
+  return [
+    'Usage: shopify-hermes-oauth credentials set',
+    '',
+    'Commands:',
+    '  credentials set  Prompt for Shopify client ID and client secret without echoing secrets.',
   ].join('\n');
 }
 
@@ -1941,6 +2013,29 @@ function updateMissingEnvKeys(
   return `${prefix}${linesToAppend.join('\n')}\n`;
 }
 
+function updateCredentialEnvKeys(existingContent: string, credentials: Readonly<Record<CredentialEnvKey, string>>): string {
+  const remainingKeys = new Set<CredentialEnvKey>(['SHOPIFY_HERMES_CLIENT_ID', 'SHOPIFY_HERMES_CLIENT_SECRET']);
+  const existingLines = existingContent.length === 0 ? [] : existingContent.split(/\r?\n/u);
+  const updatedLines = existingLines.map((rawLine) => {
+    const parsedLine = parseEnvLine(rawLine);
+
+    if (parsedLine === undefined || !isCredentialEnvKey(parsedLine.key)) {
+      return rawLine;
+    }
+
+    remainingKeys.delete(parsedLine.key);
+    return formatDotEnvAssignment(parsedLine.key, credentials[parsedLine.key]);
+  });
+  const linesToAppend = [...remainingKeys].map((key) => formatDotEnvAssignment(key, credentials[key]));
+
+  if (linesToAppend.length === 0) {
+    return `${updatedLines.join('\n').replace(/\n*$/u, '')}\n`;
+  }
+
+  const prefix = existingContent.length === 0 ? '' : `${updatedLines.join('\n').replace(/\n*$/u, '')}\n\n`;
+  return `${prefix}${linesToAppend.join('\n')}\n`;
+}
+
 function formatDotEnvAssignment(key: InitEnvKey, value: string): string {
   if (/[\r\n]/u.test(value)) {
     throw new UnsafeEnvValueError(key);
@@ -2059,6 +2154,10 @@ function printNextSteps(
   }
 }
 
+function isCredentialEnvKey(key: string): key is CredentialEnvKey {
+  return key === 'SHOPIFY_HERMES_CLIENT_ID' || key === 'SHOPIFY_HERMES_CLIENT_SECRET';
+}
+
 function isInitEnvKey(key: string): key is InitEnvKey {
   return (INIT_ENV_KEYS as readonly string[]).includes(key);
 }
@@ -2103,6 +2202,64 @@ function stripInlineComment(value: string): string {
   }
 
   return value;
+}
+
+async function defaultPromptCredential(label: string): Promise<string> {
+  if (!processStdin.isTTY || !processStdout.isTTY || typeof processStdin.setRawMode !== 'function') {
+    throw new NoInteractiveCredentialInputError();
+  }
+
+  processStdout.write(`${label}: `);
+
+  return new Promise<string>((resolve, reject) => {
+    let value = '';
+    const wasRaw = processStdin.isRaw;
+
+    const cleanup = (): void => {
+      processStdin.off('data', onData);
+      processStdin.setRawMode(wasRaw);
+      processStdin.pause();
+    };
+
+    const finish = (): void => {
+      cleanup();
+      processStdout.write('\n');
+      resolve(value);
+    };
+
+    const fail = (error: Error): void => {
+      cleanup();
+      processStdout.write('\n');
+      reject(error);
+    };
+
+    const onData = (chunk: Buffer): void => {
+      const text = chunk.toString('utf8');
+
+      for (const character of text) {
+        if (character === '\u0003') {
+          fail(new NoInteractiveCredentialInputError());
+          return;
+        }
+
+        if (character === '\r' || character === '\n') {
+          finish();
+          return;
+        }
+
+        if (character === '\u007F' || character === '\b') {
+          value = value.slice(0, -1);
+          continue;
+        }
+
+        value += character;
+      }
+    };
+
+    processStdin.setRawMode(true);
+    processStdin.resume();
+    processStdin.on('data', onData);
+  });
 }
 
 const isDirectRun = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];

@@ -87,4 +87,19 @@ describe('SAFETY-CRITICAL README documentation contracts', () => {
       'Do not write secrets back to `.env`',
     ]);
   });
+
+  it('documents chat-first interactive credential handoff without sharing secrets in chat', () => {
+    const markdown = readReadme();
+
+    expectAllPresent(markdown, [
+      '## Chat-safe credential handoff',
+      'shopify-hermes-oauth credentials set',
+      'Run this command in your local terminal or SSH/Termius shell, not in chat:',
+      'The command prompts for the Shopify client ID and hides the client secret while you type.',
+      'After it succeeds, reply `done` in chat without sharing the client ID or client secret.',
+      'Do not paste Shopify client secrets into chat',
+      'updates only `SHOPIFY_HERMES_CLIENT_ID` and `SHOPIFY_HERMES_CLIENT_SECRET` in `$HERMES_HOME/.env`',
+      'chmods `.env` to `0600`',
+    ]);
+  });
 });
