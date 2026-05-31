@@ -81,6 +81,7 @@ function createHarness(overrides: Partial<CliDependencies> = {}) {
     mkdir: (path) => {
       madeDirs.push(path);
     },
+    fetch: () => Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 })),
     appendAuditEvent: () => undefined,
     ...overrides,
   };
@@ -205,9 +206,121 @@ describe('CLI dev tunnel', () => {
     expect(output).toContain('Tunnel provider: cloudflared');
     expect(output).toContain('Application URL: https://hermes-shopify.trycloudflare.com');
     expect(output).toContain('Allowed redirection URL: https://hermes-shopify.trycloudflare.com/auth/callback');
+    expect(output).toContain('Health status: OK (https://hermes-shopify.trycloudflare.com/health)');
     expect(output).toContain('Keep this command running while completing the Shopify install.');
     expect(output).not.toContain('super-secret-value');
   });
+
+  it('prints install URL and health status after public health succeeds', async () => {
+    const healthChecks: string[] = [];
+    const harness = createHarness({
+      commandExists: (command) => command === 'cloudflared',
+      fetch: (input) => {
+        healthChecks.push(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      },
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return command === 'cloudflared'
+          ? { stdout: 'INF Requesting new quick Tunnel on trycloudflare.com... https://hermes-shopify.trycloudflare.com' }
+          : { stdout: DEV_SERVER_READY_OUTPUT };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(healthChecks).toEqual(['https://hermes-shopify.trycloudflare.com/health']);
+    expect(output).toContain('Application URL: https://hermes-shopify.trycloudflare.com');
+    expect(output).toContain('Allowed redirection URL: https://hermes-shopify.trycloudflare.com/auth/callback');
+    expect(output).toContain('Install URL: https://hermes-shopify.trycloudflare.com/auth/start?shop=<shop>.myshopify.com');
+    expect(output).toContain('Health status: OK (https://hermes-shopify.trycloudflare.com/health)');
+  });
+
+  it('fails with callback guidance and no install-ready claim when public health returns 502', async () => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'cloudflared',
+      fetch: () => Promise.resolve(new Response('Bad Gateway', { status: 502 })),
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return command === 'cloudflared'
+          ? { stdout: 'https://hermes-shopify.trycloudflare.com' }
+          : { stdout: DEV_SERVER_READY_OUTPUT };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+    const output = harness.stdout.join('\n');
+    const errors = harness.stderr.join('\n');
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Application URL: https://hermes-shopify.trycloudflare.com');
+    expect(output).toContain('Allowed redirection URL: https://hermes-shopify.trycloudflare.com/auth/callback');
+    expect(output).not.toContain('Install URL:');
+    expect(output).not.toContain('Keep this command running while completing the Shopify install.');
+    expect(errors).toContain('Health status: 502 (https://hermes-shopify.trycloudflare.com/health)');
+    expect(errors).toContain('Public tunnel health check failed. The tunnel is reachable, but the OAuth callback server is not responding through it.');
+    expect(errors).toContain('Make sure the callback server is still running, then rerun `shopify-hermes-oauth dev --tunnel`.');
+  });
+
+  it('closes the tunnel and local server when public health fails', async () => {
+    const closed: string[] = [];
+    const harness = createHarness({
+      commandExists: (command) => command === 'cloudflared',
+      fetch: () => Promise.resolve(new Response('Bad Gateway', { status: 502 })),
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return command === 'cloudflared'
+          ? { stdout: 'https://hermes-shopify.trycloudflare.com', close: () => { closed.push('tunnel'); } }
+          : { stdout: DEV_SERVER_READY_OUTPUT, close: () => { closed.push('server'); } };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(1);
+    expect(closed).toEqual(['server', 'tunnel']);
+  });
+
+  it('keeps the tunnel and local server running when public health succeeds', async () => {
+    const closed: string[] = [];
+    const harness = createHarness({
+      commandExists: (command) => command === 'cloudflared',
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return command === 'cloudflared'
+          ? { stdout: 'https://hermes-shopify.trycloudflare.com', close: () => { closed.push('tunnel'); } }
+          : { stdout: DEV_SERVER_READY_OUTPUT, close: () => { closed.push('server'); } };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(0);
+    expect(closed).toEqual([]);
+  });
+
+  it('times out public health when injected fetch ignores AbortSignal and never settles', async () => {
+    const harness = createHarness({
+      commandExists: (command) => command === 'cloudflared',
+      healthCheckTimeoutMs: 20,
+      fetch: () => new Promise<Response>(() => {
+        // Intentionally never settle to simulate an injected fetch that ignores AbortSignal.
+      }),
+      startProcess: (command, args) => {
+        harness.startedProcesses.push({ command, args });
+        return command === 'cloudflared'
+          ? { stdout: 'https://hermes-shopify.trycloudflare.com' }
+          : { stdout: DEV_SERVER_READY_OUTPUT };
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['dev', '--tunnel'], harness.deps);
+
+    expect(exitCode).toBe(1);
+    expect(harness.stderr.join('\n')).toContain('Health status: unreachable (https://hermes-shopify.trycloudflare.com/health)');
+  }, 500);
 
   it('starts ngrok before serve and passes the public app URL to serve', async () => {
     const harness = createHarness({
@@ -486,6 +599,27 @@ describe('CLI dev tunnel', () => {
 });
 
 describe('defaultStartProcess', () => {
+  it('waits for a delayed cloudflared public URL before resolving', async () => {
+    await withTemporaryPathExecutable('cloudflared', `#!/usr/bin/env node
+setTimeout(() => {
+  console.error('INF Requesting new quick Tunnel on trycloudflare.com...');
+}, 25);
+setTimeout(() => {
+  console.error('INF |  Your quick Tunnel has been created! Visit it at https://hermes-shopify.trycloudflare.com  |');
+}, 750);
+setTimeout(() => {}, 2000);
+`, async () => {
+      const startedAt = Date.now();
+      const result = await defaultStartProcess('cloudflared', ['tunnel', '--url', 'http://127.0.0.1:3456']);
+
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(700);
+      expect(result.stdout).toContain('https://hermes-shopify.trycloudflare.com');
+      expect(result.status).toBeUndefined();
+      expect(result.close).toEqual(expect.any(Function));
+      await result.close?.();
+    });
+  });
+
   it('waits for a slow callback-server readiness signal before resolving', async () => {
     await withTemporaryPathExecutable('shopify-hermes-oauth', `#!/usr/bin/env node
 setTimeout(() => {
@@ -497,7 +631,9 @@ setTimeout(() => {}, 2000);
       const result = await defaultStartProcess('shopify-hermes-oauth', ['serve']);
 
       expect(Date.now() - startedAt).toBeGreaterThanOrEqual(700);
-      expect(result).toEqual({ stdout: 'OAuth callback server listening: http://127.0.0.1:3456\n' });
+      expect(result.stdout).toBe('OAuth callback server listening: http://127.0.0.1:3456\n');
+      expect(result.close).toEqual(expect.any(Function));
+      await result.close?.();
     });
   });
 
