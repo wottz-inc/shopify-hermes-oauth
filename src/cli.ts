@@ -121,6 +121,10 @@ export async function runShopifyHermesOauthCli(
     return runInit(context);
   }
 
+  if (command === 'onboard') {
+    return runOnboard(args.slice(1), context);
+  }
+
   if (command === 'credentials') {
     return runCredentials(args.slice(1), context);
   }
@@ -911,6 +915,158 @@ function hasHermesMcpArgs(value: unknown): boolean {
   return typeof value === 'string' && /(?:^|\s)mcp\s+serve(?:\s|$)/u.test(value);
 }
 
+interface OnboardArgs {
+  readonly shop: string;
+  readonly appName: string;
+}
+
+async function runOnboard(args: readonly string[], context: CliContext): Promise<number> {
+  const parsedArgs = parseOnboardArgs(args);
+  if (parsedArgs === undefined) {
+    context.stderr(onboardUsage());
+    return 2;
+  }
+
+  const initialPaths = resolveShopifyHermesPaths({ env: context.env, homeDir: context.homeDir });
+  const envFileContent = await context.readFile(initialPaths.envFile);
+  const envFileValues = parseShopifyHermesEnv(envFileContent ?? '');
+  const mergedEnv = mergeShopifyHermesEnv(envFileValues, context.env);
+  const paths = resolveShopifyHermesPaths({ env: mergedEnv, homeDir: context.homeDir });
+  const missingConfigKeys = missingRequiredConfigKeys(mergedEnv);
+  const appUrl = mergedEnv.SHOPIFY_HERMES_APP_URL?.trim();
+  const knownAppUrl = normalizeOnboardPublicAppUrl(appUrl);
+  const hasTunnelTool = await context.commandExists('cloudflared') || await context.commandExists('ngrok');
+  const mcpConfigured = await hasDetectableHermesMcpConfig(context, paths.hermesHome);
+  const shopState = await readOnboardShopState(context, paths.tokenStore, parsedArgs.shop);
+
+  context.stdout('Shopify Hermes OAuth chat-first onboarding');
+  context.stdout(`Shop: ${parsedArgs.shop}`);
+  context.stdout(`App name: ${parsedArgs.appName}`);
+  context.stdout('');
+  context.stdout('Current state:');
+  context.stdout(`- Configuration: ${missingConfigKeys.length === 0 ? 'present' : `missing ${missingConfigKeys.join(', ')}`}`);
+  context.stdout(`- Tunnel/app URL: ${knownAppUrl === undefined ? 'missing/public HTTPS URL needed' : 'configured'}`);
+  context.stdout(`- Tunnel CLI: ${hasTunnelTool ? 'available' : 'not detected (manual public HTTPS URL is okay)'}`);
+  context.stdout(`- MCP server: ${mcpConfigured ? 'configured' : 'not configured'}`);
+  context.stdout(formatOnboardShopState(parsedArgs.shop, shopState));
+  context.stdout('');
+  context.stdout('Agent can do:');
+  context.stdout('1. Run local safe setup/status commands:');
+  context.stdout('   shopify-hermes-oauth init');
+  context.stdout('   shopify-hermes-oauth doctor');
+  context.stdout('   shopify-hermes-oauth hermes install');
+  context.stdout('2. Start a development tunnel and callback server when needed:');
+  context.stdout('   shopify-hermes-oauth dev --tunnel');
+  context.stdout('3. Ask the user to enter app credentials locally, never in chat:');
+  context.stdout('   shopify-hermes-oauth credentials set');
+  context.stdout('');
+  context.stdout('Human must do in Shopify:');
+  context.stdout(`1. Create or open the Shopify app named: ${parsedArgs.appName}`);
+  context.stdout('2. Configure app URLs:');
+  context.stdout(`   Application URL: ${knownAppUrl ?? 'https://<public-app-url>'}`);
+  context.stdout(`   Allowed redirection URL: ${knownAppUrl === undefined ? 'https://<public-app-url>/auth/callback' : `${knownAppUrl}/auth/callback`}`);
+  context.stdout('3. Set Required Admin API Scopes: read_products, read_orders, read_inventory, read_locations');
+  context.stdout('4. Copy the Client ID and Client secret into the local credential prompt only. Do not paste secrets into chat.');
+  context.stdout('5. Open the install URL while the callback server/tunnel is running:');
+  context.stdout(`   Install URL: ${knownAppUrl === undefined ? `https://<public-app-url>/auth/start?shop=${parsedArgs.shop}` : `${knownAppUrl}/auth/start?shop=${parsedArgs.shop}`}`);
+  context.stdout('');
+  context.stdout('Post-install verification:');
+  context.stdout('shopify-hermes-oauth shops list');
+  context.stdout(`shopify-hermes-oauth shops verify ${parsedArgs.shop}`);
+  context.stdout('After MCP install or first store install, reset/restart the Hermes session so new MCP tools are visible.');
+  context.stdout('Safety: this checklist never prints Shopify client secrets, access tokens, or token-store contents.');
+  return 0;
+}
+
+function parseOnboardArgs(args: readonly string[]): OnboardArgs | undefined {
+  let shopInput: string | undefined;
+  let appName = 'shopify-hermes-oauth';
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--shop') {
+      shopInput = args[index + 1];
+      index += 1;
+      continue;
+    }
+
+    if (arg === '--app-name') {
+      appName = args[index + 1] ?? '';
+      index += 1;
+      continue;
+    }
+
+    return undefined;
+  }
+
+  if (!isPresent(shopInput) || !isPresent(appName)) {
+    return undefined;
+  }
+
+  try {
+    const trimmedShopInput = shopInput.trim();
+    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/iu.test(trimmedShopInput)) {
+      return undefined;
+    }
+
+    const normalizedShop = normalizeTokenStoreShopDomain(trimmedShopInput);
+    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/iu.test(normalizedShop)) {
+      return undefined;
+    }
+
+    return { shop: normalizedShop, appName: appName.trim() };
+  } catch {
+    return undefined;
+  }
+}
+
+type OnboardShopState = 'none-installed' | 'target-installed' | 'other-shops-installed' | 'token-store-invalid' | 'token-store-unreadable';
+
+async function readOnboardShopState(context: CliContext, tokenStorePath: string, shop: string): Promise<OnboardShopState> {
+  let content: string | undefined;
+  try {
+    content = await context.readFile(tokenStorePath);
+  } catch {
+    return 'token-store-unreadable';
+  }
+
+  if (content === undefined) {
+    return 'none-installed';
+  }
+
+  try {
+    const parsed = parseLocalJsonTokenStoreFile(JSON.parse(content) as unknown);
+    const shops = Object.keys(parsed.shops);
+    if (shops.includes(shop)) {
+      return 'target-installed';
+    }
+
+    return shops.length === 0 ? 'none-installed' : 'other-shops-installed';
+  } catch {
+    return 'token-store-invalid';
+  }
+}
+
+function formatOnboardShopState(shop: string, state: OnboardShopState): string {
+  if (state === 'target-installed') {
+    return `- Shop ${shop}: installed locally (verify with command below)`;
+  }
+
+  if (state === 'other-shops-installed') {
+    return `- Shop ${shop}: not installed locally (other shops are installed)`;
+  }
+
+  if (state === 'token-store-invalid') {
+    return '- Shops: token store is invalid; run doctor for safe details';
+  }
+
+  if (state === 'token-store-unreadable') {
+    return '- Shops: token store is unreadable; run doctor for safe details';
+  }
+
+  return '- Shops: none installed';
+}
+
 function hasHermesMcpYamlConfig(content: string): boolean {
   const lines = content
     .split(/\r?\n/u)
@@ -997,7 +1153,7 @@ function localHermesSkillContent(): string {
   return [
     "---",
     "name: shopify-hermes-oauth",
-    "description: Use the Shopify Hermes OAuth connector for safe, durable Hermes access to one or more Shopify stores without asking users to paste Admin API tokens into chat. Covers setup, health checks, store verification, read-only reports, MCP tools, and when to prefer the direct-token shopify skill instead.",
+    "description: Safe Shopify OAuth connector for Hermes: setup, health checks, store verification, read-only reports, MCP tools, and when to prefer the direct-token shopify skill.",
     "version: 0.1.0",
     "author: Nous Research",
     "license: MIT",
@@ -1025,6 +1181,14 @@ function localHermesSkillContent(): string {
     "",
     "## Setup and health checks",
     "",
+    "For chat-first live onboarding, start with the non-interactive guided checklist:",
+    "",
+    "```bash",
+    "shopify-hermes-oauth onboard --shop <shop>.myshopify.com --app-name <app-name>",
+    "```",
+    "",
+    "Output has `Agent can do:` and `Human must do in Shopify:` sections: current state, dashboard URLs, install URL, credential handoff, MCP install, and verification without printing secrets or token-store contents.",
+    "",
     "Run local commands via the terminal:",
     "",
     "```bash",
@@ -1033,7 +1197,7 @@ function localHermesSkillContent(): string {
     "shopify-hermes-oauth hermes install",
     "```",
     "",
-    "`init` prepares Hermes-local configuration/data directories and writes missing `.env` keys from current environment values or safe placeholders without printing secrets; it is not an interactive prompt. `doctor` checks local configuration, Node/Hermes integration, and connector readiness. `hermes install` registers the MCP server, equivalent to running the connector with `mcp serve`.",
+    "`init` writes missing `.env` keys from current environment values or safe placeholders without printing secrets; it is not an interactive prompt. `doctor` checks local config. `hermes install` registers the MCP server, equivalent to `mcp serve`.",
     "",
     "For non-Bitwarden chat-first credential setup, use `shopify-hermes-oauth credentials set`: the agent sends the exact command, the user runs it locally or over SSH/Termius, then replies `done` without sharing secrets. The prompt hides the client secret while typing and updates only `SHOPIFY_HERMES_CLIENT_ID` and `SHOPIFY_HERMES_CLIENT_SECRET` in `$HERMES_HOME/.env`.",
     "",
@@ -1511,11 +1675,12 @@ function createCliContext(dependencies: CliDependencies): CliContext {
 
 function usage(): string {
   return [
-    'Usage: shopify-hermes-oauth <doctor|init|credentials|dev|serve|shops|report|mcp|hermes>',
+    'Usage: shopify-hermes-oauth <doctor|init|onboard|credentials|dev|serve|shops|report|mcp|hermes>',
     '',
     'Commands:',
     '  doctor       Check Node, Hermes CLI, tunnel tools, paths, and required Shopify config.',
     '  init         Create the data directory and append missing SHOPIFY_HERMES_* .env keys.',
+    '  onboard      Print a guided chat-first onboarding checklist and local status.',
     '  credentials  Safely prompt for Shopify app credentials and update $HERMES_HOME/.env.',
     '  dev          Start a local callback server and optional dev tunnel.',
     '  serve        Listen for Shopify OAuth start/callback HTTP requests.',
@@ -1523,6 +1688,15 @@ function usage(): string {
     '  report       Generate read-only Shopify reports.',
     '  mcp          Serve curated read-only Shopify MCP tools over stdio.',
     '  hermes       Configure Hermes MCP and optional local skill integration.',
+  ].join('\n');
+}
+
+function onboardUsage(): string {
+  return [
+    'Usage: shopify-hermes-oauth onboard --shop <shop.myshopify.com> [--app-name <name>]',
+    '',
+    'Commands:',
+    '  onboard  Print a non-interactive chat-first onboarding checklist and local status without secrets.',
   ].join('\n');
 }
 
@@ -2174,6 +2348,26 @@ function isKnownAppUrl(value: string | undefined): value is string {
   }
 
   return value !== DEFAULT_SHOPIFY_HERMES_APP_URL && !value.includes('your-public-app-url') && !value.includes('<APP_URL>');
+}
+
+function normalizeOnboardPublicAppUrl(value: string | undefined): string | undefined {
+  if (!isKnownAppUrl(value)) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') {
+      return undefined;
+    }
+
+    url.hash = '';
+    url.search = '';
+    url.pathname = url.pathname.replace(/\/+$/u, '');
+    return url.toString().replace(/\/+$/u, '');
+  } catch {
+    return undefined;
+  }
 }
 
 function printNextSteps(

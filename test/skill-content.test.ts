@@ -71,6 +71,9 @@ describe('shopify-hermes-oauth Hermes skill', () => {
     for (const required of [
       'direct-token',
       'shopify',
+      'shopify-hermes-oauth onboard --shop <shop>.myshopify.com --app-name <app-name>',
+      'Agent can do:',
+      'Human must do in Shopify:',
       'shopify-hermes-oauth init',
       'shopify-hermes-oauth credentials set',
       'agent sends the exact command, the user runs it locally or over SSH/Termius, then replies `done` without sharing secrets',

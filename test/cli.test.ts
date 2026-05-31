@@ -192,6 +192,165 @@ describe('CLI direct-run detection', () => {
   });
 });
 
+describe('CLI onboard', () => {
+  it('prints a chat-first checklist with separated agent and Shopify-human work without leaking secrets', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'public-client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://hermes-shopify.trycloudflare.com',
+      },
+      commandExists: (command) => command === 'hermes' || command === 'cloudflared' || command === 'shopify-hermes-oauth',
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['onboard', '--shop', 'finbobaggins.myshopify.com', '--app-name', 'hermes-oauth'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('Shopify Hermes OAuth chat-first onboarding');
+    expect(output).toContain('Agent can do:');
+    expect(output).toContain('Human must do in Shopify:');
+    expect(output).toContain('shopify-hermes-oauth init');
+    expect(output).toContain('shopify-hermes-oauth credentials set');
+    expect(output).toContain('shopify-hermes-oauth doctor');
+    expect(output).toContain('shopify-hermes-oauth hermes install');
+    expect(output).toContain('shopify-hermes-oauth dev --tunnel');
+    expect(output).toContain('App name: hermes-oauth');
+    expect(output).toContain('Application URL: https://hermes-shopify.trycloudflare.com');
+    expect(output).toContain('Allowed redirection URL: https://hermes-shopify.trycloudflare.com/auth/callback');
+    expect(output).toContain('Install URL: https://hermes-shopify.trycloudflare.com/auth/start?shop=finbobaggins.myshopify.com');
+    expect(output).toContain('shopify-hermes-oauth shops verify finbobaggins.myshopify.com');
+    expect(output).toContain('Configuration: present');
+    expect(output).toContain('MCP server: not configured');
+    expect(output).toContain('Shops: none installed');
+    expect(output).not.toContain('super-secret-value');
+    expect(output).not.toContain('public-client-id');
+    expect(harness.startedProcesses).toEqual([]);
+    expect(harness.executedCommands).toEqual([]);
+  });
+
+  it('is idempotent and reports configured MCP plus installed shop state without printing token store contents', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'public-client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://app.example.test',
+      },
+      commandExists: (command) => command === 'hermes' || command === 'shopify-hermes-oauth',
+    });
+    harness.files.set('/tmp/hermes/config.yaml', [
+      'mcp_servers:',
+      '  shopify-hermes-oauth:',
+      '    command: shopify-hermes-oauth',
+      '    args: [mcp, serve]',
+    ].join('\n'));
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'finbobaggins.myshopify.com': {
+          shop: 'finbobaggins.myshopify.com',
+          accessToken: 'shpat_do-not-print',
+          scopes: ['read_products'],
+          storedAt: '2026-05-01T00:00:00.000Z',
+          updatedAt: '2026-05-01T00:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['onboard', '--shop', 'finbobaggins.myshopify.com'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('Configuration: present');
+    expect(output).toContain('MCP server: configured');
+    expect(output).toContain('Tunnel/app URL: configured');
+    expect(output).toContain('Shop finbobaggins.myshopify.com: installed locally (verify with command below)');
+    expect(output).toContain('Post-install verification:');
+    expect(output).toContain('shopify-hermes-oauth shops verify finbobaggins.myshopify.com');
+    expect(output).not.toContain('shpat_do-not-print');
+    expect(output).not.toContain('super-secret-value');
+    expect(output).not.toContain('tokens.json');
+  });
+
+  it('normalizes configured HTTPS app URLs and does not emit double-slash Shopify URLs', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'public-client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://app.example.test/',
+      },
+      commandExists: (command) => command === 'hermes' || command === 'shopify-hermes-oauth',
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['onboard', '--shop', 'finbobaggins.myshopify.com'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('Application URL: https://app.example.test');
+    expect(output).toContain('Allowed redirection URL: https://app.example.test/auth/callback');
+    expect(output).toContain('Install URL: https://app.example.test/auth/start?shop=finbobaggins.myshopify.com');
+    expect(output).not.toContain('https://app.example.test//auth');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('treats non-HTTPS app URLs as missing for Shopify dashboard values', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'public-client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'http://app.example.test',
+      },
+      commandExists: (command) => command === 'hermes' || command === 'shopify-hermes-oauth',
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['onboard', '--shop', 'finbobaggins.myshopify.com'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('Tunnel/app URL: missing/public HTTPS URL needed');
+    expect(output).toContain('Application URL: https://<public-app-url>');
+    expect(output).toContain('Allowed redirection URL: https://<public-app-url>/auth/callback');
+    expect(output).toContain('Install URL: https://<public-app-url>/auth/start?shop=finbobaggins.myshopify.com');
+    expect(output).not.toContain('http://app.example.test/auth');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('treats app URLs with userinfo as missing to avoid leaking credentials', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'public-client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://user:password@app.example.test',
+      },
+      commandExists: (command) => command === 'hermes' || command === 'shopify-hermes-oauth',
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['onboard', '--shop', 'finbobaggins.myshopify.com'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('Tunnel/app URL: missing/public HTTPS URL needed');
+    expect(output).toContain('Application URL: https://<public-app-url>');
+    expect(output).not.toContain('user:password');
+    expect(output).not.toContain('password@app.example.test');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('requires a canonical shop domain and shows onboard usage', async () => {
+    const harness = createHarness();
+
+    const exitCode = await runShopifyHermesOauthCli(['onboard', '--shop', 'not-a-domain'], harness.deps);
+
+    expect(exitCode).toBe(2);
+    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth onboard --shop <shop.myshopify.com> [--app-name <name>]');
+  });
+});
+
 describe('CLI dev tunnel', () => {
   it('starts cloudflared before serve and passes the public app URL to serve', async () => {
     const harness = createHarness({
@@ -1699,7 +1858,7 @@ describe('CLI init', () => {
     const exitCode = await runShopifyHermesOauthCli(['wat'], harness.deps);
 
     expect(exitCode).toBe(2);
-    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|credentials|dev|serve|shops|report|mcp|hermes>');
+    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|onboard|credentials|dev|serve|shops|report|mcp|hermes>');
   });
 
   it('recognizes the mcp serve command', async () => {

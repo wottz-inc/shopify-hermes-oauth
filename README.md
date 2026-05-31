@@ -63,6 +63,38 @@ Run this command in your local terminal or SSH/Termius shell, not in chat: `shop
 
 After it succeeds, reply `done` in chat without sharing the client ID or client secret. Do not paste Shopify client secrets into chat.
 
+## Guided chat-first onboarding
+
+Use the guided checklist command to reduce decisions and copy/paste during live onboarding:
+
+```bash
+shopify-hermes-oauth onboard --shop finbobaggins.myshopify.com --app-name hermes-oauth
+```
+
+Example chat transcript:
+
+```text
+User: Set up Shopify OAuth for finbobaggins.myshopify.com.
+Agent: I will run the safe checklist/status command.
+Agent runs: shopify-hermes-oauth onboard --shop finbobaggins.myshopify.com --app-name hermes-oauth
+CLI: Agent can do:
+CLI:   shopify-hermes-oauth init
+CLI:   shopify-hermes-oauth doctor
+CLI:   shopify-hermes-oauth hermes install
+CLI:   shopify-hermes-oauth dev --tunnel
+CLI:   shopify-hermes-oauth credentials set
+CLI: Human must do in Shopify:
+CLI:   App name: hermes-oauth
+CLI:   Application URL: https://<public-app-url>
+CLI:   Allowed redirection URL: https://<public-app-url>/auth/callback
+CLI:   Install URL: https://<public-app-url>/auth/start?shop=finbobaggins.myshopify.com
+Agent: Please enter the Client ID and Client secret only in the local `shopify-hermes-oauth credentials set` prompt, then open `/auth/start?shop=finbobaggins.myshopify.com` on the public app URL.
+User: done
+Agent runs: shopify-hermes-oauth shops verify finbobaggins.myshopify.com
+```
+
+The onboarding command never prints Shopify client secrets or token-store contents. Re-running it is safe and idempotent: it reports current state such as missing config, configured tunnel/app URL, MCP configured/not configured, no shops installed, or the target shop installed locally.
+
 ## Local/source install and PATH diagnostics
 
 For a source checkout, prefer packaging the same artifact shape that npm publishes instead of relying on `npm link` behavior:
