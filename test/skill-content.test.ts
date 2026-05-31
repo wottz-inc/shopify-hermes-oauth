@@ -100,6 +100,13 @@ describe('shopify-hermes-oauth Hermes skill', () => {
       'Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels',
       'narrow the report scope or use a custom paginated Shopify Admin GraphQL workflow',
       'Do not ask users to paste Shopify access tokens into chat',
+      'Do not ask users to paste Shopify client secrets into chat',
+      'Hermes Bitwarden Secrets Manager',
+      '--server-url',
+      'BWS_PROJECT_ID',
+      'hermes secrets bitwarden status',
+      'hermes secrets bitwarden sync',
+      'Do not write secrets back to `.env`',
     ]) {
       expect(markdown).toContain(required);
     }

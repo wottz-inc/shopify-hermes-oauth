@@ -37,6 +37,20 @@ If neither tunnel tool is installed, it does not start a misleading local-only O
 - No required private infrastructure, hosted forge, hosted service, or third-party secret manager.
 - No raw write-capable Shopify Admin GraphQL exposed to agents.
 
+## Bitwarden Secrets Manager mode
+
+For VPS/chat-first Hermes deployments, prefer Hermes Bitwarden Secrets Manager instead of pasting Shopify credentials into chat or storing real secrets in `.env`. Store these variable names as Bitwarden project secrets: `SHOPIFY_HERMES_CLIENT_ID`, `SHOPIFY_HERMES_CLIENT_SECRET`, and `SHOPIFY_HERMES_APP_URL`; status output should list variable names only. Do not paste Shopify client secrets into chat. Do not write secrets back to `.env` when using Bitwarden mode.
+
+Configure Hermes Bitwarden Secrets Manager with your `BWS_PROJECT_ID`; for a self-hosted Bitwarden endpoint include `--server-url <https://bitwarden.example.com>` when running the Hermes Bitwarden setup command. Then verify and load/sync secrets before launching the connector:
+
+```bash
+hermes secrets bitwarden status
+hermes secrets bitwarden sync
+shopify-hermes-oauth doctor
+```
+
+If `doctor` reports missing Shopify connector variables while Hermes Bitwarden Secrets Manager is enabled, launch the connector from Hermes after secrets are loaded or rerun the Bitwarden `status`/`sync` commands. It should never print secret values.
+
 ## Token-store lock waits
 
 Local token-store writes use an owner-only lock file. The default lock-acquisition timeout is 10 seconds so interactive CLI commands fail promptly when another process leaves an active or unrecoverable lock behind. Batch jobs or tests that need longer waits can override this through the local file dependency hook (`lockTimeoutMs`) while retaining the same stale-lock recovery behavior.

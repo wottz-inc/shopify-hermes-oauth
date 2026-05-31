@@ -68,4 +68,23 @@ describe('SAFETY-CRITICAL README documentation contracts', () => {
       'copy-polish',
     ]);
   });
+
+  it('documents Bitwarden Secrets Manager setup without asking for secrets in chat', () => {
+    const markdown = readReadme();
+
+    expectAllPresent(markdown, [
+      '## Bitwarden Secrets Manager mode',
+      'Hermes Bitwarden Secrets Manager',
+      'self-hosted Bitwarden endpoint',
+      '--server-url',
+      'BWS_PROJECT_ID',
+      'hermes secrets bitwarden status',
+      'hermes secrets bitwarden sync',
+      'SHOPIFY_HERMES_CLIENT_ID',
+      'SHOPIFY_HERMES_CLIENT_SECRET',
+      'SHOPIFY_HERMES_APP_URL',
+      'Do not paste Shopify client secrets into chat',
+      'Do not write secrets back to `.env`',
+    ]);
+  });
 });
