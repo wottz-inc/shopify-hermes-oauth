@@ -115,4 +115,22 @@ describe('SAFETY-CRITICAL README documentation contracts', () => {
       'Connector CLI: installed but not on PATH',
     ]);
   });
+
+  it('documents chat-first guided onboarding transcript', () => {
+    const markdown = readReadme();
+
+    expectAllPresent(markdown, [
+      '## Guided chat-first onboarding',
+      'shopify-hermes-oauth onboard --shop finbobaggins.myshopify.com --app-name hermes-oauth',
+      'Agent can do:',
+      'Human must do in Shopify:',
+      'Application URL: https://<public-app-url>',
+      'Allowed redirection URL: https://<public-app-url>/auth/callback',
+      '/auth/start?shop=finbobaggins.myshopify.com',
+      'shopify-hermes-oauth credentials set',
+      'shopify-hermes-oauth hermes install',
+      'shopify-hermes-oauth shops verify finbobaggins.myshopify.com',
+      'The onboarding command never prints Shopify client secrets or token-store contents',
+    ]);
+  });
 });
