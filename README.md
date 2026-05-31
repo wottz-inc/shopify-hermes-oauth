@@ -4,7 +4,7 @@ Hermes-first Shopify OAuth connector for agent-safe multi-store access, read-onl
 
 This repository is being planned as the native Shopify OAuth access layer for Hermes agents. See [`docs/PRD.md`](docs/PRD.md) for the product requirements, implementation specification, milestones, and v0.1 acceptance criteria.
 
-For practical setup, see [`docs/shopify-app-setup.md`](docs/shopify-app-setup.md). It separates automated CLI/Hermes steps from unavoidable Shopify dashboard and store approval steps. Reviewers can also find the security notes in [`docs/SECURITY_REVIEW.md`](docs/SECURITY_REVIEW.md), the live dev-store validation runbook in [`docs/LIVE_DEV_STORE_VALIDATION.md`](docs/LIVE_DEV_STORE_VALIDATION.md), and the post-review hardening backlog in [`docs/PRD.md`](docs/PRD.md#131-full-repository-review-follow-up-requirements).
+For practical setup, see [`docs/shopify-app-setup.md`](docs/shopify-app-setup.md). It separates automated CLI/Hermes steps from unavoidable Shopify dashboard and store approval steps. If you already use Shopify CLI, the optional [`docs/shopify-cli-assisted-setup.md`](docs/shopify-cli-assisted-setup.md) runbook automates the safe CLI-supported app project/config sync steps while keeping the core connector path CLI-independent. Reviewers can also find the security notes in [`docs/SECURITY_REVIEW.md`](docs/SECURITY_REVIEW.md), the live dev-store validation runbook in [`docs/LIVE_DEV_STORE_VALIDATION.md`](docs/LIVE_DEV_STORE_VALIDATION.md), and the post-review hardening backlog in [`docs/PRD.md`](docs/PRD.md#131-full-repository-review-follow-up-requirements).
 
 Quick dev tunnel helper:
 

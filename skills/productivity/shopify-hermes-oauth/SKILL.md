@@ -101,7 +101,7 @@ After `shopify-hermes-oauth hermes install`, use the MCP server for agent workfl
 
 If MCP is unavailable, fall back to the matching CLI commands above and include the command output in the reasoning context without revealing secrets.
 
-## Public references
+## References
 
-- Project docs: `README.md`, `docs/PRD.md`, `docs/shopify-app-setup.md`
+- Docs: `README.md`, `docs/shopify-app-setup.md`, `docs/shopify-cli-assisted-setup.md`
 - Shopify app setup belongs in Shopify's app/admin UI; the connector stores local Hermes configuration under the user's Hermes home.
