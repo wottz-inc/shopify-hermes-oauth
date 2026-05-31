@@ -842,6 +842,63 @@ describe('CLI doctor', () => {
     expect(output).not.toContain('super-secret-value');
   });
 
+  it('treats generated credential placeholders as missing required configuration', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'replace-with-shopify-client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'replace-with-shopify-client-secret',
+        SHOPIFY_HERMES_APP_URL: 'https://your-public-app-url.example.com',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Missing required configuration: SHOPIFY_HERMES_CLIENT_ID, SHOPIFY_HERMES_CLIENT_SECRET, SHOPIFY_HERMES_APP_URL');
+    expect(output).not.toContain('Required configuration: ok');
+    expect(output).not.toContain('replace-with-shopify-client-secret');
+  });
+
+  it('treats app URL template placeholders as missing required configuration', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://<APP_URL>',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Missing required configuration: SHOPIFY_HERMES_APP_URL');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('treats blank and whitespace required values as missing required configuration', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: '   ',
+        SHOPIFY_HERMES_CLIENT_SECRET: '\t',
+        SHOPIFY_HERMES_APP_URL: '  ',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Missing required configuration: SHOPIFY_HERMES_CLIENT_ID, SHOPIFY_HERMES_CLIENT_SECRET, SHOPIFY_HERMES_APP_URL');
+  });
+
   it('checks audit writability without appending a doctor event to the main audit log', async () => {
     const harness = createHarness({
       env: {
