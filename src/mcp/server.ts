@@ -3,6 +3,7 @@ import { stdin as processStdin, stdout as processStdout } from 'node:process';
 import { type Readable, type Writable } from 'node:stream';
 
 import { type AuditEventInput } from '../audit.js';
+import { InventoryReportError, INVENTORY_MAX_COST_REMEDIATION_MESSAGE } from '../reports/inventory.js';
 import { type ProductsReportFormat } from '../reports/products.js';
 import { type VerifyShopResult } from '../shops/verify.js';
 import { summarizeShopMetadata, type AllowedShopMetadata } from '../shops/metadata.js';
@@ -180,8 +181,11 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
 async function callDependency<T>(operation: () => Promise<T> | T): Promise<T> {
   try {
     return await operation();
-  } catch {
-    throw new Error('Tool call failed.');
+  } catch (error) {
+    if (error instanceof InventoryReportError && error.code === 'MAX_COST_EXCEEDED') {
+      throw new McpToolError(INVENTORY_MAX_COST_REMEDIATION_MESSAGE);
+    }
+    throw new Error('Tool call failed.', { cause: error });
   }
 }
 

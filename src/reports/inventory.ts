@@ -3,14 +3,14 @@ import { isJsonPlainRecord as isRecord } from '../util/json.js';
 import { csvCell } from './csv.js';
 
 export const INVENTORY_REPORT_QUERY = `
-  query InventoryReport($first: Int!, $after: String) {
+  query InventoryReportProducts($first: Int!, $after: String) {
     products(first: $first, after: $after) {
       edges {
         cursor
         node {
           id
           title
-          variants(first: 100) {
+          variants(first: 25) {
             edges {
               node {
                 id
@@ -18,23 +18,6 @@ export const INVENTORY_REPORT_QUERY = `
                 sku
                 inventoryItem {
                   id
-                  inventoryLevels(first: 50) {
-                    edges {
-                      node {
-                        location {
-                          name
-                        }
-                        quantities(names: ["available", "on_hand", "committed"]) {
-                          name
-                          quantity
-                        }
-                      }
-                    }
-                    pageInfo {
-                      hasNextPage
-                      endCursor
-                    }
-                  }
                 }
               }
             }
@@ -53,13 +36,45 @@ export const INVENTORY_REPORT_QUERY = `
   }
 `;
 
+export const INVENTORY_LEVELS_QUERY = `
+  query InventoryReportInventoryLevels($inventoryItemId: ID!, $first: Int!, $after: String) {
+    inventoryItem(id: $inventoryItemId) {
+      inventoryLevels(first: $first, after: $after) {
+        edges {
+          node {
+            location {
+              name
+            }
+            quantities(names: ["available", "on_hand", "committed"]) {
+              name
+              quantity
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+`;
+
 export type InventoryReportFormat = 'markdown' | 'json' | 'csv';
 
 export interface InventoryReportGraphqlClient {
   query(query: string, variables: InventoryReportVariables): Promise<unknown>;
 }
 
-export interface InventoryReportVariables {
+export type InventoryReportVariables = InventoryProductsVariables | InventoryLevelsVariables;
+
+export interface InventoryProductsVariables {
+  readonly first: number;
+  readonly after: string | null;
+}
+
+export interface InventoryLevelsVariables {
+  readonly inventoryItemId: string;
   readonly first: number;
   readonly after: string | null;
 }
@@ -105,21 +120,45 @@ interface InventoryReportGraphqlResponse {
   };
 }
 
+interface InventoryLevelsGraphqlResponse {
+  readonly data?: {
+    readonly inventoryItem?: {
+      readonly inventoryLevels?: {
+        readonly edges?: readonly unknown[];
+        readonly pageInfo?: {
+          readonly hasNextPage?: unknown;
+          readonly endCursor?: unknown;
+        };
+      };
+    } | null;
+  };
+}
+
 interface ProductEdge {
   readonly cursor?: unknown;
   readonly node?: unknown;
 }
 
+export type InventoryReportErrorCode = 'INVENTORY_REPORT_FAILED' | 'MAX_COST_EXCEEDED';
+
 export class InventoryReportError extends Error {
-  public constructor(message: string) {
+  public readonly code: InventoryReportErrorCode;
+
+  public constructor(message: string, code: InventoryReportErrorCode = 'INVENTORY_REPORT_FAILED') {
     super(message);
     this.name = 'InventoryReportError';
+    this.code = code;
   }
 }
 
-const DEFAULT_INVENTORY_PAGE_SIZE = 50;
-const MAX_INVENTORY_PAGE_SIZE = 250;
+export const INVENTORY_MAX_COST_REMEDIATION_MESSAGE = 'Shopify rejected the inventory report because query cost exceeded its single-query limit. Retry with safer pagination; if it continues, reduce page size or contact support with issue #56.';
+
+const DEFAULT_INVENTORY_PAGE_SIZE = 10;
+const MAX_INVENTORY_PAGE_SIZE = 10;
+const INVENTORY_VARIANTS_PAGE_SIZE = 25;
+const INVENTORY_LEVELS_PAGE_SIZE = 10;
 const DEFAULT_MAX_INVENTORY_PAGES = 1_000;
+const DEFAULT_MAX_INVENTORY_LEVEL_PAGES = 1_000;
 const DEFAULT_LOW_STOCK_THRESHOLD = 5;
 
 export async function generateInventoryReport(options: InventoryReportOptions): Promise<InventoryReport> {
@@ -128,7 +167,7 @@ export async function generateInventoryReport(options: InventoryReportOptions): 
   const lowStockThreshold = options.lowStockThreshold ?? DEFAULT_LOW_STOCK_THRESHOLD;
 
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MAX_INVENTORY_PAGE_SIZE) {
-    throw new InventoryReportError('Inventory report page size must be an integer between 1 and 250.');
+    throw new InventoryReportError('Inventory report page size must be an integer between 1 and 10.');
   }
 
   if (!Number.isInteger(maxPages) || maxPages < 1) {
@@ -144,31 +183,36 @@ export async function generateInventoryReport(options: InventoryReportOptions): 
   const seenCursors = new Set<string>();
 
   for (let page = 0; page < maxPages; page += 1) {
-    const graphqlResponse = await options.client.query(INVENTORY_REPORT_QUERY, { first: pageSize, after }) as InventoryReportGraphqlResponse;
+    let graphqlResponse: InventoryReportGraphqlResponse;
+    try {
+      graphqlResponse = await options.client.query(INVENTORY_REPORT_QUERY, { first: pageSize, after }) as InventoryReportGraphqlResponse;
+    } catch (error) {
+      if (isMaxCostExceededError(error)) {
+        throw new InventoryReportError(INVENTORY_MAX_COST_REMEDIATION_MESSAGE, 'MAX_COST_EXCEEDED');
+      }
+      throw error;
+    }
     const connection = graphqlResponse.data?.products;
 
     if (connection?.edges === undefined || connection.pageInfo === undefined) {
       throw new InventoryReportError('Shopify Admin GraphQL response did not include expected products connection.');
     }
 
+    const nextAfter = readNextProductCursor(connection.pageInfo, after, seenCursors);
+
     for (const edge of connection.edges) {
-      rows.push(...parseProductRows(edge.node, lowStockThreshold));
+      const variants = parseProductVariants(edge.node);
+      for (const variant of variants) {
+        const levels = await fetchInventoryLevels(options.client, variant.inventoryItemGid, DEFAULT_MAX_INVENTORY_LEVEL_PAGES);
+        rows.push(...buildVariantRows(variant, levels, lowStockThreshold));
+      }
     }
 
-    if (connection.pageInfo.hasNextPage !== true) {
+    if (nextAfter === null) {
       return { lowStockThreshold, rows };
     }
 
-    if (typeof connection.pageInfo.endCursor !== 'string' || connection.pageInfo.endCursor.length === 0) {
-      throw new InventoryReportError('Shopify Admin GraphQL products page was missing the next cursor.');
-    }
-
-    if (connection.pageInfo.endCursor === after || seenCursors.has(connection.pageInfo.endCursor)) {
-      throw new InventoryReportError('Shopify Admin GraphQL products pagination did not advance.');
-    }
-
-    seenCursors.add(connection.pageInfo.endCursor);
-    after = connection.pageInfo.endCursor;
+    after = nextAfter;
   }
 
   throw new InventoryReportError('Shopify Admin GraphQL products pagination exceeded the maximum page count.');
@@ -185,7 +229,83 @@ export function formatInventoryReport(report: InventoryReport, format: Inventory
   }
 }
 
-function parseProductRows(value: unknown, lowStockThreshold: number): InventoryReportRow[] {
+function isMaxCostExceededError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return error.message.includes('MAX_COST_EXCEEDED') || /exceeds the single query max cost limit/iu.test(error.message);
+}
+
+function readNextProductCursor(pageInfo: { readonly hasNextPage?: unknown; readonly endCursor?: unknown }, after: string | null, seenCursors: Set<string>): string | null {
+  if (pageInfo.hasNextPage !== true) {
+    return null;
+  }
+
+  if (typeof pageInfo.endCursor !== 'string' || pageInfo.endCursor.length === 0) {
+    throw new InventoryReportError('Shopify Admin GraphQL products page was missing the next cursor.');
+  }
+
+  if (pageInfo.endCursor === after || seenCursors.has(pageInfo.endCursor)) {
+    throw new InventoryReportError('Shopify Admin GraphQL products pagination did not advance.');
+  }
+
+  seenCursors.add(pageInfo.endCursor);
+  return pageInfo.endCursor;
+}
+
+interface InventoryVariantContext {
+  readonly productGid: string;
+  readonly productTitle: string;
+  readonly variantGid: string;
+  readonly variantTitle: string;
+  readonly sku: string;
+  readonly inventoryItemGid: string;
+}
+
+async function fetchInventoryLevels(client: InventoryReportGraphqlClient, inventoryItemGid: string, maxPages: number): Promise<readonly unknown[]> {
+  const levels: unknown[] = [];
+  let after: string | null = null;
+  const seenCursors = new Set<string>();
+
+  for (let page = 0; page < maxPages; page += 1) {
+    let graphqlResponse: InventoryLevelsGraphqlResponse;
+    try {
+      graphqlResponse = await client.query(INVENTORY_LEVELS_QUERY, { inventoryItemId: inventoryItemGid, first: INVENTORY_LEVELS_PAGE_SIZE, after }) as InventoryLevelsGraphqlResponse;
+    } catch (error) {
+      if (isMaxCostExceededError(error)) {
+        throw new InventoryReportError(INVENTORY_MAX_COST_REMEDIATION_MESSAGE, 'MAX_COST_EXCEEDED');
+      }
+      throw error;
+    }
+    const connection = graphqlResponse.data?.inventoryItem?.inventoryLevels;
+
+    if (connection?.edges === undefined || connection.pageInfo === undefined) {
+      throw new InventoryReportError(`Shopify Admin GraphQL response did not include expected inventory levels connection for inventory item ${inventoryItemGid}.`);
+    }
+
+    levels.push(...connection.edges);
+
+    if (connection.pageInfo.hasNextPage !== true) {
+      return levels;
+    }
+
+    if (typeof connection.pageInfo.endCursor !== 'string' || connection.pageInfo.endCursor.length === 0) {
+      throw new InventoryReportError(`Shopify Admin GraphQL inventory levels page was missing the next cursor for inventory item ${inventoryItemGid}.`);
+    }
+
+    if (connection.pageInfo.endCursor === after || seenCursors.has(connection.pageInfo.endCursor)) {
+      throw new InventoryReportError(`Shopify Admin GraphQL inventory levels pagination did not advance for inventory item ${inventoryItemGid}.`);
+    }
+
+    seenCursors.add(connection.pageInfo.endCursor);
+    after = connection.pageInfo.endCursor;
+  }
+
+  throw new InventoryReportError(`Shopify Admin GraphQL inventory levels pagination exceeded the maximum page count for inventory item ${inventoryItemGid}.`);
+}
+
+function parseProductVariants(value: unknown): InventoryVariantContext[] {
   if (!isRecord(value)) {
     throw new InventoryReportError('Shopify Admin GraphQL response included an invalid product node.');
   }
@@ -194,46 +314,55 @@ function parseProductRows(value: unknown, lowStockThreshold: number): InventoryR
   const productTitle = readString(value.title, 'product title');
   assertConnectionNotTruncated(
     value.variants,
-    `variants connection was truncated for product ${productGid}. v0.1 inventory reports support at most 100 variants per product`,
+    `variants connection was truncated for product ${productGid}. v0.1 inventory reports support at most ${INVENTORY_VARIANTS_PAGE_SIZE.toString(10)} variants per product`,
   );
   const variants = readConnectionEdges(value.variants);
-  const rows: InventoryReportRow[] = [];
+  const contexts: InventoryVariantContext[] = [];
 
   for (const variantEdge of variants) {
     const variant = readRecord(isRecord(variantEdge) ? variantEdge.node : undefined, 'variant node');
     const variantGid = readString(variant.id, 'variant id');
     const inventoryItem = readRecord(variant.inventoryItem, 'variant inventory item');
     const inventoryItemGid = readString(inventoryItem.id, 'inventory item id');
-    assertConnectionNotTruncated(
-      inventoryItem.inventoryLevels,
-      `inventory levels connection was truncated for product ${productGid}, variant ${variantGid}, inventory item ${inventoryItemGid}. v0.1 inventory reports support at most 50 inventory levels per variant`,
-    );
-    const levels = readConnectionEdges(inventoryItem.inventoryLevels);
+    contexts.push({
+      productGid,
+      productTitle,
+      variantGid,
+      variantTitle: typeof variant.title === 'string' && variant.title.length > 0 ? variant.title : 'Untitled variant',
+      sku: typeof variant.sku === 'string' ? variant.sku : '',
+      inventoryItemGid,
+    });
+  }
 
-    for (const levelEdge of levels) {
-      const level = readRecord(isRecord(levelEdge) ? levelEdge.node : undefined, 'inventory level node');
-      const location = isRecord(level.location) ? level.location : {};
-      const available = readQuantity(level, 'available');
-      const onHand = readQuantity(level, 'on_hand', 'onHand');
-      const committed = readQuantity(level, 'committed');
+  return contexts;
+}
 
-      rows.push({
-        productGid,
-        productId: extractNumericId(productGid),
-        productTitle,
-        variantGid,
-        variantId: extractNumericId(variantGid),
-        variantTitle: typeof variant.title === 'string' && variant.title.length > 0 ? variant.title : 'Untitled variant',
-        sku: typeof variant.sku === 'string' ? variant.sku : '',
-        inventoryItemGid,
-        inventoryItemId: extractNumericId(inventoryItemGid),
-        locationName: typeof location.name === 'string' ? location.name : '',
-        available,
-        onHand,
-        committed,
-        lowStock: available !== null && available <= lowStockThreshold,
-      });
-    }
+function buildVariantRows(variant: InventoryVariantContext, levels: readonly unknown[], lowStockThreshold: number): InventoryReportRow[] {
+  const rows: InventoryReportRow[] = [];
+
+  for (const levelEdge of levels) {
+    const level = readRecord(isRecord(levelEdge) ? levelEdge.node : undefined, 'inventory level node');
+    const location = isRecord(level.location) ? level.location : {};
+    const available = readQuantity(level, 'available');
+    const onHand = readQuantity(level, 'on_hand', 'onHand');
+    const committed = readQuantity(level, 'committed');
+
+    rows.push({
+      productGid: variant.productGid,
+      productId: extractNumericId(variant.productGid),
+      productTitle: variant.productTitle,
+      variantGid: variant.variantGid,
+      variantId: extractNumericId(variant.variantGid),
+      variantTitle: variant.variantTitle,
+      sku: variant.sku,
+      inventoryItemGid: variant.inventoryItemGid,
+      inventoryItemId: extractNumericId(variant.inventoryItemGid),
+      locationName: typeof location.name === 'string' ? location.name : '',
+      available,
+      onHand,
+      committed,
+      lowStock: available !== null && available <= lowStockThreshold,
+    });
   }
 
   return rows;
