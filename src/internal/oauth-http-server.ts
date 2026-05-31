@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import '@shopify/shopify-api/adapters/node';
 import { ApiVersion, LogSeverity, shopifyApi } from '@shopify/shopify-api';
 
+import { MissingRequiredAdminApiScopesError } from './shopify-oauth-token-exchange.js';
 import { normalizeShopDomain } from '../shop-domain.js';
 
 const SERVICE_NAME = 'shopify-hermes-oauth';
@@ -12,6 +13,7 @@ const HEALTH_PATH = '/health';
 const SHOPIFY_OAUTH_PATH = '/admin/oauth/authorize';
 const DEFAULT_MAX_CALLBACK_AGE_MS = 5 * 60 * 1_000;
 const MAX_SAFE_TIMESTAMP_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1_000);
+const DEFAULT_REQUIRED_ADMIN_API_SCOPES = ['read_products', 'read_orders', 'read_inventory', 'read_locations'] as const;
 
 export interface OAuthHttpServerConfig {
   readonly clientId: string;
@@ -194,7 +196,8 @@ async function handleAuthCallback(
     const stateRecord = dependencies.stateStore.consume(callback.state);
 
     if (stateRecord.shop !== callback.shop) {
-      throw new Error('State shop mismatch');
+      sendText(response, 400, canonicalShopMismatchMessage(callback.shop));
+      return;
     }
 
     const redirectUri = stateRecord.redirectUri ?? callbackUrl(dependencies.config.appUrl);
@@ -205,6 +208,10 @@ async function handleAuthCallback(
     });
     const scopes = normalizeScopes(token.scopes ?? dependencies.config.scopes);
 
+    if (scopes.length === 0) {
+      throw new MissingRequiredAdminApiScopesError();
+    }
+
     await dependencies.tokenStore.storeToken({
       shop: callback.shop,
       accessToken: token.accessToken,
@@ -212,9 +219,26 @@ async function handleAuthCallback(
     });
 
     sendText(response, 200, 'OAuth install complete');
-  } catch {
-    sendText(response, 400, 'Invalid OAuth callback');
+  } catch (error) {
+    sendText(response, 400, safeOAuthCallbackErrorMessage(error));
   }
+}
+
+function safeOAuthCallbackErrorMessage(error: unknown): string {
+  if (isMissingRequiredAdminApiScopesError(error)) {
+    return `Required Shopify Admin API scopes are missing. Configure at least one Required Admin API Scope for the app before retrying; optional scopes alone are insufficient. For v0.1 reports/MCP, use: ${DEFAULT_REQUIRED_ADMIN_API_SCOPES.join(', ')}.`;
+  }
+
+  return 'Invalid OAuth callback';
+}
+
+function isMissingRequiredAdminApiScopesError(error: unknown): boolean {
+  return error instanceof MissingRequiredAdminApiScopesError
+    || (error instanceof Error && error.message === 'At least one scope is required');
+}
+
+function canonicalShopMismatchMessage(callbackShop: string): string {
+  return `Shopify returned a different canonical shop domain. Retry the install using ${callbackShop}.`;
 }
 
 async function validateCallbackRequest(

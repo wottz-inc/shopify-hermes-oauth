@@ -38,7 +38,7 @@ Shopify requires these steps in the Shopify Partner/Admin dashboard; the CLI can
    - `SHOPIFY_HERMES_CLIENT_SECRET`
 3. Set the app URL to the `Application URL` printed by `shopify-hermes-oauth dev --tunnel`.
 4. Add the `Allowed redirection URL` printed by the command.
-5. Confirm the app scopes match the read-only `SHOPIFY_HERMES_SCOPES` value unless you intentionally changed them. The default v0.1 set is `read_products,read_orders,read_inventory,read_locations`; do not add customer, discounts, or reports scopes unless a later feature explicitly documents why.
+5. Under Required Admin API Scopes, confirm the app scopes match the read-only `SHOPIFY_HERMES_SCOPES` value unless you intentionally changed them. The default v0.1 required Admin API scope set is `read_products,read_orders,read_inventory,read_locations`; do not add customer, discounts, or reports scopes unless a later feature explicitly documents why. Optional Shopify scopes alone are insufficient for Admin API OAuth installs and are not a substitute for Required Admin API Scopes.
 6. Save the app settings.
 
 ## Unavoidable store approval steps
@@ -46,7 +46,7 @@ Shopify requires these steps in the Shopify Partner/Admin dashboard; the CLI can
 A store owner/admin must approve the app install for each store:
 
 1. Start the dev tunnel and keep it running.
-2. Open the generated install/start URL for the target `<shop>.myshopify.com` store when the connector provides one.
+2. Open the generated install/start URL for the target canonical Admin `<shop>.myshopify.com` store domain when the connector provides one. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.
 3. Review the requested read-only scopes in Shopify; default installs should request only `read_products`, `read_orders`, `read_inventory`, and `read_locations`.
 4. Approve installation in Shopify.
 5. Verify locally:
