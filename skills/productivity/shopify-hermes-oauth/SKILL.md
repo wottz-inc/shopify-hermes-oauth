@@ -10,9 +10,9 @@ metadata:
     related_skills: [shopify]
 ---
 
-# Shopify Hermes OAuth
+# OAuth
 
-Use this skill when a user wants Hermes to work with Shopify through the `shopify-hermes-oauth` connector: OAuth app installs, multi-store access, repeatable reports, MCP use, or safer long-running agent workflows.
+Use this for Shopify OAuth app installs, multi-store access, reports, MCP, or safer long-running workflows.
 
 Prefer the direct-token `shopify` skill for one-off custom Admin GraphQL or curl work where the user already has a short-lived/direct-token workflow. For durable access, multiple stores, scheduled reports, or avoiding pasted per-store tokens, use this OAuth connector.
 
@@ -20,8 +20,8 @@ Prefer the direct-token `shopify` skill for one-off custom Admin GraphQL or curl
 
 - Do not ask users to paste Shopify access tokens into chat.
 - Do not ask users to paste Shopify client secrets into chat.
-- Do not print OAuth secrets, access tokens, or token-store contents.
-- Keep operations read-only unless the user explicitly requests otherwise and the connector exposes a safe command or MCP tool for it.
+- Do not print OAuth secrets, access tokens, or token stores.
+- Keep operations read-only unless the user explicitly requests otherwise through a safe command or MCP tool.
 - Default OAuth installs should request only the v0.1 least-privilege Required Admin API Scopes: `read_products`, `read_orders`, `read_inventory`, and `read_locations`; Optional Shopify scopes alone are insufficient.
 - Verify the target shop before reports or MCP calls.
 - Use the store's canonical Admin `*.myshopify.com` domain; do not guess store domains from brand names. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.
@@ -40,7 +40,9 @@ shopify-hermes-oauth hermes install
 
 For non-Bitwarden chat-first credential setup, use `shopify-hermes-oauth credentials set`: the agent sends the exact command, the user runs it locally or over SSH/Termius, then replies `done` without sharing secrets. The prompt hides the client secret while typing and updates only `SHOPIFY_HERMES_CLIENT_ID` and `SHOPIFY_HERMES_CLIENT_SECRET` in `$HERMES_HOME/.env`.
 
-For VPS/chat-first use, recommend Hermes Bitwarden Secrets Manager mode instead of asking for secrets in chat. Store `SHOPIFY_HERMES_CLIENT_ID`, `SHOPIFY_HERMES_CLIENT_SECRET`, and `SHOPIFY_HERMES_APP_URL` as Bitwarden project variables (`BWS_PROJECT_ID`); include `--server-url <self-hosted-url>` for a self-hosted Bitwarden endpoint. Check `hermes secrets bitwarden status` and `hermes secrets bitwarden sync`, then run `shopify-hermes-oauth doctor`. Do not write secrets back to `.env` in Bitwarden mode; status should list variable names only.
+For VPS/chat-first use, recommend Hermes Bitwarden Secrets Manager instead of secrets in chat. Store `SHOPIFY_HERMES_CLIENT_ID`, `SHOPIFY_HERMES_CLIENT_SECRET`, and `SHOPIFY_HERMES_APP_URL` as Bitwarden project variables (`BWS_PROJECT_ID`); include `--server-url <self-hosted-url>` for a self-hosted endpoint. Check `hermes secrets bitwarden status` and `hermes secrets bitwarden sync`, then run `shopify-hermes-oauth doctor`. Do not write secrets back to `.env`.
+
+For source installs, prefer `npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz` over `npm link`. Hermes profile-local npm bin directories such as `$HERMES_HOME/node/bin` or `~/.hermes/node/bin` may be visible to Hermes but not to an ordinary SSH shell; if needed run `export PATH="$HERMES_HOME/node/bin:$PATH"`. If `shopify-hermes-oauth doctor` prints `Connector CLI: installed but not on PATH`, use its PATH export or wrapper.
 
 For OAuth callback setup during development, start a public HTTPS tunnel and local callback server:
 
@@ -54,7 +56,7 @@ If you provide your own tunnel instead, run the callback server explicitly:
 shopify-hermes-oauth serve --host 127.0.0.1 --port 3456 --app-url <public-https-url>
 ```
 
-Configure the Shopify app in Shopify's app/admin UI with the public Application URL and `<public-https-url>/auth/callback` redirect URL. To approve an install, open `/auth/start?shop=<shop>.myshopify.com` on the public app URL when the app is configured and the callback server is running.
+Configure the Shopify app with the public Application URL and `<public-https-url>/auth/callback` redirect URL. To approve an install, open `/auth/start?shop=<shop>.myshopify.com` on the public app URL while the callback server is running.
 
 ## Shop verification
 
@@ -77,7 +79,7 @@ shopify-hermes-oauth report orders <shop> --since 30d --format markdown
 shopify-hermes-oauth report inventory <shop> --format markdown
 ```
 
-Prefer Markdown for user-facing summaries and JSON only when a downstream tool needs structured data. Avoid exposing unnecessary customer details; summarize only what the user needs.
+Prefer Markdown for user-facing summaries and JSON only when a downstream tool needs structure. Avoid unnecessary customer details.
 
 ## Limits
 
@@ -85,7 +87,7 @@ v0.1 reports have explicit nested-connection ceilings:
 
 - Products report: shows at most the first 100 variants per product and marks the variants summary when additional variants are omitted.
 - Orders report: shows at most the first 50 line items per order and marks the line-item summary when additional line items are omitted.
-- Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels, with the affected product/variant/inventory item GID included where safe.
+- Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels, including safe affected GIDs.
 
 If a report hits these limits, narrow the report scope or use a custom paginated Shopify Admin GraphQL workflow outside the curated v0.1 reports.
 
@@ -99,7 +101,7 @@ After `shopify-hermes-oauth hermes install`, use the MCP server for agent workfl
 - `shopify.report_orders`
 - `shopify.report_inventory`
 
-If MCP is unavailable, fall back to the matching CLI commands above and include the command output in the reasoning context without revealing secrets.
+If MCP is unavailable, fall back to matching CLI commands and include output without secrets.
 
 ## References
 

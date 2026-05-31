@@ -7,7 +7,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { defaultStartProcess, runShopifyHermesOauthCli, type CliDependencies } from '../src/cli.js';
+import { defaultStartProcess, isDirectCliRun, runShopifyHermesOauthCli, type CliDependencies } from '../src/cli.js';
 import { exchangeShopifyOAuthToken } from '../src/internal/shopify-oauth-token-exchange.js';
 
 function createHarness(overrides: Partial<CliDependencies> = {}) {
@@ -41,6 +41,7 @@ function createHarness(overrides: Partial<CliDependencies> = {}) {
       listenedServers.push(options);
     },
     readFile: (path) => files.get(path),
+    fileIsExecutable: (path) => files.has(path) && ((fileModes.get(path) ?? 0) & 0o111) !== 0,
     writeFile: (path, content, options) => {
       if (options?.flag === 'wx' && files.has(path)) {
         const error = new Error(`File exists: ${path}`) as Error & { code: string };
@@ -180,6 +181,16 @@ function expectNoOldStandaloneMcpAliases(markdown: string): void {
 }
 
 const DEV_SERVER_READY_OUTPUT = 'OAuth callback server listening: http://127.0.0.1:3456\n';
+
+describe('CLI direct-run detection', () => {
+  it('treats an npm-linked symlinked bin as a direct CLI invocation', async () => {
+    const builtCli = '/repo/shopify-hermes-oauth/dist/cli.js';
+    const linkedBin = '/usr/local/bin/shopify-hermes-oauth';
+    const realpath = (path: string) => (path === linkedBin ? builtCli : path);
+
+    await expect(isDirectCliRun(linkedBin, `file://${builtCli}`, realpath)).resolves.toBe(true);
+  });
+});
 
 describe('CLI dev tunnel', () => {
   it('starts cloudflared before serve and passes the public app URL to serve', async () => {
@@ -1122,6 +1133,55 @@ describe('CLI doctor', () => {
     expect(output).not.toContain('super-secret-value');
   });
 
+  it('prints a clear PATH fix when the connector is installed in a Hermes npm bin directory but not on PATH', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        PATH: '/usr/local/bin:/usr/bin',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://app.example.test',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+    harness.files.set('/tmp/hermes/node/bin/shopify-hermes-oauth', '#!/usr/bin/env node\n');
+    harness.fileModes.set('/tmp/hermes/node/bin/shopify-hermes-oauth', 0o755);
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain('Connector CLI: installed but not on PATH');
+    expect(output).toContain('/tmp/hermes/node/bin/shopify-hermes-oauth');
+    expect(output).toContain('Add the Hermes profile-local npm bin directory to your shell PATH: export PATH="/tmp/hermes/node/bin:$PATH"');
+    expect(output).toContain('or install globally from source with `npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz`');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('does not claim a non-executable Hermes npm bin candidate is installed but missing from PATH', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        PATH: '/usr/local/bin:/usr/bin',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://app.example.test',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+    harness.files.set('/tmp/hermes/node/bin/shopify-hermes-oauth', 'stale non-executable file\n');
+    harness.fileModes.set('/tmp/hermes/node/bin/shopify-hermes-oauth', 0o644);
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('Connector CLI: not found on PATH');
+    expect(output).not.toContain('Connector CLI: installed but not on PATH');
+    expect(output).not.toContain('export PATH="/tmp/hermes/node/bin:$PATH"');
+    expect(output).not.toContain('super-secret-value');
+  });
+
   it('treats generated credential placeholders as missing required configuration', async () => {
     const harness = createHarness({
       env: {
@@ -1688,6 +1748,9 @@ describe('CLI hermes install', () => {
     expect(skill).toContain('shopify-hermes-oauth init');
     expect(skill).toContain('shopify-hermes-oauth doctor');
     expect(skill).toContain('shopify-hermes-oauth hermes install');
+    expect(skill).toContain('npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz');
+    expect(skill).toContain('Hermes profile-local npm bin directories such as `$HERMES_HOME/node/bin` or `~/.hermes/node/bin` may be visible to Hermes but not to an ordinary SSH shell');
+    expect(skill).toContain('Connector CLI: installed but not on PATH');
     expect(skill).toContain('shopify-hermes-oauth dev --tunnel');
     expect(skill).toContain('shops verify');
     expect(skill).toContain('shopify.list_shops');

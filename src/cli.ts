@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { chmod as fsChmod, mkdir as fsMkdir, readFile as fsReadFile, rename as fsRename, unlink as fsUnlink, writeFile as fsWriteFile } from 'node:fs/promises';
+import { constants as fsConstants, existsSync } from 'node:fs';
+import { access as fsAccess, chmod as fsChmod, mkdir as fsMkdir, readFile as fsReadFile, realpath as fsRealpath, rename as fsRename, unlink as fsUnlink, writeFile as fsWriteFile } from 'node:fs/promises';
 import { type Server } from 'node:http';
 import { dirname, join } from 'node:path';
 import { stdin as processStdin, stdout as processStdout } from 'node:process';
@@ -58,6 +58,7 @@ export interface CliDependencies {
   readonly startProcess?: (command: string, args: readonly string[]) => StartedProcessResult | Promise<StartedProcessResult>;
   readonly listenServer?: (server: Server, options: { readonly host: string; readonly port: number }) => void | Promise<void>;
   readonly readFile?: (path: string) => string | undefined | Promise<string | undefined>;
+  readonly fileIsExecutable?: (path: string) => boolean | Promise<boolean>;
   readonly writeFile?: (path: string, content: string, options?: { readonly mode?: number; readonly flag?: string }) => void | Promise<void>;
   readonly renameFile?: (from: string, to: string) => void | Promise<void>;
   readonly unlinkFile?: (path: string) => void | Promise<void>;
@@ -80,6 +81,7 @@ interface CliContext {
   readonly startProcess: (command: string, args: readonly string[]) => Promise<StartedProcessResult>;
   readonly listenServer: (server: Server, options: { readonly host: string; readonly port: number }) => Promise<void>;
   readonly readFile: (path: string) => Promise<string | undefined>;
+  readonly fileIsExecutable: (path: string) => Promise<boolean>;
   readonly writeEnvFile: (path: string, content: string) => Promise<void>;
   readonly writeJsonFile: (path: string, content: string, options?: { readonly flag?: string }) => Promise<void>;
   readonly renameFile: (from: string, to: string) => Promise<void>;
@@ -1005,9 +1007,9 @@ function localHermesSkillContent(): string {
     "    related_skills: [shopify]",
     "---",
     "",
-    "# Shopify Hermes OAuth",
+    "# OAuth",
     "",
-    "Use this skill when a user wants Hermes to work with Shopify through the `shopify-hermes-oauth` connector: OAuth app installs, multi-store access, repeatable reports, MCP use, or safer long-running agent workflows.",
+    "Use this for Shopify OAuth app installs, multi-store access, reports, MCP, or safer long-running workflows.",
     "",
     "Prefer the direct-token `shopify` skill for one-off custom Admin GraphQL or curl work where the user already has a short-lived/direct-token workflow. For durable access, multiple stores, scheduled reports, or avoiding pasted per-store tokens, use this OAuth connector.",
     "",
@@ -1015,8 +1017,8 @@ function localHermesSkillContent(): string {
     "",
     "- Do not ask users to paste Shopify access tokens into chat.",
     "- Do not ask users to paste Shopify client secrets into chat.",
-    "- Do not print OAuth secrets, access tokens, or token-store contents.",
-    "- Keep operations read-only unless the user explicitly requests otherwise and the connector exposes a safe command or MCP tool for it.",
+    "- Do not print OAuth secrets, access tokens, or token stores.",
+    "- Keep operations read-only unless the user explicitly requests otherwise through a safe command or MCP tool.",
     "- Default OAuth installs should request only the v0.1 least-privilege Required Admin API Scopes: `read_products`, `read_orders`, `read_inventory`, and `read_locations`; Optional Shopify scopes alone are insufficient.",
     "- Verify the target shop before reports or MCP calls.",
     "- Use the store's canonical Admin `*.myshopify.com` domain; do not guess store domains from brand names. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.",
@@ -1035,7 +1037,9 @@ function localHermesSkillContent(): string {
     "",
     "For non-Bitwarden chat-first credential setup, use `shopify-hermes-oauth credentials set`: the agent sends the exact command, the user runs it locally or over SSH/Termius, then replies `done` without sharing secrets. The prompt hides the client secret while typing and updates only `SHOPIFY_HERMES_CLIENT_ID` and `SHOPIFY_HERMES_CLIENT_SECRET` in `$HERMES_HOME/.env`.",
     "",
-    "For VPS/chat-first use, recommend Hermes Bitwarden Secrets Manager mode instead of asking for secrets in chat. Store `SHOPIFY_HERMES_CLIENT_ID`, `SHOPIFY_HERMES_CLIENT_SECRET`, and `SHOPIFY_HERMES_APP_URL` as Bitwarden project variables (`BWS_PROJECT_ID`); include `--server-url <self-hosted-url>` for a self-hosted Bitwarden endpoint. Check `hermes secrets bitwarden status` and `hermes secrets bitwarden sync`, then run `shopify-hermes-oauth doctor`. Do not write secrets back to `.env` in Bitwarden mode; status should list variable names only.",
+    "For VPS/chat-first use, recommend Hermes Bitwarden Secrets Manager instead of secrets in chat. Store `SHOPIFY_HERMES_CLIENT_ID`, `SHOPIFY_HERMES_CLIENT_SECRET`, and `SHOPIFY_HERMES_APP_URL` as Bitwarden project variables (`BWS_PROJECT_ID`); include `--server-url <self-hosted-url>` for a self-hosted endpoint. Check `hermes secrets bitwarden status` and `hermes secrets bitwarden sync`, then run `shopify-hermes-oauth doctor`. Do not write secrets back to `.env`.",
+    "",
+    "For source installs, prefer `npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz` over `npm link`. Hermes profile-local npm bin directories such as `$HERMES_HOME/node/bin` or `~/.hermes/node/bin` may be visible to Hermes but not to an ordinary SSH shell; if needed run `export PATH=\"$HERMES_HOME/node/bin:$PATH\"`. If `shopify-hermes-oauth doctor` prints `Connector CLI: installed but not on PATH`, use its PATH export or wrapper.",
     "",
     "For OAuth callback setup during development, start a public HTTPS tunnel and local callback server:",
     "",
@@ -1049,7 +1053,7 @@ function localHermesSkillContent(): string {
     "shopify-hermes-oauth serve --host 127.0.0.1 --port 3456 --app-url <public-https-url>",
     "```",
     "",
-    "Configure the Shopify app in Shopify's app/admin UI with the public Application URL and `<public-https-url>/auth/callback` redirect URL. To approve an install, open `/auth/start?shop=<shop>.myshopify.com` on the public app URL when the app is configured and the callback server is running.",
+    "Configure the Shopify app with the public Application URL and `<public-https-url>/auth/callback` redirect URL. To approve an install, open `/auth/start?shop=<shop>.myshopify.com` on the public app URL while the callback server is running.",
     "",
     "## Shop verification",
     "",
@@ -1072,7 +1076,7 @@ function localHermesSkillContent(): string {
     "shopify-hermes-oauth report inventory <shop> --format markdown",
     "```",
     "",
-    "Prefer Markdown for user-facing summaries and JSON only when a downstream tool needs structured data. Avoid exposing unnecessary customer details; summarize only what the user needs.",
+    "Prefer Markdown for user-facing summaries and JSON only when a downstream tool needs structure. Avoid unnecessary customer details.",
     "",
     "## Limits",
     "",
@@ -1080,7 +1084,7 @@ function localHermesSkillContent(): string {
     "",
     "- Products report: shows at most the first 100 variants per product and marks the variants summary when additional variants are omitted.",
     "- Orders report: shows at most the first 50 line items per order and marks the line-item summary when additional line items are omitted.",
-    "- Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels, with the affected product/variant/inventory item GID included where safe.",
+    "- Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels, including safe affected GIDs.",
     "",
     "If a report hits these limits, narrow the report scope or use a custom paginated Shopify Admin GraphQL workflow outside the curated v0.1 reports.",
     "",
@@ -1094,7 +1098,7 @@ function localHermesSkillContent(): string {
     "- `shopify.report_orders`",
     "- `shopify.report_inventory`",
     "",
-    "If MCP is unavailable, fall back to the matching CLI commands above and include the command output in the reasoning context without revealing secrets.",
+    "If MCP is unavailable, fall back to matching CLI commands and include output without secrets.",
     "",
     "## References",
     "",
@@ -1119,6 +1123,7 @@ async function runDoctor(context: CliContext): Promise<number> {
     : false;
   const nodeOk = getNodeMajor(context.nodeVersion) >= 20;
   const hermesOk = await context.commandExists('hermes');
+  const connectorPathStatus = await checkConnectorPathStatus(context, paths.hermesHome);
   const cloudflaredOk = await context.commandExists('cloudflared');
   const ngrokOk = await context.commandExists('ngrok');
   const tokenStoreStatus = await checkTokenStoreStatus(context, paths.tokenStore);
@@ -1127,6 +1132,7 @@ async function runDoctor(context: CliContext): Promise<number> {
   context.stdout('Shopify Hermes OAuth doctor');
   context.stdout(`Node.js >=20: ${nodeOk ? 'ok' : `missing (found ${context.nodeVersion}; install Node.js 20 or newer)`}`);
   context.stdout(`Hermes CLI: ${hermesOk ? 'ok' : 'missing (install Hermes Agent CLI before connecting this OAuth helper)'}`);
+  context.stdout(formatConnectorPathStatus(connectorPathStatus));
   context.stdout(`cloudflared: ${cloudflaredOk ? 'ok' : 'optional, not found'}`);
   context.stdout(`ngrok: ${ngrokOk ? 'ok' : 'optional, not found'}`);
   context.stdout(`Hermes home: ${paths.hermesHome}`);
@@ -1152,7 +1158,13 @@ async function runDoctor(context: CliContext): Promise<number> {
     context.stderr(`Audit log is not writable. Check audit log path: ${paths.auditLog}`);
   }
 
-  if (!nodeOk || !hermesOk || missingConfigKeys.length > 0 || tokenStoreStatus === 'corrupted' || tokenStoreStatus === 'unreadable' || !auditWritable) {
+  if (connectorPathStatus.kind === 'installed-not-on-path') {
+    context.stderr(`Connector CLI is installed at ${connectorPathStatus.executable} but its npm bin directory is not on PATH.`);
+    context.stderr(`Add the Hermes profile-local npm bin directory to your shell PATH: export PATH="${connectorPathStatus.binDir}:$PATH"`);
+    context.stderr('or install globally from source with `npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz`.');
+  }
+
+  if (!nodeOk || !hermesOk || connectorPathStatus.kind === 'installed-not-on-path' || missingConfigKeys.length > 0 || tokenStoreStatus === 'corrupted' || tokenStoreStatus === 'unreadable' || !auditWritable) {
     printNextSteps(context, missingConfigKeys, { nodeOk, hermesOk, hasTunnel: cloudflaredOk || ngrokOk, hermesBitwardenEnabled });
     return 1;
   }
@@ -1165,6 +1177,45 @@ async function runDoctor(context: CliContext): Promise<number> {
 }
 
 type TokenStoreDoctorStatus = 'not-initialized' | 'ok' | 'corrupted' | 'unreadable';
+
+type ConnectorPathStatus =
+  | { readonly kind: 'ok' }
+  | { readonly kind: 'not-found' }
+  | { readonly kind: 'installed-not-on-path'; readonly binDir: string; readonly executable: string };
+
+async function checkConnectorPathStatus(context: CliContext, hermesHome: string): Promise<ConnectorPathStatus> {
+  if (await context.commandExists('shopify-hermes-oauth')) {
+    return { kind: 'ok' };
+  }
+
+  for (const binDir of connectorCandidateBinDirs(context, hermesHome)) {
+    const executable = join(binDir, 'shopify-hermes-oauth');
+    if (await context.fileIsExecutable(executable)) {
+      return { kind: 'installed-not-on-path', binDir, executable };
+    }
+  }
+
+  return { kind: 'not-found' };
+}
+
+function connectorCandidateBinDirs(context: CliContext, hermesHome: string): readonly string[] {
+  return [...new Set([
+    join(hermesHome, 'node', 'bin'),
+    context.homeDir === undefined ? undefined : join(context.homeDir, '.hermes', 'node', 'bin'),
+  ].filter((path): path is string => path !== undefined))];
+}
+
+function formatConnectorPathStatus(status: ConnectorPathStatus): string {
+  if (status.kind === 'ok') {
+    return 'Connector CLI: ok';
+  }
+
+  if (status.kind === 'installed-not-on-path') {
+    return `Connector CLI: installed but not on PATH (${status.executable})`;
+  }
+
+  return 'Connector CLI: not found on PATH';
+}
 
 async function readOptionalFile(context: CliContext, path: string): Promise<string | undefined> {
   try {
@@ -1402,6 +1453,7 @@ function createCliContext(dependencies: CliDependencies): CliContext {
 
       return fsReadFile(path, 'utf8');
     },
+    fileIsExecutable: async (path) => dependencies.fileIsExecutable?.(path) ?? defaultFileIsExecutable(path),
     writeEnvFile: async (path, content) => {
       const directory = dirname(path);
       const tempPath = join(directory, `.env.tmp-${String(process.pid)}-${String(Date.now())}-${Math.random().toString(36).slice(2)}`);
@@ -2264,9 +2316,42 @@ async function defaultPromptCredential(label: string): Promise<string> {
   });
 }
 
-const isDirectRun = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
+export async function isDirectCliRun(
+  argv1: string | undefined,
+  moduleUrl: string,
+  realpath: (path: string) => string | Promise<string> = fsRealpath,
+): Promise<boolean> {
+  if (argv1 === undefined) {
+    return false;
+  }
 
-if (isDirectRun) {
+  const modulePath = fileURLToPath(moduleUrl);
+  const [realArgv1, realModulePath] = await Promise.all([
+    resolveRealpathOrSelf(argv1, realpath),
+    resolveRealpathOrSelf(modulePath, realpath),
+  ]);
+
+  return realArgv1 === realModulePath;
+}
+
+async function resolveRealpathOrSelf(path: string, realpath: (path: string) => string | Promise<string>): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
+  }
+}
+
+async function defaultFileIsExecutable(path: string): Promise<boolean> {
+  try {
+    await fsAccess(path, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+if (await isDirectCliRun(process.argv[1], import.meta.url)) {
   const exitCode = await runShopifyHermesOauthCli();
   process.exitCode = exitCode;
 }
