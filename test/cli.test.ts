@@ -1358,6 +1358,89 @@ describe('CLI doctor', () => {
 });
 
 describe('CLI init', () => {
+  it('sets Shopify app credentials interactively without printing secrets', async () => {
+    const prompted: string[] = [];
+    const harness = createHarness({
+      promptCredential: (label) => {
+        prompted.push(label);
+        return label === 'Shopify client ID' ? 'new-client-id' : 'new-client-secret';
+      },
+    });
+    harness.files.set('/tmp/hermes/.env', [
+      '# existing file',
+      'UNRELATED=value',
+      'SHOPIFY_HERMES_CLIENT_ID=old-client-id',
+      'SHOPIFY_HERMES_CLIENT_SECRET=old-client-secret',
+      'SHOPIFY_HERMES_APP_URL=https://app.example.test',
+      'SHOPIFY_HERMES_SCOPES=read_products',
+      '',
+    ].join('\n'));
+
+    const exitCode = await runShopifyHermesOauthCli(['credentials', 'set'], harness.deps);
+    const envFile = harness.files.get('/tmp/hermes/.env') ?? '';
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(0);
+    expect(prompted).toEqual(['Shopify client ID', 'Shopify client secret']);
+    expect(envFile).toBe([
+      '# existing file',
+      'UNRELATED=value',
+      'SHOPIFY_HERMES_CLIENT_ID=new-client-id',
+      'SHOPIFY_HERMES_CLIENT_SECRET=new-client-secret',
+      'SHOPIFY_HERMES_APP_URL=https://app.example.test',
+      'SHOPIFY_HERMES_SCOPES=read_products',
+      '',
+    ].join('\n'));
+    expect(harness.fileModes.get('/tmp/hermes/.env')).toBe(0o600);
+    expect(harness.renamedFiles).toHaveLength(1);
+    expect(output).toContain('Updated /tmp/hermes/.env with Shopify app credentials.');
+    expect(output).toContain('Success: credential handoff complete. Reply `done` in chat; do not share secrets.');
+    expect(output).not.toContain('new-client-secret');
+    expect(output).not.toContain('old-client-secret');
+  });
+
+  it('appends credential keys when missing while preserving unrelated .env lines', async () => {
+    const harness = createHarness({
+      promptCredential: (label) => (label === 'Shopify client ID' ? 'client-id' : 'client-secret'),
+    });
+    harness.files.set('/tmp/hermes/.env', 'OTHER=value\nSHOPIFY_HERMES_APP_URL=https://app.example.test\n');
+
+    const exitCode = await runShopifyHermesOauthCli(['credentials', 'set'], harness.deps);
+    const envFile = harness.files.get('/tmp/hermes/.env') ?? '';
+
+    expect(exitCode).toBe(0);
+    expect(envFile).toBe('OTHER=value\nSHOPIFY_HERMES_APP_URL=https://app.example.test\n\nSHOPIFY_HERMES_CLIENT_ID=client-id\nSHOPIFY_HERMES_CLIENT_SECRET=client-secret\n');
+    expect(harness.fileModes.get('/tmp/hermes/.env')).toBe(0o600);
+  });
+
+  it('fails credentials set without interactive stdin/TTY with chat-safe guidance', async () => {
+    const harness = createHarness();
+
+    const exitCode = await runShopifyHermesOauthCli(['credentials', 'set'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(2);
+    expect(harness.files.has('/tmp/hermes/.env')).toBe(false);
+    expect(output).toContain('Cannot read credentials safely from this session.');
+    expect(output).toContain('Run `shopify-hermes-oauth credentials set` from your local terminal or SSH/Termius shell.');
+    expect(output).toContain('Do not paste Shopify client secrets into chat or a heredoc.');
+  });
+
+  it('rejects multiline interactive credentials without writing or echoing secrets', async () => {
+    const harness = createHarness({
+      promptCredential: (label) => (label === 'Shopify client ID' ? 'client-id' : 'first line\nINJECTED=value'),
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['credentials', 'set'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(1);
+    expect(harness.files.has('/tmp/hermes/.env')).toBe(false);
+    expect(output).toContain('SHOPIFY_HERMES_CLIENT_SECRET cannot contain newlines.');
+    expect(output).not.toContain('first line');
+    expect(output).not.toContain('INJECTED');
+  });
+
   it('does not persist Shopify secrets from process env when Hermes Bitwarden mode appears configured', async () => {
     const harness = createHarness({
       env: {
@@ -1556,7 +1639,7 @@ describe('CLI init', () => {
     const exitCode = await runShopifyHermesOauthCli(['wat'], harness.deps);
 
     expect(exitCode).toBe(2);
-    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|dev|serve|shops|report|mcp|hermes>');
+    expect(harness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth <doctor|init|credentials|dev|serve|shops|report|mcp|hermes>');
   });
 
   it('recognizes the mcp serve command', async () => {

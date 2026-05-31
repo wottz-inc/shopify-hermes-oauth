@@ -51,6 +51,18 @@ shopify-hermes-oauth doctor
 
 If `doctor` reports missing Shopify connector variables while Hermes Bitwarden Secrets Manager is enabled, launch the connector from Hermes after secrets are loaded or rerun the Bitwarden `status`/`sync` commands. It should never print secret values.
 
+## Chat-safe credential handoff
+
+When Bitwarden mode is not used and an agent needs the user to enter Shopify app credentials, use a chat-first handoff instead of asking for secrets. The agent sends this exact command:
+
+```bash
+shopify-hermes-oauth credentials set
+```
+
+Run this command in your local terminal or SSH/Termius shell, not in chat: `shopify-hermes-oauth credentials set`. The command prompts for the Shopify client ID and hides the client secret while you type. It updates only `SHOPIFY_HERMES_CLIENT_ID` and `SHOPIFY_HERMES_CLIENT_SECRET` in `$HERMES_HOME/.env`, preserves unrelated `.env` lines, and chmods `.env` to `0600`.
+
+After it succeeds, reply `done` in chat without sharing the client ID or client secret. Do not paste Shopify client secrets into chat.
+
 ## Token-store lock waits
 
 Local token-store writes use an owner-only lock file. The default lock-acquisition timeout is 10 seconds so interactive CLI commands fail promptly when another process leaves an active or unrecoverable lock behind. Batch jobs or tests that need longer waits can override this through the local file dependency hook (`lockTimeoutMs`) while retaining the same stale-lock recovery behavior.
