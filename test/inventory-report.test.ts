@@ -3,36 +3,48 @@ import { describe, expect, it } from 'vitest';
 import {
   formatInventoryReport,
   generateInventoryReport,
+  INVENTORY_LEVELS_QUERY,
   INVENTORY_REPORT_QUERY,
+  InventoryReportError,
   type InventoryReportGraphqlClient,
   type InventoryReportRow,
 } from '../src/reports/inventory.js';
 
 describe('inventory report service', () => {
   it('paginates products and maps product, variant, inventory item, multi-location quantities, and low-stock flags', async () => {
-    const calls: { readonly after: string | null; readonly first: number }[] = [];
+    const calls: { readonly query: 'products' | 'levels'; readonly inventoryItemId?: string; readonly after: string | null; readonly first: number }[] = [];
     const client: InventoryReportGraphqlClient = {
-      query: (_query, variables) => {
-        calls.push({ after: variables.after, first: variables.first });
-        if (variables.after === null) {
+      query: (query, variables) => {
+        if (query === INVENTORY_REPORT_QUERY) {
+          calls.push({ query: 'products', after: variables.after, first: variables.first });
+          if (variables.after === null) {
+            return Promise.resolve({
+              data: {
+                products: {
+                  edges: [{ cursor: 'cursor-1', node: inventoryProductNode() }],
+                  pageInfo: { hasNextPage: true, endCursor: 'cursor-1' },
+                },
+              },
+            });
+          }
+
           return Promise.resolve({
             data: {
               products: {
-                edges: [{ cursor: 'cursor-1', node: inventoryProductNode() }],
-                pageInfo: { hasNextPage: true, endCursor: 'cursor-1' },
+                edges: [{ cursor: 'cursor-2', node: inventoryProductNode({ id: 'gid://shopify/Product/1002', title: 'B Mug', variantId: 'gid://shopify/ProductVariant/2002', variantTitle: 'Default Title', sku: null, inventoryItemId: 'gid://shopify/InventoryItem/3002' }) }],
+                pageInfo: { hasNextPage: false, endCursor: 'cursor-2' },
               },
             },
           });
         }
 
-        return Promise.resolve({
-          data: {
-            products: {
-              edges: [{ cursor: 'cursor-2', node: inventoryProductNode({ id: 'gid://shopify/Product/1002', title: 'B Mug', variantId: 'gid://shopify/ProductVariant/2002', variantTitle: 'Default Title', sku: null, inventoryItemId: 'gid://shopify/InventoryItem/3002', inventoryLevels: { edges: [{ node: { location: { name: 'Main Warehouse' }, quantities: [{ name: 'available', quantity: 9 }] } }] } }) }],
-              pageInfo: { hasNextPage: false, endCursor: 'cursor-2' },
-            },
-          },
-        });
+        if (!('inventoryItemId' in variables)) {
+          throw new Error('expected inventory item variables');
+        }
+        calls.push({ query: 'levels', inventoryItemId: variables.inventoryItemId, after: variables.after, first: variables.first });
+        return Promise.resolve(inventoryLevelsResponse(variables.inventoryItemId === 'gid://shopify/InventoryItem/3002'
+          ? [{ node: { location: { name: 'Main Warehouse' }, quantities: [{ name: 'available', quantity: 9 }] } }]
+          : defaultInventoryLevelEdges()));
       },
     };
 
@@ -73,7 +85,12 @@ describe('inventory report service', () => {
         }),
       ],
     });
-    expect(calls).toEqual([{ after: null, first: 50 }, { after: 'cursor-1', first: 50 }]);
+    expect(calls).toEqual([
+      { query: 'products', after: null, first: 10 },
+      { query: 'levels', inventoryItemId: 'gid://shopify/InventoryItem/3001', after: null, first: 10 },
+      { query: 'products', after: 'cursor-1', first: 10 },
+      { query: 'levels', inventoryItemId: 'gid://shopify/InventoryItem/3002', after: null, first: 10 },
+    ]);
   });
 
   it('formats markdown, json, and csv deterministically including missing SKU and formula-safe cells', () => {
@@ -101,32 +118,67 @@ describe('inventory report service', () => {
 
   it('handles quantity maps and missing quantity values without low-stock false positives', async () => {
     const client: InventoryReportGraphqlClient = {
-      query: () => Promise.resolve({
+      query: (query) => Promise.resolve(query === INVENTORY_REPORT_QUERY ? {
         data: {
           products: {
             edges: [{
               cursor: 'cursor-1',
-              node: inventoryProductNode({
-                inventoryLevels: {
-                  edges: [{
-                    node: {
-                      location: { name: 'No Quantity Location' },
-                      available: undefined,
-                      quantities: [{ name: 'on_hand', quantity: 8 }, { name: 'committed', quantity: 2 }],
-                    },
-                  }],
-                },
-              }),
+              node: inventoryProductNode(),
             }],
             pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
           },
         },
-      }),
+      } : inventoryLevelsResponse([{
+        node: {
+          location: { name: 'No Quantity Location' },
+          available: undefined,
+          quantities: [{ name: 'on_hand', quantity: 8 }, { name: 'committed', quantity: 2 }],
+        },
+      }])),
     };
 
     await expect(generateInventoryReport({ client, lowStockThreshold: 5 })).resolves.toEqual(expect.objectContaining({
       rows: [expect.objectContaining({ available: null, onHand: 8, committed: 2, lowStock: false })],
     }));
+  });
+
+  it('uses bounded low-cost inventory query windows and rejects unsafe product page sizes', async () => {
+    const calls: { readonly after: string | null; readonly first: number }[] = [];
+    const client: InventoryReportGraphqlClient = {
+      query: (_query, variables) => {
+        calls.push({ after: variables.after, first: variables.first });
+        return Promise.resolve({ data: { products: { edges: [], pageInfo: { hasNextPage: false } } } });
+      },
+    };
+
+    await expect(generateInventoryReport({ client })).resolves.toEqual({ lowStockThreshold: 5, rows: [] });
+    expect(calls).toEqual([{ after: null, first: 10 }]);
+    expect(INVENTORY_REPORT_QUERY).toContain('products(first: $first, after: $after)');
+    expect(INVENTORY_REPORT_QUERY).toContain('variants(first: 25)');
+    expect(INVENTORY_REPORT_QUERY).not.toContain('inventoryLevels');
+    expect(INVENTORY_LEVELS_QUERY).toContain('inventoryItem(id: $inventoryItemId)');
+    expect(INVENTORY_LEVELS_QUERY).toContain('inventoryLevels(first: $first, after: $after)');
+
+    await expect(generateInventoryReport({ client, pageSize: 11 })).rejects.toThrow(
+      'Inventory report page size must be an integer between 1 and 10.',
+    );
+  });
+
+  it.each([
+    new Error('Shopify Admin GraphQL returned errors: [{"message":"Query has a cost of 1598, which exceeds the single query max cost limit of 1000."}]'),
+    new Error('Shopify Admin GraphQL returned errors: [{"extensions":{"code":"MAX_COST_EXCEEDED"},"message":"expensive"}]'),
+  ])('converts Shopify max query cost failures to a safe inventory report error', async (error) => {
+    const client: InventoryReportGraphqlClient = {
+      query: () => Promise.reject(error),
+    };
+
+    await expect(generateInventoryReport({ client })).rejects.toThrow(InventoryReportError);
+    await expect(generateInventoryReport({ client })).rejects.toMatchObject({ code: 'MAX_COST_EXCEEDED' });
+    await expect(generateInventoryReport({ client })).rejects.toThrow(
+      'Shopify rejected the inventory report because query cost exceeded its single-query limit. Retry with safer pagination; if it continues, reduce page size or contact support with issue #56.',
+    );
+    await expect(generateInventoryReport({ client })).rejects.not.toThrow('1598');
+    await expect(generateInventoryReport({ client })).rejects.not.toThrow('shpat_');
   });
 
   it('fails safely with GID-only product context instead of silently truncating products with more than 100 variants', async () => {
@@ -147,36 +199,46 @@ describe('inventory report service', () => {
     };
 
     await expect(generateInventoryReport({ client })).rejects.toThrow(
-      'Shopify Admin GraphQL variants connection was truncated for product gid://shopify/Product/1001. v0.1 inventory reports support at most 100 variants per product.',
+      'Shopify Admin GraphQL variants connection was truncated for product gid://shopify/Product/1001. v0.1 inventory reports support at most 25 variants per product.',
     );
     await expect(generateInventoryReport({ client })).rejects.not.toThrow('Sensitive Shirt');
   });
 
-  it('fails safely with GID-only product and variant context instead of silently truncating more than 50 inventory levels', async () => {
+  it('paginates inventory levels separately so variants with more than 10 locations are reported', async () => {
+    const calls: { readonly inventoryItemId: string; readonly after: string | null; readonly first: number }[] = [];
     const client: InventoryReportGraphqlClient = {
-      query: () => Promise.resolve({
-        data: {
-          products: {
-            edges: [{
-              cursor: 'cursor-1',
-              node: inventoryProductNode({
-                title: 'Sensitive Shirt \u0000 Drop',
-                inventoryLevels: {
-                  edges: [{ node: { location: { name: 'Main Warehouse' }, quantities: [{ name: 'available', quantity: 3 }] } }],
-                  pageInfo: { hasNextPage: true, endCursor: 'level-cursor-1' },
-                },
-              }),
-            }],
-            pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
-          },
-        },
-      }),
+      query: (query, variables) => {
+        if (query === INVENTORY_REPORT_QUERY) {
+          return Promise.resolve({
+            data: {
+              products: {
+                edges: [{ cursor: 'cursor-1', node: inventoryProductNode({ title: 'Sensitive Shirt \u0000 Drop' }) }],
+                pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+              },
+            },
+          });
+        }
+
+        if (!('inventoryItemId' in variables)) {
+          throw new Error('expected inventory item variables');
+        }
+        calls.push({ inventoryItemId: variables.inventoryItemId, after: variables.after, first: variables.first });
+        return Promise.resolve(variables.after === null
+          ? inventoryLevelsResponse([{ node: { location: { name: 'Location 1' }, quantities: [{ name: 'available', quantity: 3 }] } }], { hasNextPage: true, endCursor: 'level-cursor-1' })
+          : inventoryLevelsResponse([{ node: { location: { name: 'Location 11' }, quantities: [{ name: 'available', quantity: 11 }] } }], { hasNextPage: false, endCursor: 'level-cursor-2' }));
+      },
     };
 
-    await expect(generateInventoryReport({ client })).rejects.toThrow(
-      'Shopify Admin GraphQL inventory levels connection was truncated for product gid://shopify/Product/1001, variant gid://shopify/ProductVariant/2001, inventory item gid://shopify/InventoryItem/3001. v0.1 inventory reports support at most 50 inventory levels per variant.',
-    );
-    await expect(generateInventoryReport({ client })).rejects.not.toThrow('Sensitive Shirt');
+    await expect(generateInventoryReport({ client })).resolves.toEqual(expect.objectContaining({
+      rows: [
+        expect.objectContaining({ locationName: 'Location 1', available: 3 }),
+        expect.objectContaining({ locationName: 'Location 11', available: 11 }),
+      ],
+    }));
+    expect(calls).toEqual([
+      { inventoryItemId: 'gid://shopify/InventoryItem/3001', after: null, first: 10 },
+      { inventoryItemId: 'gid://shopify/InventoryItem/3001', after: 'level-cursor-1', first: 10 },
+    ]);
   });
 
   it.each([
@@ -198,14 +260,20 @@ describe('inventory report service', () => {
 
     for (const invalidNode of invalidNodes) {
       const client: InventoryReportGraphqlClient = {
-        query: () => Promise.resolve({
-          data: {
-            products: {
-              edges: [{ cursor: 'cursor-1', node: buildNode(invalidNode) }],
-              pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
-            },
-          },
-        }),
+        query: (query) => {
+          if (query === INVENTORY_REPORT_QUERY) {
+            return Promise.resolve({
+              data: {
+                products: {
+                  edges: [{ cursor: 'cursor-1', node: _name === 'inventory level' ? inventoryProductNode() : buildNode(invalidNode) }],
+                  pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+                },
+              },
+            });
+          }
+
+          return Promise.resolve(inventoryLevelsResponse([{ node: invalidNode }]));
+        },
       };
 
       await expect(generateInventoryReport({ client })).rejects.toThrow(
@@ -216,14 +284,14 @@ describe('inventory report service', () => {
 
   it('fails safely for repeated cursors, max pages, and invalid page sizes/thresholds', async () => {
     const repeated: InventoryReportGraphqlClient = {
-      query: () => Promise.resolve({ data: { products: { edges: [{ cursor: 'cursor-1', node: inventoryProductNode() }], pageInfo: { hasNextPage: true, endCursor: 'cursor-1' } } } }),
+      query: () => Promise.resolve({ data: { products: { edges: [{ cursor: 'cursor-1', node: { ...inventoryProductNode(), variants: { edges: [], pageInfo: { hasNextPage: false } } } }], pageInfo: { hasNextPage: true, endCursor: 'cursor-1' } } } }),
     };
     await expect(generateInventoryReport({ client: repeated })).rejects.toThrow('Shopify Admin GraphQL products pagination did not advance.');
 
     const empty: InventoryReportGraphqlClient = {
       query: () => Promise.resolve({ data: { products: { edges: [], pageInfo: { hasNextPage: false } } } }),
     };
-    await expect(generateInventoryReport({ client: empty, pageSize: 0 })).rejects.toThrow('Inventory report page size must be an integer between 1 and 250.');
+    await expect(generateInventoryReport({ client: empty, pageSize: 0 })).rejects.toThrow('Inventory report page size must be an integer between 1 and 10.');
     await expect(generateInventoryReport({ client: empty, lowStockThreshold: -1 })).rejects.toThrow('Inventory report low-stock threshold must be a non-negative integer.');
 
     let page = 0;
@@ -231,22 +299,24 @@ describe('inventory report service', () => {
       query: () => {
         page += 1;
         const pageString = page.toString(10);
-        return Promise.resolve({ data: { products: { edges: [{ cursor: `cursor-${pageString}`, node: inventoryProductNode() }], pageInfo: { hasNextPage: true, endCursor: `cursor-${pageString}` } } } });
+        return Promise.resolve({ data: { products: { edges: [{ cursor: `cursor-${pageString}`, node: { ...inventoryProductNode(), variants: { edges: [], pageInfo: { hasNextPage: false } } } }], pageInfo: { hasNextPage: true, endCursor: `cursor-${pageString}` } } } });
       },
     };
     await expect(generateInventoryReport({ client: advancing, maxPages: 1 })).rejects.toThrow('Shopify Admin GraphQL products pagination exceeded the maximum page count.');
   });
 
-  it('uses read-only product variant inventory item inventory level fields', () => {
+  it('uses split read-only product variant inventory item and inventory level fields', () => {
     expect(INVENTORY_REPORT_QUERY).toContain('products(');
     expect(INVENTORY_REPORT_QUERY).toContain('inventoryItem');
-    expect(INVENTORY_REPORT_QUERY).toContain('inventoryLevels');
-    expect(INVENTORY_REPORT_QUERY).toContain('quantities(names: ["available", "on_hand", "committed"])');
+    expect(INVENTORY_REPORT_QUERY).not.toContain('inventoryLevels');
+    expect(INVENTORY_LEVELS_QUERY).toContain('inventoryLevels');
+    expect(INVENTORY_LEVELS_QUERY).toContain('quantities(names: ["available", "on_hand", "committed"])');
     expect(INVENTORY_REPORT_QUERY).toContain('pageInfo');
-    expect(INVENTORY_REPORT_QUERY).not.toMatch(/^\s+available\s*$/mu);
-    expect(INVENTORY_REPORT_QUERY).not.toMatch(/^\s+onHand\s*$/mu);
-    expect(INVENTORY_REPORT_QUERY).not.toMatch(/^\s+committed\s*$/mu);
-    expect(INVENTORY_REPORT_QUERY).not.toContain('mutation');
+    expect(INVENTORY_LEVELS_QUERY).toContain('pageInfo');
+    expect(`${INVENTORY_REPORT_QUERY}\n${INVENTORY_LEVELS_QUERY}`).not.toMatch(/^\s+available\s*$/mu);
+    expect(`${INVENTORY_REPORT_QUERY}\n${INVENTORY_LEVELS_QUERY}`).not.toMatch(/^\s+onHand\s*$/mu);
+    expect(`${INVENTORY_REPORT_QUERY}\n${INVENTORY_LEVELS_QUERY}`).not.toMatch(/^\s+committed\s*$/mu);
+    expect(`${INVENTORY_REPORT_QUERY}\n${INVENTORY_LEVELS_QUERY}`).not.toContain('mutation');
   });
 });
 
@@ -270,6 +340,26 @@ function inventoryRowBase() {
     onHand: 7,
     committed: 2,
     lowStock: true,
+  };
+}
+
+function defaultInventoryLevelEdges() {
+  return [
+    { node: { location: { name: 'Main Warehouse' }, quantities: [{ name: 'available', quantity: 3 }, { name: 'on_hand', quantity: 7 }, { name: 'committed', quantity: 4 }] } },
+    { node: { location: { name: 'Retail Store' }, available: 12, onHand: 12, committed: 0 } },
+  ];
+}
+
+function inventoryLevelsResponse(edges: readonly { readonly node: unknown }[] = defaultInventoryLevelEdges(), pageInfo: { readonly hasNextPage: boolean; readonly endCursor?: string } = { hasNextPage: false, endCursor: 'level-cursor-1' }) {
+  return {
+    data: {
+      inventoryItem: {
+        inventoryLevels: {
+          edges,
+          pageInfo,
+        },
+      },
+    },
   };
 }
 

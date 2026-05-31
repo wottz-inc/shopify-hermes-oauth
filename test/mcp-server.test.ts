@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 
 import { callTool, listTools, McpToolError, startStdioMcpServer, type McpServerDependencies } from '../src/mcp/server.js';
+import { InventoryReportError } from '../src/reports/inventory.js';
 import { ALLOWED_SHOP_METADATA } from '../src/shops/metadata.js';
 
 function createDeps(): McpServerDependencies {
@@ -224,6 +225,26 @@ describe('curated MCP server', () => {
     expect(serializedAudit).not.toContain('#1001');
     expect(serializedAudit).not.toContain('Ada Lovelace');
     expect(serializedAudit).not.toContain('ada@example.test');
+  });
+
+  it('surfaces inventory max query cost report errors as safe MCP tool failures with a remediation hint', async () => {
+    const auditEvents: unknown[] = [];
+    const deps = {
+      ...createDeps(),
+      appendAuditEvent: (event: unknown) => { auditEvents.push(event); },
+      reportInventory: () => {
+        throw new InventoryReportError('unsafe internal details shpat_never-print-me SKU-RED-S', 'MAX_COST_EXCEEDED');
+      },
+    };
+
+    await expect(callTool('shopify.report_inventory', { shop: 'alpha.myshopify.com', format: 'json' }, deps)).rejects.toThrow(
+      'Shopify rejected the inventory report because query cost exceeded its single-query limit. Retry with safer pagination; if it continues, reduce page size or contact support with issue #56.',
+    );
+
+    const serializedAudit = JSON.stringify(auditEvents);
+    expect(serializedAudit).toContain('issue #56');
+    expect(serializedAudit).not.toContain('shpat_never-print-me');
+    expect(serializedAudit).not.toContain('SKU-RED-S');
   });
 
   it('does not let MCP failure audit failures mask original allowed-tool errors', async () => {

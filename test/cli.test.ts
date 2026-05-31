@@ -2284,9 +2284,9 @@ describe('CLI report inventory', () => {
       appendAuditEvent: () => {
         throw new Error('audit sink unavailable');
       },
-      fetch: () => Promise.resolve(new Response(JSON.stringify({
-        data: { products: { edges: [{ cursor: 'cursor-1', node: cliInventoryProductNode() }], pageInfo: { hasNextPage: false, endCursor: 'cursor-1' } } },
-      }), { headers: { 'content-type': 'application/json' } })),
+      fetch: (_url, init) => Promise.resolve(new Response(JSON.stringify(readGraphqlQuery(init).includes('inventoryItem(id: $inventoryItemId)')
+        ? cliInventoryLevelsGraphqlResponse()
+        : { data: { products: { edges: [{ cursor: 'cursor-1', node: cliInventoryProductNode() }], pageInfo: { hasNextPage: false, endCursor: 'cursor-1' } } } }), { headers: { 'content-type': 'application/json' } })),
     });
     harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
       version: 1,
@@ -2294,7 +2294,7 @@ describe('CLI report inventory', () => {
         'example.myshopify.com': {
           shop: 'example.myshopify.com',
           accessToken: 'shpat_never_print_me',
-          scopes: ['read_products', 'read_inventory'],
+          scopes: ['read_products', 'read_inventory', 'read_locations'],
           storedAt: '2026-05-22T12:00:00.000Z',
           updatedAt: '2026-05-22T12:00:00.000Z',
         },
@@ -2316,14 +2316,16 @@ describe('CLI report inventory', () => {
       fetch: (_url, init) => {
         const body = typeof init?.body === 'string' ? init.body : '';
         requests.push(JSON.parse(body) as unknown);
-        return Promise.resolve(new Response(JSON.stringify({
-          data: {
-            products: {
-              edges: [{ cursor: 'cursor-1', node: cliInventoryProductNode() }],
-              pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+        return Promise.resolve(new Response(JSON.stringify(readGraphqlQuery(init).includes('inventoryItem(id: $inventoryItemId)')
+          ? cliInventoryLevelsGraphqlResponse()
+          : {
+            data: {
+              products: {
+                edges: [{ cursor: 'cursor-1', node: cliInventoryProductNode() }],
+                pageInfo: { hasNextPage: false, endCursor: 'cursor-1' },
+              },
             },
-          },
-        }), { headers: { 'content-type': 'application/json' } }));
+          }), { headers: { 'content-type': 'application/json' } }));
       },
       appendAuditEvent: (_path, event) => {
         audits.push(event);
@@ -2335,7 +2337,7 @@ describe('CLI report inventory', () => {
         'example.myshopify.com': {
           shop: 'example.myshopify.com',
           accessToken,
-          scopes: ['read_products', 'read_inventory'],
+          scopes: ['read_products', 'read_inventory', 'read_locations'],
           storedAt: '2026-05-22T12:00:00.000Z',
           updatedAt: '2026-05-22T12:00:00.000Z',
         },
@@ -2359,9 +2361,9 @@ describe('CLI report inventory', () => {
 
   it('prints json and csv inventory reports and validates threshold safely', async () => {
     const harness = createHarness({
-      fetch: () => Promise.resolve(new Response(JSON.stringify({
-        data: { products: { edges: [{ cursor: 'cursor-1', node: cliInventoryProductNode({ sku: null }) }], pageInfo: { hasNextPage: false, endCursor: 'cursor-1' } } },
-      }), { headers: { 'content-type': 'application/json' } })),
+      fetch: (_url, init) => Promise.resolve(new Response(JSON.stringify(readGraphqlQuery(init).includes('inventoryItem(id: $inventoryItemId)')
+        ? cliInventoryLevelsGraphqlResponse()
+        : { data: { products: { edges: [{ cursor: 'cursor-1', node: cliInventoryProductNode({ sku: null }) }], pageInfo: { hasNextPage: false, endCursor: 'cursor-1' } } } }), { headers: { 'content-type': 'application/json' } })),
     });
     harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
       version: 1,
@@ -2369,7 +2371,7 @@ describe('CLI report inventory', () => {
         'example.myshopify.com': {
           shop: 'example.myshopify.com',
           accessToken: 'shpat_never_print_me',
-          scopes: ['read_products', 'read_inventory'],
+          scopes: ['read_products', 'read_inventory', 'read_locations'],
           storedAt: '2026-05-22T12:00:00.000Z',
           updatedAt: '2026-05-22T12:00:00.000Z',
         },
@@ -2595,6 +2597,33 @@ function cliProductNode() {
     totalInventory: 7,
     variants: {
       edges: [{ node: { title: 'Red / S', sku: 'SKU-RED-S', inventoryQuantity: 7 } }],
+    },
+  };
+}
+
+function readGraphqlQuery(init: RequestInit | undefined): string {
+  if (typeof init?.body !== 'string') {
+    return '';
+  }
+
+  const body = JSON.parse(init.body) as { readonly query?: unknown };
+  return typeof body.query === 'string' ? body.query : '';
+}
+
+function cliInventoryLevelsGraphqlResponse() {
+  return {
+    data: {
+      inventoryItem: {
+        inventoryLevels: {
+          edges: [{
+            node: {
+              location: { name: 'Main Warehouse' },
+              quantities: [{ name: 'available', quantity: 3 }, { name: 'on_hand', quantity: 7 }, { name: 'committed', quantity: 4 }],
+            },
+          }],
+          pageInfo: { hasNextPage: false, endCursor: 'level-cursor-1' },
+        },
+      },
     },
   };
 }

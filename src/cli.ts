@@ -339,6 +339,10 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
       if (!token.scopes.includes('read_products')) {
         throw new Error(`Stored OAuth token for ${normalizedShop} is missing required scope: read_products.`);
       }
+
+      if (!token.scopes.includes('read_locations')) {
+        throw new Error(`Stored OAuth token for ${normalizedShop} is missing required scope: read_locations.`);
+      }
     }
 
     const adminClient = createShopifyAdminGraphqlClient({
@@ -1564,7 +1568,7 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
     },
     reportInventory: async ({ shop, format, lowStockThreshold }) => {
       const threshold = lowStockThreshold ?? 5;
-      const reportRuntime = await reportClientFor(shop, ['read_inventory', 'read_products']);
+      const reportRuntime = await reportClientFor(shop, ['read_inventory', 'read_products', 'read_locations']);
       const report = await generateInventoryReport({ client: reportRuntime.client, lowStockThreshold: threshold });
       return { shop: reportRuntime.shop, format, lowStockThreshold: threshold, report, formatted: formatInventoryReport(report, format) };
     },
