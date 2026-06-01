@@ -1,6 +1,6 @@
 export type CapabilityAccess = 'read' | 'write' | 'diagnostic';
 export type CapabilityRiskLevel = 'read_low' | 'read_pii' | 'read_financial' | 'write_medium' | 'write_high' | 'protected_data' | 'diagnostic_low';
-export type CapabilityDomain = 'mcp' | 'shops' | 'reports';
+export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks';
 export type CapabilityRequiredGate = 'dry_run' | 'explicit_confirmation' | 'audit_logging' | 'rollback_notes';
 
 export type McpToolName =
@@ -9,7 +9,9 @@ export type McpToolName =
   | 'shopify.verify_shop'
   | 'shopify.report_products'
   | 'shopify.report_orders'
-  | 'shopify.report_inventory';
+  | 'shopify.report_inventory'
+  | 'shopify.webhooks.list'
+  | 'shopify.webhooks.get';
 
 export interface JsonSchema {
   readonly type: 'object';
@@ -80,6 +82,23 @@ const INVENTORY_REPORT_SCHEMA: JsonSchema = {
     ...REPORT_SCHEMA.properties,
     lowStockThreshold: { type: 'integer', minimum: 0, description: 'Low-stock threshold. Defaults to 5.' },
   },
+};
+const WEBHOOK_LIST_SCHEMA: JsonSchema = {
+  ...SHOP_SCHEMA,
+  properties: {
+    ...SHOP_SCHEMA.properties,
+    first: { type: 'integer', minimum: 1, maximum: 100, description: 'Page size. Defaults to 50.' },
+    after: { type: 'string', description: 'Optional Shopify cursor for the next page.' },
+  },
+};
+const WEBHOOK_GET_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    id: { type: 'string', description: 'WebhookSubscription GID.' },
+  },
+  required: ['shop', 'id'],
+  additionalProperties: false,
 };
 
 export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
@@ -193,6 +212,42 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
         toolName: 'shopify.report_inventory',
         description: 'Generate a read-only Shopify inventory report.',
         inputSchema: INVENTORY_REPORT_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'webhooks.list.read',
+    domain: 'webhooks',
+    operationName: 'WebhookSubscriptions',
+    requiredScopes: ['read_webhooks'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Paginates webhookSubscriptions with a bounded page size and explicit cursor.',
+    cost: 'Uses a bounded curated webhookSubscriptions query; future telemetry should parse GraphQL cost extensions centrally.',
+    auditEvent: 'webhooks.list',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.webhooks.list',
+        description: 'List read-only webhook subscriptions for a Shopify shop.',
+        inputSchema: WEBHOOK_LIST_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'webhooks.get.read',
+    domain: 'webhooks',
+    operationName: 'WebhookSubscription',
+    requiredScopes: ['read_webhooks'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Single webhookSubscription lookup by GID; no nested connections.',
+    cost: 'Low-cost single webhookSubscription query.',
+    auditEvent: 'webhooks.get',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.webhooks.get',
+        description: 'Inspect one read-only webhook subscription by GID.',
+        inputSchema: WEBHOOK_GET_SCHEMA,
       },
     },
   },

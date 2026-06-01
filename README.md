@@ -31,7 +31,7 @@ If neither tunnel tool is installed, it does not start a misleading local-only O
 - Hermes-native: uses `HERMES_HOME`, `~/.hermes/.env`, `hermes mcp add`, and an optional Hermes skill.
 - Minimal human setup: automate everything except unavoidable Shopify app creation/callback approval/store install approval.
 - Read-only by default.
-- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, and `read_locations`.
+- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, and `read_locations`. Curated webhook subscription tools additionally require `read_webhooks` on stores where those tools are enabled.
 - Required Admin API Scopes are the Shopify app scopes that grant Admin API access for OAuth installs. Optional scopes are not a substitute for required Admin API scopes; optional-only app configuration can fail the callback with Shopify's `At least one scope is required` validation.
 - Use the store's canonical Admin `*.myshopify.com` domain for `/auth/start?shop=...`. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.
 - No required private infrastructure, hosted forge, hosted service, or third-party secret manager.
@@ -118,6 +118,15 @@ Local token-store writes use an owner-only lock file. The default lock-acquisiti
 ## Dependency hygiene
 
 CI runs `npm audit --audit-level=high` after `npm ci` so high, critical, or worse dependency advisories fail the build while non-actionable low/moderate advisories remain non-blocking. `npm outdated` is an informational local maintenance check for reviewers and maintainers; it is not a blocking CI gate because new package releases alone do not imply an actionable or deterministic failure.
+
+## Curated webhook subscription tools
+
+The MCP allowlist includes read-only webhook subscription tools:
+
+- `shopify.webhooks.list` — list webhook subscriptions with bounded pagination (`first` defaults to 50 and is capped at 100; `after` accepts a Shopify cursor).
+- `shopify.webhooks.get` — inspect one webhook subscription by Shopify GID.
+
+These tools require a stored token with `read_webhooks`. Create/update/delete webhook flows remain intentionally absent from the public MCP surface until they have dry-run, explicit confirmation, audit logging, and rollback notes. Webhook payload handling must validate Shopify HMACs with official Shopify helpers where practical, reject stale/replayed deliveries idempotently, redact callback URLs/secrets in logs, and handle delivery failures without leaking tokens or customer payloads.
 
 ## Nested connection limits
 

@@ -19,6 +19,7 @@ import { createOAuthHttpServer } from './server.js';
 import { createShopifyAdminGraphqlClient, redactSensitiveErrorMessage } from './shopify/admin-client.js';
 import { verifyShop, type VerifyShopResult } from './shops/verify.js';
 import { LocalJsonTokenStore, normalizeTokenStoreShopDomain, parseLocalJsonTokenStoreFile, type StoredShopToken } from './tokens/local-token-store.js';
+import { getWebhookSubscription, listWebhookSubscriptions } from './webhooks/subscriptions.js';
 
 const REQUIRED_CONFIG_KEYS = [
   'SHOPIFY_HERMES_CLIENT_ID',
@@ -1954,6 +1955,16 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
       const reportRuntime = await reportClientFor(shop, ['read_inventory', 'read_products', 'read_locations']);
       const report = await generateInventoryReport({ client: reportRuntime.client, lowStockThreshold: threshold });
       return { shop: reportRuntime.shop, format, lowStockThreshold: threshold, report, formatted: formatInventoryReport(report, format) };
+    },
+    listWebhookSubscriptions: async ({ shop, first, after }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_webhooks']);
+      const report = await listWebhookSubscriptions({ client: reportRuntime.client, first, after });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    getWebhookSubscription: async ({ shop, id }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_webhooks']);
+      const report = await getWebhookSubscription({ client: reportRuntime.client, id });
+      return { shop: reportRuntime.shop, ...report };
     },
   };
 }

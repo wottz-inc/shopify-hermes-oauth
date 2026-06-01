@@ -27,6 +27,8 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'reports.products.read',
       'reports.orders.read',
       'reports.inventory.read',
+      'webhooks.list.read',
+      'webhooks.get.read',
     ]);
 
     expect(expectCapability('shops.verify.read')).toMatchObject({
@@ -65,6 +67,29 @@ describe('Admin Graph capability registry and tool policy model', () => {
     });
     expect(inventoryReport.pagination).toContain('inventory levels');
     expect(inventoryReport.cost).toContain('MAX_COST_EXCEEDED');
+
+    const webhookList = expectCapability('webhooks.list.read');
+    expect(webhookList).toMatchObject({
+      domain: 'webhooks',
+      operationName: 'WebhookSubscriptions',
+      requiredScopes: ['read_webhooks'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'webhooks.list',
+      surfaces: { mcp: { toolName: 'shopify.webhooks.list' } },
+    });
+    expect(webhookList.pagination).toContain('bounded page size');
+    expect(webhookList.cost).toContain('bounded');
+
+    expect(expectCapability('webhooks.get.read')).toMatchObject({
+      domain: 'webhooks',
+      operationName: 'WebhookSubscription',
+      requiredScopes: ['read_webhooks'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'webhooks.get',
+      surfaces: { mcp: { toolName: 'shopify.webhooks.get' } },
+    });
   });
 
   it('keeps MCP tool registration backed by the registry allowlist', () => {
