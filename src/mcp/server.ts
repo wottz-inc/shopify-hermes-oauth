@@ -3,6 +3,7 @@ import { stdin as processStdin, stdout as processStdout } from 'node:process';
 import { type Readable, type Writable } from 'node:stream';
 
 import { type AuditEventInput } from '../audit.js';
+import { CAPABILITY_MCP_TOOL_DEFINITIONS, type McpToolDefinition } from '../capabilities.js';
 import { InventoryReportError, INVENTORY_MAX_COST_REMEDIATION_MESSAGE } from '../reports/inventory.js';
 import { type ProductsReportFormat } from '../reports/products.js';
 import { type VerifyShopResult } from '../shops/verify.js';
@@ -11,26 +12,7 @@ import { redactSensitiveText } from '../shopify/admin-client.js';
 import { type StoredShopToken, type TokenStore } from '../tokens/local-token-store.js';
 import { isJsonPlainRecord as isRecord } from '../util/json.js';
 
-export type McpToolName =
-  | 'shopify.health'
-  | 'shopify.list_shops'
-  | 'shopify.verify_shop'
-  | 'shopify.report_products'
-  | 'shopify.report_orders'
-  | 'shopify.report_inventory';
-
-export interface McpToolDefinition {
-  readonly name: McpToolName;
-  readonly description: string;
-  readonly inputSchema: JsonSchema;
-}
-
-export interface JsonSchema {
-  readonly type: 'object';
-  readonly properties: Record<string, unknown>;
-  readonly required?: readonly string[];
-  readonly additionalProperties: boolean;
-}
+export type { JsonSchema, McpToolDefinition, McpToolName } from '../capabilities.js';
 
 export interface ReportToolArgs {
   readonly shop: string;
@@ -97,52 +79,7 @@ export class McpToolError extends Error {
   }
 }
 
-const TOOL_DEFINITIONS: readonly McpToolDefinition[] = [
-  {
-    name: 'shopify.health',
-    description: 'Return lightweight MCP process health and memory diagnostics without secrets.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-  },
-  {
-    name: 'shopify.list_shops',
-    description: 'List installed Shopify shops with non-secret metadata only.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-  },
-  {
-    name: 'shopify.verify_shop',
-    description: 'Verify a stored Shopify shop token and return safe shop metadata.',
-    inputSchema: shopSchema(),
-  },
-  {
-    name: 'shopify.report_products',
-    description: 'Generate a read-only Shopify products report.',
-    inputSchema: reportSchema(),
-  },
-  {
-    name: 'shopify.report_orders',
-    description: 'Generate a read-only Shopify orders report.',
-    inputSchema: {
-      ...reportSchema(),
-      properties: {
-        ...reportSchema().properties,
-        since: { type: 'string', description: 'Relative window such as 30d.' },
-        from: { type: 'string', description: 'Inclusive YYYY-MM-DD start date.' },
-        to: { type: 'string', description: 'Inclusive YYYY-MM-DD end date.' },
-      },
-    },
-  },
-  {
-    name: 'shopify.report_inventory',
-    description: 'Generate a read-only Shopify inventory report.',
-    inputSchema: {
-      ...reportSchema(),
-      properties: {
-        ...reportSchema().properties,
-        lowStockThreshold: { type: 'integer', minimum: 0, description: 'Low-stock threshold. Defaults to 5.' },
-      },
-    },
-  },
-];
+const TOOL_DEFINITIONS: readonly McpToolDefinition[] = CAPABILITY_MCP_TOOL_DEFINITIONS;
 
 const ALLOWED_TOOL_NAMES = new Set<string>(TOOL_DEFINITIONS.map((tool) => tool.name));
 const MCP_SUMMARY_MAX_KEYS = 5;
@@ -540,27 +477,6 @@ function readOptionalIntegerProperty(args: unknown, key: string): Record<string,
     throw new McpToolError(`Invalid argument: ${key}.`);
   }
   return { [key]: args[key] as number };
-}
-
-function shopSchema(): JsonSchema {
-  return {
-    type: 'object',
-    properties: { shop: { type: 'string', description: 'Shopify myshopify.com domain.' } },
-    required: ['shop'],
-    additionalProperties: false,
-  };
-}
-
-function reportSchema(): JsonSchema {
-  return {
-    type: 'object',
-    properties: {
-      shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
-      format: { type: 'string', enum: ['markdown', 'json', 'csv'], default: 'markdown' },
-    },
-    required: ['shop'],
-    additionalProperties: false,
-  };
 }
 
 function jsonRpcError(id: string | number | null, code: number, message: string): unknown {
