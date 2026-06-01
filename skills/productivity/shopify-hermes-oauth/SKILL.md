@@ -14,17 +14,17 @@ metadata:
 
 Use this for Shopify OAuth app installs, multi-store access, reports, MCP, or safer long-running workflows.
 
-Prefer the direct-token `shopify` skill for one-off custom Admin GraphQL or curl work where the user already has a direct-token workflow. For durable access, multiple stores, scheduled reports, or avoiding pasted per-store tokens, use this OAuth connector.
+Prefer the direct-token `shopify` skill for one-off custom Admin GraphQL/curl. For durable access, multiple stores, scheduled reports, or avoiding pasted per-store tokens, use this OAuth connector.
 
 ## Safety rules
 
 - Do not ask users to paste Shopify access tokens into chat.
 - Do not ask users to paste Shopify client secrets into chat.
 - Do not print OAuth secrets, access tokens, or token stores.
-- Keep operations read-only unless the user explicitly requests otherwise through a safe command or MCP tool.
+- Keep operations read-only unless requested through a safe command or MCP tool.
 - Default OAuth installs should request only the v0.1 least-privilege Required Admin API Scopes: `read_products`, `read_orders`, `read_inventory`, and `read_locations`; Optional Shopify scopes alone are insufficient.
 - Verify the target shop before reports or MCP calls.
-- Use the store's canonical Admin `*.myshopify.com` domain; do not guess store domains from brand names. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.
+- Use the canonical Admin `*.myshopify.com` domain; do not guess store domains from brand names. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.
 
 ## Setup and health checks
 
@@ -34,7 +34,7 @@ For chat-first live onboarding, start with the non-interactive guided checklist:
 shopify-hermes-oauth onboard --shop <shop>.myshopify.com --app-name <app-name>
 ```
 
-Output has `Agent can do:` and `Human must do in Shopify:` sections: current state, dashboard URLs, install URL, credential handoff, MCP install, and verification without printing secrets or token-store contents.
+Output has `Agent can do:` and `Human must do in Shopify:` sections: state, dashboard URLs, install URL, credential handoff, MCP install, and verification without secrets or token-store contents.
 
 Run local commands via the terminal:
 
@@ -46,11 +46,11 @@ shopify-hermes-oauth hermes install
 
 `init` writes missing `.env` keys from current environment values or safe placeholders without printing secrets; it is not an interactive prompt. `doctor` checks local config. `hermes install` registers the MCP server, equivalent to `mcp serve`.
 
-For non-Bitwarden chat-first credential setup, use `shopify-hermes-oauth credentials set`: the agent sends the exact command, the user runs it locally or over SSH/Termius, then replies `done` without sharing secrets. The prompt hides the client secret while typing and updates only `SHOPIFY_HERMES_CLIENT_ID` and `SHOPIFY_HERMES_CLIENT_SECRET` in `$HERMES_HOME/.env`.
+For non-Bitwarden setup, use `shopify-hermes-oauth credentials set`: the agent sends the exact command, the user runs it locally or over SSH/Termius, then replies `done` without sharing secrets. The prompt hides the client secret while typing and updates only `SHOPIFY_HERMES_CLIENT_ID` and `SHOPIFY_HERMES_CLIENT_SECRET` in `$HERMES_HOME/.env`.
 
-For VPS/chat-first use, recommend Hermes Bitwarden Secrets Manager instead of secrets in chat. Store `SHOPIFY_HERMES_CLIENT_ID`, `SHOPIFY_HERMES_CLIENT_SECRET`, and `SHOPIFY_HERMES_APP_URL` as Bitwarden project variables (`BWS_PROJECT_ID`); include `--server-url <self-hosted-url>` for a self-hosted endpoint. Check `hermes secrets bitwarden status` and `hermes secrets bitwarden sync`, then run `shopify-hermes-oauth doctor`. Do not write secrets back to `.env`.
+For VPS/chat-first use, recommend Hermes Bitwarden Secrets Manager instead of secrets in chat. Store `SHOPIFY_HERMES_CLIENT_ID`, `SHOPIFY_HERMES_CLIENT_SECRET`, and `SHOPIFY_HERMES_APP_URL` as Bitwarden variables (`BWS_PROJECT_ID`); include `--server-url <self-hosted-url>` for self-hosting. Check `hermes secrets bitwarden status` and `hermes secrets bitwarden sync`, then run `shopify-hermes-oauth doctor`. Do not write secrets back to `.env`.
 
-For source installs, prefer `npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz` over `npm link`. Hermes profile-local npm bin directories such as `$HERMES_HOME/node/bin` or `~/.hermes/node/bin` may be visible to Hermes but not to an ordinary SSH shell; use `export PATH="$HERMES_HOME/node/bin:$PATH"`. If `shopify-hermes-oauth doctor` prints `Connector CLI: installed but not on PATH`, use its PATH export/wrapper.
+For source installs, prefer `npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz` over `npm link`. Hermes profile-local npm bin directories such as `$HERMES_HOME/node/bin` or `~/.hermes/node/bin` may be visible to Hermes but not to an ordinary SSH shell; use `export PATH="$HERMES_HOME/node/bin:$PATH"`. If `shopify-hermes-oauth doctor` prints `Connector CLI: installed but not on PATH`, use its PATH fix.
 
 For OAuth callback setup during development, start a public HTTPS tunnel and local callback server:
 
@@ -64,7 +64,7 @@ If providing your own tunnel, run the callback server explicitly:
 shopify-hermes-oauth serve --host 127.0.0.1 --port 3456 --app-url <public-https-url>
 ```
 
-Configure the Shopify app with the public Application URL and `<public-https-url>/auth/callback`. For staging/production, use App Automation Token CI/CD (`SHOPIFY_APP_AUTOMATION_TOKEN`); see `docs/shopify-app-automation-token-ci-cd.md`. To approve an install, open `/auth/start?shop=<shop>.myshopify.com` while the callback server is running.
+Configure the Shopify app with the public Application URL and `<public-https-url>/auth/callback`. For staging/production, use App Automation Token CI/CD (`SHOPIFY_APP_AUTOMATION_TOKEN`); see `docs/shopify-app-automation-token-ci-cd.md`. To install, open `/auth/start?shop=<shop>.myshopify.com` while the callback server is running.
 
 ## Shop verification
 
@@ -101,13 +101,16 @@ If a report hits limits, narrow the report scope or use a custom paginated Shopi
 
 ## MCP tools
 
-After `shopify-hermes-oauth hermes install`, use the MCP server for agent workflows. Expected read-oriented tools include:
+After `shopify-hermes-oauth hermes install`, use these read-oriented MCP tools:
 
+- `shopify.health`
 - `shopify.list_shops`
 - `shopify.verify_shop`
 - `shopify.report_products`
 - `shopify.report_orders`
 - `shopify.report_inventory`
+
+`shopify.health` returns lightweight memory diagnostics for reconnect/OOM triage without token-store contents. `mcp serve` emits start/stop lifecycle JSON to stderr, keeping JSON-RPC stdout clean.
 
 If MCP is unavailable, fall back to matching CLI commands and include output without secrets.
 

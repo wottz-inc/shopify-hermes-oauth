@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { resolveShopifyHermesPaths } from './hermes-home.js';
 import { exchangeShopifyOAuthToken } from './internal/shopify-oauth-token-exchange.js';
-import { startStdioMcpServer, type McpServerDependencies } from './mcp/server.js';
+import { startStdioMcpServer, type McpLifecycleEvent, type McpServerDependencies } from './mcp/server.js';
 import { InMemoryOAuthStateStore } from './oauth/state-store.js';
 import { formatInventoryReport, generateInventoryReport, InventoryReportError } from './reports/inventory.js';
 import { formatOrdersReport, generateOrdersReport, parseOrdersReportWindow, type OrdersReportWindowInput } from './reports/orders.js';
@@ -480,12 +480,20 @@ async function runMcp(args: readonly string[], context: CliContext): Promise<num
   }
 
   try {
-    await startStdioMcpServer(await createMcpServerDependencies(context));
+    await startStdioMcpServer(await createMcpServerDependencies(context), {
+      lifecycleLogger: (event) => {
+        logMcpLifecycleEvent(context, event);
+      },
+    });
     return 0;
   } catch (error) {
     context.stderr(error instanceof Error ? redactSensitiveErrorMessage(error.message) : 'MCP server failed.');
     return 1;
   }
+}
+
+function logMcpLifecycleEvent(context: CliContext, event: McpLifecycleEvent): void {
+  context.stderr(JSON.stringify(event));
 }
 
 const DEV_HOST = '127.0.0.1';
@@ -1256,11 +1264,14 @@ function localHermesSkillContent(): string {
     "",
     "After `shopify-hermes-oauth hermes install`, use the MCP server for agent workflows. Expected read-oriented tools include:",
     "",
+    "- `shopify.health`",
     "- `shopify.list_shops`",
     "- `shopify.verify_shop`",
     "- `shopify.report_products`",
     "- `shopify.report_orders`",
     "- `shopify.report_inventory`",
+    "",
+    "`shopify.health` returns lightweight process memory diagnostics for reconnect/OOM triage without token-store contents. `mcp serve` also emits start/stop lifecycle JSON to stderr, keeping JSON-RPC stdout clean.",
     "",
     "If MCP is unavailable, fall back to matching CLI commands and include output without secrets.",
     "",

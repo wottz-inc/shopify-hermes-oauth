@@ -1912,6 +1912,7 @@ describe('CLI hermes install', () => {
     expect(skill).toContain('Connector CLI: installed but not on PATH');
     expect(skill).toContain('shopify-hermes-oauth dev --tunnel');
     expect(skill).toContain('shops verify');
+    expect(skill).toContain('shopify.health');
     expect(skill).toContain('shopify.list_shops');
     expect(skill).toContain('shopify.verify_shop');
     expect(skill).toContain('shopify.report_products');
