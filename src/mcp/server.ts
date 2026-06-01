@@ -12,6 +12,7 @@ import { type StoredShopToken, type TokenStore } from '../tokens/local-token-sto
 import { isJsonPlainRecord as isRecord } from '../util/json.js';
 
 export type McpToolName =
+  | 'shopify.health'
   | 'shopify.list_shops'
   | 'shopify.verify_shop'
   | 'shopify.report_products'
@@ -59,6 +60,36 @@ export interface McpShopSummary {
   readonly metadata?: AllowedShopMetadata;
 }
 
+export interface McpMemoryDiagnostics {
+  readonly rssBytes: number;
+  readonly heapTotalBytes: number;
+  readonly heapUsedBytes: number;
+  readonly externalBytes: number;
+  readonly arrayBuffersBytes: number;
+}
+
+export interface McpHealthResult {
+  readonly service: 'shopify-hermes-oauth';
+  readonly transport: 'stdio';
+  readonly status: 'ok';
+  readonly process: {
+    readonly pid: number;
+    readonly uptimeSeconds: number;
+    readonly memory: McpMemoryDiagnostics;
+  };
+}
+
+export interface McpLifecycleEvent {
+  readonly event: 'mcp.stdio.start' | 'mcp.stdio.stop';
+  readonly service: 'shopify-hermes-oauth';
+  readonly transport: 'stdio';
+  readonly pid: number;
+  readonly uptimeSeconds: number;
+  readonly memory: McpMemoryDiagnostics;
+  readonly reason?: 'input-ended';
+  readonly lifetimeMs?: number;
+}
+
 export class McpToolError extends Error {
   public constructor(message = 'Tool is not allowed.') {
     super(message);
@@ -67,6 +98,11 @@ export class McpToolError extends Error {
 }
 
 const TOOL_DEFINITIONS: readonly McpToolDefinition[] = [
+  {
+    name: 'shopify.health',
+    description: 'Return lightweight MCP process health and memory diagnostics without secrets.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
   {
     name: 'shopify.list_shops',
     description: 'List installed Shopify shops with non-secret metadata only.',
@@ -134,6 +170,10 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
   try {
     let result: unknown;
     switch (name) {
+      case 'shopify.health':
+        validateExactArgs(args, []);
+        result = readMcpHealth();
+        break;
       case 'shopify.list_shops':
         validateExactArgs(args, []);
         result = await callDependency(() => listShops(deps.tokenStore));
@@ -209,6 +249,54 @@ function buildMcpAuditMetadata(name: string, args: unknown, reason?: string): Re
   };
 }
 
+function readMcpHealth(): McpHealthResult {
+  return {
+    service: 'shopify-hermes-oauth',
+    transport: 'stdio',
+    status: 'ok',
+    process: {
+      pid: process.pid,
+      uptimeSeconds: Math.round(process.uptime()),
+      memory: readMcpMemoryDiagnostics(),
+    },
+  };
+}
+
+function readMcpMemoryDiagnostics(): McpMemoryDiagnostics {
+  const memory = process.memoryUsage();
+  return {
+    rssBytes: memory.rss,
+    heapTotalBytes: memory.heapTotal,
+    heapUsedBytes: memory.heapUsed,
+    externalBytes: memory.external,
+    arrayBuffersBytes: memory.arrayBuffers,
+  };
+}
+
+function logMcpLifecycle(
+  logger: ((event: McpLifecycleEvent) => void) | undefined,
+  event: McpLifecycleEvent['event'],
+  details: Pick<McpLifecycleEvent, 'lifetimeMs' | 'reason'> = {},
+): void {
+  if (logger === undefined) {
+    return;
+  }
+
+  try {
+    logger({
+      event,
+      service: 'shopify-hermes-oauth',
+      transport: 'stdio',
+      pid: process.pid,
+      uptimeSeconds: Math.round(process.uptime()),
+      memory: readMcpMemoryDiagnostics(),
+      ...details,
+    });
+  } catch {
+    // Lifecycle diagnostics must never affect JSON-RPC serving or shutdown.
+  }
+}
+
 function isReportToolName(name: string): boolean {
   return name === 'shopify.report_products' || name === 'shopify.report_orders' || name === 'shopify.report_inventory';
 }
@@ -248,21 +336,28 @@ function sanitizeMcpErrorMessage(value: string): string {
 
 export async function startStdioMcpServer(
   deps: McpServerDependencies,
-  streams: { readonly input?: Readable; readonly output?: Writable } = {},
+  streams: { readonly input?: Readable; readonly output?: Writable; readonly lifecycleLogger?: (event: McpLifecycleEvent) => void } = {},
 ): Promise<void> {
   const input = streams.input ?? processStdin;
   const output = streams.output ?? processStdout;
   const lines = createInterface({ input, crlfDelay: Infinity });
+  const startedAt = Date.now();
+  logMcpLifecycle(streams.lifecycleLogger, 'mcp.stdio.start');
 
-  for await (const line of lines) {
-    if (line.trim().length === 0) {
-      continue;
-    }
+  try {
+    for await (const line of lines) {
+      if (line.trim().length === 0) {
+        continue;
+      }
 
-    const response = await handleJsonRpcMessage(line, deps);
-    if (response !== undefined) {
-      output.write(`${JSON.stringify(response)}\n`);
+      const response = await handleJsonRpcMessage(line, deps);
+      if (response !== undefined) {
+        output.write(`${JSON.stringify(response)}\n`);
+      }
     }
+  } finally {
+    lines.close();
+    logMcpLifecycle(streams.lifecycleLogger, 'mcp.stdio.stop', { lifetimeMs: Date.now() - startedAt, reason: 'input-ended' });
   }
 }
 

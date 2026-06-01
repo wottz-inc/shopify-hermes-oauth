@@ -2,7 +2,7 @@ import { PassThrough } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
-import { callTool, listTools, McpToolError, startStdioMcpServer, type McpServerDependencies } from '../src/mcp/server.js';
+import { callTool, listTools, McpToolError, startStdioMcpServer, type McpHealthResult, type McpLifecycleEvent, type McpServerDependencies } from '../src/mcp/server.js';
 import { InventoryReportError } from '../src/reports/inventory.js';
 import { ALLOWED_SHOP_METADATA } from '../src/shops/metadata.js';
 
@@ -58,6 +58,7 @@ function createDeps(): McpServerDependencies {
 describe('curated MCP server', () => {
   it('lists the exact curated read-only Shopify tool allowlist', () => {
     expect(listTools().map((tool) => tool.name)).toEqual([
+      'shopify.health',
       'shopify.list_shops',
       'shopify.verify_shop',
       'shopify.report_products',
@@ -68,6 +69,19 @@ describe('curated MCP server', () => {
 
   it('dispatches allowed tools to service dependencies with structured token-free outputs', async () => {
     const deps = createDeps();
+
+    const health = await callTool('shopify.health', {}, deps) as McpHealthResult;
+    expect(health).toMatchObject({
+      service: 'shopify-hermes-oauth',
+      transport: 'stdio',
+      status: 'ok',
+    });
+    expect(typeof health.process.pid).toBe('number');
+    expect(typeof health.process.uptimeSeconds).toBe('number');
+    expect(typeof health.process.memory.rssBytes).toBe('number');
+    expect(typeof health.process.memory.heapUsedBytes).toBe('number');
+    expect(typeof health.process.memory.heapTotalBytes).toBe('number');
+    expect(typeof health.process.memory.externalBytes).toBe('number');
 
     await expect(callTool('shopify.verify_shop', { shop: 'alpha.myshopify.com' }, deps)).resolves.toEqual({
       shop: 'alpha.myshopify.com',
@@ -128,6 +142,7 @@ describe('curated MCP server', () => {
     const auditEvents: unknown[] = [];
     const deps = { ...createDeps(), appendAuditEvent: (event: unknown) => { auditEvents.push(event); } };
 
+    await expect(callTool('shopify.health', {}, deps)).resolves.toMatchObject({ status: 'ok' });
     await expect(callTool('shopify.list_shops', {}, deps)).resolves.toMatchObject({ shops: [{ shop: 'alpha.myshopify.com' }] });
     await expect(callTool('shopify.verify_shop', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com' });
     await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', format: 'json' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', format: 'json' });
@@ -138,6 +153,11 @@ describe('curated MCP server', () => {
     });
 
     expect(auditEvents).toEqual([
+      {
+        action: 'mcp.tool',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.health' },
+      },
       {
         action: 'mcp.tool',
         result: 'success',
@@ -530,6 +550,63 @@ describe('curated MCP server', () => {
     expect(text).not.toContain('authorization');
     expect(JSON.stringify(lines[3])).not.toContain('shpat_never-print-me');
     expect(JSON.stringify(lines[3])).not.toContain('metadata-token-must-not-leak');
+  });
+
+  it('emits lifecycle diagnostics to the injected logger without polluting JSON-RPC stdout', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const lines: unknown[] = [];
+    const lifecycleEvents: unknown[] = [];
+    output.setEncoding('utf8');
+    output.on('data', (chunk: string) => {
+      for (const line of chunk.split('\n').filter((value) => value.length > 0)) {
+        lines.push(JSON.parse(line) as unknown);
+      }
+    });
+
+    const server = startStdioMcpServer(createDeps(), { input, output, lifecycleLogger: (event) => lifecycleEvents.push(event) });
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'shopify.health', arguments: {} } })}\n`);
+    input.end();
+    await server;
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ jsonrpc: '2.0', id: 1, result: { structuredContent: { status: 'ok' } } });
+    expect(lifecycleEvents).toHaveLength(2);
+    const startEvent: McpLifecycleEvent = lifecycleEvents[0] as McpLifecycleEvent;
+    const stopEvent: McpLifecycleEvent = lifecycleEvents[1] as McpLifecycleEvent;
+    expect(startEvent.event).toBe('mcp.stdio.start');
+    expect(typeof startEvent.pid).toBe('number');
+    expect(typeof startEvent.memory.rssBytes).toBe('number');
+    expect(stopEvent.event).toBe('mcp.stdio.stop');
+    expect(typeof stopEvent.pid).toBe('number');
+    expect(typeof stopEvent.lifetimeMs).toBe('number');
+    expect(stopEvent.reason).toBe('input-ended');
+    expect(typeof stopEvent.memory.rssBytes).toBe('number');
+    expect(JSON.stringify(lifecycleEvents)).not.toContain('shpat_never-print-me');
+  });
+
+  it('does not accumulate stream listeners across repeated stdio start/stop churn', async () => {
+    const lifecycleEvents: unknown[] = [];
+
+    for (let index = 0; index < 25; index += 1) {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const baselineInputListeners = input.eventNames().reduce((count, eventName) => count + input.listenerCount(eventName), 0);
+      const baselineOutputListeners = output.eventNames().reduce((count, eventName) => count + output.listenerCount(eventName), 0);
+      const server = startStdioMcpServer(createDeps(), { input, output, lifecycleLogger: (event) => lifecycleEvents.push(event) });
+      input.write(`${JSON.stringify({ jsonrpc: '2.0', id: index, method: 'tools/call', params: { name: 'shopify.health', arguments: {} } })}\n`);
+      input.end();
+      await server;
+
+      const finalInputListeners = input.eventNames().reduce((count, eventName) => count + input.listenerCount(eventName), 0);
+      const finalOutputListeners = output.eventNames().reduce((count, eventName) => count + output.listenerCount(eventName), 0);
+      expect(finalInputListeners).toBeLessThanOrEqual(baselineInputListeners + 1);
+      expect(finalOutputListeners).toBeLessThanOrEqual(baselineOutputListeners + 1);
+    }
+
+    expect(lifecycleEvents).toHaveLength(50);
+    expect(lifecycleEvents.filter((event) => (event as { event?: string }).event === 'mcp.stdio.start')).toHaveLength(25);
+    expect(lifecycleEvents.filter((event) => (event as { event?: string }).event === 'mcp.stdio.stop')).toHaveLength(25);
   });
 
   it('omits deeply nested token-like dependency keys from tools/call structured content and text', async () => {
