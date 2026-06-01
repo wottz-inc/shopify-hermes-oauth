@@ -23,6 +23,17 @@ export interface ReportToolArgs {
   readonly lowStockThreshold?: number;
 }
 
+export interface WebhookListToolArgs {
+  readonly shop: string;
+  readonly first?: number;
+  readonly after?: string;
+}
+
+export interface WebhookGetToolArgs {
+  readonly shop: string;
+  readonly id: string;
+}
+
 export type McpToolOutput = Record<string, unknown>;
 
 export interface McpServerDependencies {
@@ -31,6 +42,8 @@ export interface McpServerDependencies {
   readonly reportProducts: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly reportOrders: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly reportInventory: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listWebhookSubscriptions: (args: WebhookListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getWebhookSubscription: (args: WebhookGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly appendAuditEvent?: (event: AuditEventInput) => Promise<void> | void;
 }
 
@@ -137,6 +150,18 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
         validateExactArgs(args, ['shop', 'format', 'lowStockThreshold']);
         const reportArgs = readReportArgs(args);
         result = sanitizeToolOutput(await callDependency(() => deps.reportInventory(reportArgs)));
+        break;
+      }
+      case 'shopify.webhooks.list': {
+        validateExactArgs(args, ['shop', 'first', 'after']);
+        const webhookArgs = readWebhookListArgs(args);
+        result = sanitizeToolOutput(await callDependency(() => deps.listWebhookSubscriptions(webhookArgs)));
+        break;
+      }
+      case 'shopify.webhooks.get': {
+        validateExactArgs(args, ['shop', 'id']);
+        const webhookArgs = readWebhookGetArgs(args);
+        result = sanitizeToolOutput(await callDependency(() => deps.getWebhookSubscription(webhookArgs)));
         break;
       }
       default:
@@ -439,6 +464,21 @@ function readReportArgs(args: unknown): ReportToolArgs {
     ...readOptionalStringProperty(args, 'from'),
     ...readOptionalStringProperty(args, 'to'),
     ...readOptionalIntegerProperty(args, 'lowStockThreshold'),
+  };
+}
+
+function readWebhookListArgs(args: unknown): WebhookListToolArgs {
+  return {
+    shop: readRequiredString(args, 'shop'),
+    ...readOptionalIntegerProperty(args, 'first'),
+    ...readOptionalStringProperty(args, 'after'),
+  };
+}
+
+function readWebhookGetArgs(args: unknown): WebhookGetToolArgs {
+  return {
+    shop: readRequiredString(args, 'shop'),
+    id: readRequiredString(args, 'id'),
   };
 }
 

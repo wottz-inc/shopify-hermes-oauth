@@ -52,6 +52,15 @@ function createDeps(): McpServerDependencies {
       report: { rows: [{ sku: 'SKU', available: 3 }] },
       formatted: '# inventory',
     }),
+    listWebhookSubscriptions: ({ shop }) => ({
+      shop,
+      webhooks: [{ id: 'gid://shopify/WebhookSubscription/1', topic: 'ORDERS_CREATE', endpoint: 'https://example.test/webhooks/orders' }],
+      pageInfo: { hasNextPage: false },
+    }),
+    getWebhookSubscription: ({ shop, id }) => ({
+      shop,
+      webhook: { id, topic: 'ORDERS_CREATE', endpoint: 'https://example.test/webhooks/orders', format: 'JSON' },
+    }),
   };
 }
 
@@ -64,6 +73,8 @@ describe('curated MCP server', () => {
       'shopify.report_products',
       'shopify.report_orders',
       'shopify.report_inventory',
+      'shopify.webhooks.list',
+      'shopify.webhooks.get',
     ]);
   });
 
@@ -103,6 +114,15 @@ describe('curated MCP server', () => {
       format: 'markdown',
       lowStockThreshold: 7,
       report: { rows: [{ sku: 'SKU', available: 3 }] },
+    });
+    await expect(callTool('shopify.webhooks.list', { shop: 'alpha.myshopify.com' }, deps)).resolves.toEqual({
+      shop: 'alpha.myshopify.com',
+      webhooks: [{ id: 'gid://shopify/WebhookSubscription/1', topic: 'ORDERS_CREATE', endpoint: 'https://example.test/webhooks/orders' }],
+      pageInfo: { hasNextPage: false },
+    });
+    await expect(callTool('shopify.webhooks.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/WebhookSubscription/1' }, deps)).resolves.toEqual({
+      shop: 'alpha.myshopify.com',
+      webhook: { id: 'gid://shopify/WebhookSubscription/1', topic: 'ORDERS_CREATE', endpoint: 'https://example.test/webhooks/orders', format: 'JSON' },
     });
   });
 
@@ -151,6 +171,14 @@ describe('curated MCP server', () => {
       shop: 'alpha.myshopify.com',
       lowStockThreshold: 7,
     });
+    await expect(callTool('shopify.webhooks.list', { shop: 'alpha.myshopify.com', first: 10 }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      webhooks: [{ id: 'gid://shopify/WebhookSubscription/1' }],
+    });
+    await expect(callTool('shopify.webhooks.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/WebhookSubscription/1' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      webhook: { id: 'gid://shopify/WebhookSubscription/1' },
+    });
 
     expect(auditEvents).toEqual([
       {
@@ -186,6 +214,18 @@ describe('curated MCP server', () => {
         shop: 'alpha.myshopify.com',
         result: 'success',
         metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_inventory', format: 'markdown', threshold: 7 },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.webhooks.list' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.webhooks.get' },
       },
     ]);
     expect(JSON.stringify(auditEvents)).not.toContain('SKU');
