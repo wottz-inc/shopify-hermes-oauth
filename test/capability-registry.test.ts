@@ -1,0 +1,105 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  CAPABILITY_REGISTRY,
+  getCapabilityByMcpToolName,
+  listCapabilities,
+  validateCapabilityRegistry,
+  type CapabilityDefinition,
+} from '../src/capabilities.js';
+import { listTools } from '../src/mcp/server.js';
+
+function expectCapability(id: string): CapabilityDefinition {
+  const capability = CAPABILITY_REGISTRY.find((entry) => entry.id === id);
+  expect(capability).toBeDefined();
+  if (capability === undefined) {
+    throw new Error(`Missing capability: ${id}`);
+  }
+  return capability;
+}
+
+describe('Admin Graph capability registry and tool policy model', () => {
+  it('represents the existing curated MCP tools and reports with policy metadata', () => {
+    expect(listCapabilities().map((capability) => capability.id)).toEqual([
+      'mcp.health.read',
+      'shops.list.read',
+      'shops.verify.read',
+      'reports.products.read',
+      'reports.orders.read',
+      'reports.inventory.read',
+    ]);
+
+    expect(expectCapability('shops.verify.read')).toMatchObject({
+      domain: 'shops',
+      operationName: 'ShopMetadata',
+      requiredScopes: [],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'shops.verify',
+      surfaces: {
+        cli: { command: 'shopify-hermes-oauth shops verify <shop>' },
+        mcp: { toolName: 'shopify.verify_shop' },
+      },
+    });
+
+    const productsReport = expectCapability('reports.products.read');
+    expect(productsReport).toMatchObject({
+      domain: 'reports',
+      operationName: 'ProductsReport',
+      requiredScopes: ['read_products'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'reports.products',
+      surfaces: {
+        cli: { command: 'shopify-hermes-oauth report products <shop>' },
+        mcp: { toolName: 'shopify.report_products' },
+      },
+    });
+    expect(productsReport.pagination).toContain('products');
+    expect(productsReport.cost).toContain('bounded');
+
+    const inventoryReport = expectCapability('reports.inventory.read');
+    expect(inventoryReport).toMatchObject({
+      requiredScopes: ['read_products', 'read_inventory', 'read_locations'],
+      riskLevel: 'read_low',
+    });
+    expect(inventoryReport.pagination).toContain('inventory levels');
+    expect(inventoryReport.cost).toContain('MAX_COST_EXCEEDED');
+  });
+
+  it('keeps MCP tool registration backed by the registry allowlist', () => {
+    const registeredTools = listTools().map((tool) => tool.name);
+    const registeredRegistryTools = CAPABILITY_REGISTRY.flatMap((capability) => capability.surfaces.mcp === undefined ? [] : [capability.surfaces.mcp.toolName]);
+
+    expect(registeredTools).toEqual(registeredRegistryTools);
+    for (const tool of listTools()) {
+      const capability = getCapabilityByMcpToolName(tool.name);
+      expect(capability).toBeDefined();
+      expect(capability?.surfaces.mcp?.description).toBe(tool.description);
+      expect(capability?.surfaces.mcp?.inputSchema).toEqual(tool.inputSchema);
+    }
+  });
+
+  it('fails closed for unsafe policy drift and accidental write/raw GraphQL exposure', () => {
+    expect(validateCapabilityRegistry(CAPABILITY_REGISTRY)).toEqual([]);
+    expect(JSON.stringify(CAPABILITY_REGISTRY)).not.toMatch(/raw[_-]?graphql|mutation/iu);
+
+    const unsafeWrite: CapabilityDefinition = {
+      ...expectCapability('reports.products.read'),
+      id: 'unsafe.products.write',
+      access: 'write',
+      requiredGates: [],
+      surfaces: {
+        mcp: {
+          toolName: 'shopify.products.update' as never,
+          description: 'Unsafe write tool.',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        },
+      },
+    };
+
+    expect(validateCapabilityRegistry([...CAPABILITY_REGISTRY, unsafeWrite])).toContain(
+      'unsafe.products.write exposes a write MCP tool without required gates.',
+    );
+  });
+});
