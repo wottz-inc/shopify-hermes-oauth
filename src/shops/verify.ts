@@ -1,6 +1,7 @@
 import { shopMetadataFromAdmin, summarizeShopMetadata } from './metadata.js';
 import { type AuditEventInput } from '../audit.js';
 import { redactSensitiveErrorMessage, type AdminShopMetadata, type ShopifyAdminClient } from '../shopify/admin-client.js';
+import { MissingShopifyScopesError, missingShopifyScopes } from '../shopify/scopes.js';
 import { normalizeTokenStoreShopDomain, type TokenStore } from '../tokens/local-token-store.js';
 
 export interface VerifyShopOptions {
@@ -8,6 +9,7 @@ export interface VerifyShopOptions {
   readonly tokenStore: TokenStore;
   readonly adminClient: ShopifyAdminClient;
   readonly appendAuditEvent: (event: AuditEventInput) => Promise<void> | void;
+  readonly requiredScopes?: readonly string[];
 }
 
 export interface VerifyShopResult {
@@ -34,6 +36,17 @@ export async function verifyShop(options: VerifyShopOptions): Promise<VerifyShop
       metadata: { reason: 'missing_oauth_record' },
     });
     throw new ShopVerificationError(`No stored OAuth token found for ${shop}.`);
+  }
+
+  const missingScopes = missingShopifyScopes(storedToken.scopes, options.requiredScopes ?? []);
+  if (missingScopes.length > 0) {
+    await options.appendAuditEvent({
+      action: 'shops.verify',
+      shop,
+      result: 'failure',
+      metadata: { reason: 'missing_required_scope' },
+    });
+    throw new ShopVerificationError(new MissingShopifyScopesError(shop, missingScopes).message);
   }
 
   let metadata: AdminShopMetadata;

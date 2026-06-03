@@ -974,6 +974,39 @@ describe('CLI serve', () => {
     expect(errorOutput).not.toContain('read_scope_0');
   });
 
+  it('normalizes configured OAuth scopes before starting installs', async () => {
+    let server: Server | undefined;
+    let baseUrl = '';
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://public-app.example.test',
+        SHOPIFY_HERMES_SCOPES: ' Read_Products,read_products, WRITE_ORDERS ',
+      },
+      listenServer: async (createdServer) => {
+        server = createdServer;
+        await new Promise<void>((resolve) => createdServer.listen(0, '127.0.0.1', resolve));
+        const address = createdServer.address() as AddressInfo;
+        baseUrl = `http://127.0.0.1:${address.port.toString(10)}`;
+      },
+    });
+
+    try {
+      const exitCode = await runShopifyHermesOauthCli(['serve', '--host', '127.0.0.1', '--port', '3456'], harness.deps);
+      expect(exitCode).toBe(0);
+
+      const response = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, { redirect: 'manual' });
+      const location = response.headers.get('location');
+
+      expect(location).not.toBeNull();
+      expect(new URL(location ?? '').searchParams.get('scope')).toBe('read_products,write_orders');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('prints serve usage for invalid arguments before listening', async () => {
     const harness = createHarness();
 
@@ -1289,6 +1322,40 @@ describe('CLI doctor', () => {
     expect(output).toContain('Required configuration: ok');
     expect(output).toContain('Token store: not initialized');
     expect(output).toContain('Audit log: writable');
+    expect(output).not.toContain('super-secret-value');
+  });
+
+  it('warns about granted OAuth scopes outside the configured least-privilege set', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'super-secret-value',
+        SHOPIFY_HERMES_APP_URL: 'https://app.example.test',
+        SHOPIFY_HERMES_SCOPES: 'read_products,read_orders,read_inventory,read_locations',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'shpat_never_echo_this',
+          scopes: ['read_products', 'write_orders', 'read_inventory', 'read_locations', 'read_customers'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:00:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('Scope drift warning: example.myshopify.com has granted scopes outside current configuration: write_orders,read_customers');
+    expect(output).toContain('Reinstall or re-authorize the shop to return to least privilege.');
+    expect(output).not.toContain('shpat_never_echo_this');
     expect(output).not.toContain('super-secret-value');
   });
 
@@ -2383,7 +2450,7 @@ describe('CLI shops', () => {
     expect(harness.stdout).toHaveLength(1);
     expect(output).toContain('Example\\nInjected\\u001B[31m');
     expect(output).toContain('USD\\rBAD');
-    expect(output).toContain('read_orders\\nINJECTED');
+    expect(output).toContain('read_orders\\ninjected');
     expect(output).toContain('read_customers\\u001B[31m');
     expect(output).not.toContain('\u001B');
     expect(output).not.toContain('shpat_never_print_me');
@@ -2898,7 +2965,8 @@ describe('CLI report inventory', () => {
     const errorOutput = harness.stderr.join('\n');
 
     expect(exitCode).toBe(1);
-    expect(errorOutput).toContain('Stored OAuth token for example.myshopify.com is missing required scope: read_inventory.');
+    expect(errorOutput).toContain('Stored OAuth token for example.myshopify.com is missing required Shopify Admin API scopes: read_inventory, read_locations.');
+    expect(errorOutput).toContain('Reinstall or re-authorize the shop');
     expect(errorOutput).not.toContain(accessToken);
     expect(JSON.stringify(audits)).not.toContain(accessToken);
     expect(JSON.stringify(audits)).toContain('"action":"report.inventory"');
@@ -2977,7 +3045,7 @@ describe('CLI report orders', () => {
         'example.myshopify.com': {
           shop: 'example.myshopify.com',
           accessToken,
-          scopes: ['read_orders'],
+          scopes: ['write_orders'],
           storedAt: '2026-05-22T12:00:00.000Z',
           updatedAt: '2026-05-22T12:00:00.000Z',
         },
@@ -3056,7 +3124,8 @@ describe('CLI report orders', () => {
     const output = harness.stdout.join('\n');
 
     expect(exitCode).toBe(1);
-    expect(errorOutput).toContain('Stored OAuth token for example.myshopify.com is missing required scope: read_orders.');
+    expect(errorOutput).toContain('Stored OAuth token for example.myshopify.com is missing required Shopify Admin API scope: read_orders.');
+    expect(errorOutput).toContain('Reinstall or re-authorize the shop');
     expect(errorOutput).not.toContain(accessToken);
     expect(errorOutput).not.toContain('audit sink unavailable');
     expect(output).not.toContain(accessToken);

@@ -1,4 +1,5 @@
 import { normalizeShopDomain } from '../shop-domain.js';
+import { normalizeShopifyScopes } from '../shopify/scopes.js';
 import { type LocalFileDependencies, readJsonFile, withFileLock, writeJsonAtomic } from '../storage/local-files.js';
 
 export interface TokenMetadata {
@@ -191,15 +192,21 @@ function normalizeScopes(value: unknown): readonly string[] {
     scopes = scopeValues.map((scope) => (typeof scope === 'string' ? scope.trim() : scope));
   }
 
-  if (!scopes?.every((scope): scope is string => typeof scope === 'string' && scope.length > 0)) {
+  if (!scopes?.every((scope): scope is string => typeof scope === 'string')) {
+    throw new Error('Scopes must be strings');
+  }
+
+  if (scopes.some((scope) => scope.length === 0)) {
     throw new Error('Scopes must be non-blank strings');
   }
 
-  if (scopes.length === 0) {
+  const normalizedScopes = normalizeShopifyScopes(scopes);
+
+  if (normalizedScopes.length === 0) {
     throw new Error('At least one scope is required');
   }
 
-  return [...scopes];
+  return normalizedScopes;
 }
 
 function normalizeMetadata(value: unknown): TokenMetadata | undefined {
