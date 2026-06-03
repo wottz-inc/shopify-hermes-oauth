@@ -1,6 +1,6 @@
 # Shopify CLI-assisted setup
 
-This runbook records the evaluated Shopify CLI-assisted setup path for `shopify-hermes-oauth`. Shopify CLI is optional for this connector: use it when you are already logged in and want to create/link/sync Shopify app configuration from a local TOML file, but do not require it for the core connector path.
+This runbook records the evaluated Shopify CLI-assisted setup path for `shopify-hermes-oauth`, including the Issue #87 Shopify CLI / `shopify.app.toml` boundary. Shopify CLI is optional for this connector: use it when you are already logged in and want to create/link/sync Shopify app configuration from a local TOML file, but do not require it for the core connector path. Shopify CLI remains optional and is not a runtime dependency of this connector.
 
 The core connector path remains `shopify-hermes-oauth init`, `shopify-hermes-oauth credentials set`, `shopify-hermes-oauth dev --tunnel` or `serve`, and the browser install flow.
 
@@ -122,6 +122,12 @@ https://<public-https-url>/auth/start?shop=<shop>.myshopify.com
 ```
 
 Complete the Shopify browser install approval for each target store.
+
+## Local tunnel and port boundaries
+
+`shopify-hermes-oauth dev --tunnel` starts this connector callback server and a tunnel when available. The connector's local server port and public HTTPS tunnel URL must match the `application_url` and `/auth/callback` redirect URL configured in Shopify. If you use `serve --host 127.0.0.1 --port 3456 --app-url "$PUBLIC_APP_URL"`, the local port is `3456`, while the Shopify dashboard still receives the public HTTPS URL, not the loopback URL.
+
+`shopify app dev --reset` resets Shopify CLI app-dev state/configuration prompts for a Shopify app project. It is useful only when working inside a Shopify CLI app project and intentionally resetting CLI-managed development configuration. `shopify-hermes-oauth dev --tunnel` does not run Shopify CLI, reset Shopify CLI state, or create a Shopify app project; it only runs this connector's OAuth callback server and tunnel helper.
 
 ## Manual dashboard fallback
 
