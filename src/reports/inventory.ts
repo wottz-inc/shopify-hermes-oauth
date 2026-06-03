@@ -63,7 +63,11 @@ export const INVENTORY_LEVELS_QUERY = `
 export type InventoryReportFormat = 'markdown' | 'json' | 'csv';
 
 export interface InventoryReportGraphqlClient {
-  query(query: string, variables: InventoryReportVariables): Promise<unknown>;
+  query(query: string, variables: InventoryReportVariables, options?: InventoryReportGraphqlQueryOptions): Promise<unknown>;
+}
+
+export interface InventoryReportGraphqlQueryOptions {
+  readonly operationName?: string;
 }
 
 export type InventoryReportVariables = InventoryProductsVariables | InventoryLevelsVariables;
@@ -185,7 +189,7 @@ export async function generateInventoryReport(options: InventoryReportOptions): 
   for (let page = 0; page < maxPages; page += 1) {
     let graphqlResponse: InventoryReportGraphqlResponse;
     try {
-      graphqlResponse = await options.client.query(INVENTORY_REPORT_QUERY, { first: pageSize, after }) as InventoryReportGraphqlResponse;
+      graphqlResponse = await options.client.query(INVENTORY_REPORT_QUERY, { first: pageSize, after }, { operationName: 'InventoryReportProducts' }) as InventoryReportGraphqlResponse;
     } catch (error) {
       if (isMaxCostExceededError(error)) {
         throw new InventoryReportError(INVENTORY_MAX_COST_REMEDIATION_MESSAGE, 'MAX_COST_EXCEEDED');
@@ -271,7 +275,7 @@ async function fetchInventoryLevels(client: InventoryReportGraphqlClient, invent
   for (let page = 0; page < maxPages; page += 1) {
     let graphqlResponse: InventoryLevelsGraphqlResponse;
     try {
-      graphqlResponse = await client.query(INVENTORY_LEVELS_QUERY, { inventoryItemId: inventoryItemGid, first: INVENTORY_LEVELS_PAGE_SIZE, after }) as InventoryLevelsGraphqlResponse;
+      graphqlResponse = await client.query(INVENTORY_LEVELS_QUERY, { inventoryItemId: inventoryItemGid, first: INVENTORY_LEVELS_PAGE_SIZE, after }, { operationName: 'InventoryReportInventoryLevels' }) as InventoryLevelsGraphqlResponse;
     } catch (error) {
       if (isMaxCostExceededError(error)) {
         throw new InventoryReportError(INVENTORY_MAX_COST_REMEDIATION_MESSAGE, 'MAX_COST_EXCEEDED');

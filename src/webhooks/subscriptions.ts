@@ -57,7 +57,11 @@ const DEFAULT_WEBHOOK_PAGE_SIZE = 50;
 const MAX_WEBHOOK_PAGE_SIZE = 100;
 
 export interface WebhookSubscriptionGraphqlClient {
-  query(query: string, variables: WebhookSubscriptionsVariables | WebhookSubscriptionVariables): Promise<unknown>;
+  query(query: string, variables: WebhookSubscriptionsVariables | WebhookSubscriptionVariables, options?: WebhookSubscriptionGraphqlQueryOptions): Promise<unknown>;
+}
+
+export interface WebhookSubscriptionGraphqlQueryOptions {
+  readonly operationName?: string;
 }
 
 export interface WebhookSubscriptionsVariables {
@@ -136,7 +140,7 @@ export class WebhookSubscriptionError extends Error {
 
 export async function listWebhookSubscriptions(options: ListWebhookSubscriptionsOptions): Promise<WebhookSubscriptionsReport> {
   const first = normalizePageSize(options.first);
-  const response = await options.client.query(WEBHOOK_SUBSCRIPTIONS_QUERY, { first, ...(options.after === undefined ? {} : { after: options.after }) }) as WebhookSubscriptionsResponse;
+  const response = await options.client.query(WEBHOOK_SUBSCRIPTIONS_QUERY, { first, ...(options.after === undefined ? {} : { after: options.after }) }, { operationName: 'WebhookSubscriptions' }) as WebhookSubscriptionsResponse;
   const connection = response.data?.webhookSubscriptions;
   if (connection === undefined || !isWebhookSubscriptionEdges(connection.edges) || connection.pageInfo === undefined) {
     throw new WebhookSubscriptionError('Shopify Admin GraphQL response did not include expected webhookSubscriptions connection.');
@@ -152,7 +156,7 @@ export async function getWebhookSubscription(options: GetWebhookSubscriptionOpti
   if (options.id.trim().length === 0) {
     throw new WebhookSubscriptionError('Webhook subscription id is required.');
   }
-  const response = await options.client.query(WEBHOOK_SUBSCRIPTION_QUERY, { id: options.id }) as WebhookSubscriptionResponse;
+  const response = await options.client.query(WEBHOOK_SUBSCRIPTION_QUERY, { id: options.id }, { operationName: 'WebhookSubscription' }) as WebhookSubscriptionResponse;
   if (response.data?.webhookSubscription === undefined || response.data.webhookSubscription === null) {
     throw new WebhookSubscriptionError('Webhook subscription was not found.');
   }

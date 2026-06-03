@@ -363,11 +363,12 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
     if (subcommand === 'products') {
       const report = await generateProductsReport({
         client: {
-          query: (query, variables) => adminClient.query({
+          query: (query, variables, options) => adminClient.query({
             shop: normalizedShop,
             accessToken: token.accessToken,
             query,
             variables,
+            operationName: options?.operationName,
           }),
         },
       });
@@ -385,11 +386,12 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
     if (subcommand === 'inventory') {
       const report = await generateInventoryReport({
         client: {
-          query: (query, variables) => adminClient.query({
+          query: (query, variables, options) => adminClient.query({
             shop: normalizedShop,
             accessToken: token.accessToken,
             query,
             variables,
+            operationName: options?.operationName,
           }),
         },
         lowStockThreshold,
@@ -407,11 +409,12 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
 
     const report = await generateOrdersReport({
       client: {
-        query: (query, variables) => adminClient.query({
+        query: (query, variables, options) => adminClient.query({
           shop: normalizedShop,
           accessToken: token.accessToken,
           query,
           variables,
+          operationName: options?.operationName,
         }),
       },
       window: ordersWindowInput,
@@ -1956,11 +1959,12 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
     return {
       shop,
       client: {
-        query: (query: string, variables: unknown) => adminClient.query({
+        query: (query: string, variables: unknown, options?: { readonly operationName?: string }) => adminClient.query({
           shop,
           accessToken: token.accessToken,
           query,
           variables,
+          operationName: options?.operationName,
         }),
       },
     };

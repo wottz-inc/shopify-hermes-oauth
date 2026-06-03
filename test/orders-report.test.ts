@@ -55,11 +55,16 @@ describe('orders report service', () => {
   });
 
   it('returns empty reports and formats markdown, json, and csv deterministically', async () => {
+    const operationNames: unknown[] = [];
     const client: OrdersReportGraphqlClient = {
-      query: () => Promise.resolve({ data: { orders: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } } } }),
+      query: (_query, _variables, options) => {
+        operationNames.push(options?.operationName);
+        return Promise.resolve({ data: { orders: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } } } });
+      },
     };
     const empty = await generateOrdersReport({ client, window: { from: '2026-05-01', to: '2026-05-02' } });
     expect(empty.orders).toEqual([]);
+    expect(operationNames).toEqual(['OrdersReport']);
 
     const report = { window: empty.window, orders: [orderItem()] };
     expect(formatOrdersReport(report, 'markdown')).toBe([

@@ -40,7 +40,11 @@ export const PRODUCTS_REPORT_QUERY = `
 export type ProductsReportFormat = 'markdown' | 'json' | 'csv';
 
 export interface ProductsReportGraphqlClient {
-  query(query: string, variables: ProductsReportVariables): Promise<unknown>;
+  query(query: string, variables: ProductsReportVariables, options?: ProductsReportGraphqlQueryOptions): Promise<unknown>;
+}
+
+export interface ProductsReportGraphqlQueryOptions {
+  readonly operationName?: string;
 }
 
 export interface ProductsReportVariables {
@@ -115,7 +119,7 @@ export async function generateProductsReport(options: ProductsReportOptions): Pr
   const seenCursors = new Set<string>();
 
   for (let page = 0; page < maxPages; page += 1) {
-    const graphqlResponse = await options.client.query(PRODUCTS_REPORT_QUERY, { first: pageSize, after }) as ProductsReportGraphqlResponse;
+    const graphqlResponse = await options.client.query(PRODUCTS_REPORT_QUERY, { first: pageSize, after }, { operationName: 'ProductsReport' }) as ProductsReportGraphqlResponse;
     const connection = graphqlResponse.data?.products;
 
     if (connection?.edges === undefined || connection.pageInfo === undefined) {

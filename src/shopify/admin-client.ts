@@ -1,7 +1,7 @@
 import { normalizeTokenStoreShopDomain } from '../tokens/local-token-store.js';
 import { isJsonPlainRecord } from '../util/json.js';
 
-export const SHOP_METADATA_QUERY = '{ shop { name myshopifyDomain currencyCode } }';
+export const SHOP_METADATA_QUERY = 'query ShopMetadata { shop { name myshopifyDomain currencyCode } }';
 
 export interface AdminShopMetadata {
   readonly name: string;
@@ -41,6 +41,7 @@ export interface ShopifyAdminGraphqlClientOptions {
 
 export interface AdminGraphqlCostTelemetry {
   readonly shop: string;
+  readonly operationName?: string;
   readonly requestedQueryCost?: number;
   readonly actualQueryCost?: number;
   readonly throttleStatus?: {
@@ -68,12 +69,29 @@ interface RetrySettings {
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_DELAY_MS = 250;
 const DEFAULT_MAX_RETRY_DELAY_MS = 5_000;
+const SHOPIFY_ADMIN_API_VERSION_PATTERN = /^(?:unstable|\d{4}-(?:0[1-9]|1[0-2]))$/u;
+const GRAPHQL_OPERATION_NAME_PATTERN = /^[_A-Za-z][_0-9A-Za-z]*$/u;
 
 export class ShopifyAdminGraphqlError extends Error {
   public constructor(message: string) {
     super(message);
     this.name = 'ShopifyAdminGraphqlError';
   }
+}
+
+export function normalizeShopifyAdminApiVersion(version: string): string {
+  const normalized = version.trim();
+  if (!SHOPIFY_ADMIN_API_VERSION_PATTERN.test(normalized)) {
+    throw new ShopifyAdminGraphqlError('Invalid Shopify Admin API version.');
+  }
+
+  return normalized;
+}
+
+export function buildShopifyAdminGraphqlEndpoint(shop: string, apiVersion: string): string {
+  const normalizedShop = normalizeTokenStoreShopDomain(shop);
+  const normalizedVersion = normalizeShopifyAdminApiVersion(apiVersion);
+  return `https://${normalizedShop}/admin/api/${normalizedVersion}/graphql.json`;
 }
 
 export function createShopifyAdminGraphqlClient(options: ShopifyAdminGraphqlClientOptions): ShopifyAdminClient & ShopifyAdminQueryClient {
@@ -88,6 +106,7 @@ export function createShopifyAdminGraphqlClient(options: ShopifyAdminGraphqlClie
       const graphqlResponse = await postGraphql<GraphqlResponse>(fetchImplementation, options.apiVersion, retrySettings, {
         ...input,
         query: SHOP_METADATA_QUERY,
+        operationName: 'ShopMetadata',
       });
       return parseShopMetadata(graphqlResponse);
     },
@@ -101,8 +120,9 @@ async function postGraphql<T>(
   input: AdminGraphqlQueryInput,
 ): Promise<T> {
   const shop = normalizeTokenStoreShopDomain(input.shop);
-  const url = `https://${shop}/admin/api/${encodeURIComponent(apiVersion)}/graphql.json`;
-  const context = formatOperationContext(shop);
+  const operationName = normalizeGraphqlOperationName(input.operationName);
+  const url = buildShopifyAdminGraphqlEndpoint(shop, apiVersion);
+  const context = formatOperationContext(shop, operationName);
   let lastNetworkError: unknown;
 
   for (let attempt = 0; attempt <= retrySettings.maxRetries; attempt += 1) {
@@ -115,10 +135,10 @@ async function postGraphql<T>(
           'content-type': 'application/json',
           'x-shopify-access-token': input.accessToken,
         },
-        body: JSON.stringify(input.variables === undefined ? { query: input.query, operationName: input.operationName } : {
+        body: JSON.stringify(input.variables === undefined ? { query: input.query, operationName } : {
           query: input.query,
           variables: input.variables,
-          operationName: input.operationName,
+          operationName,
         }),
       });
     } catch (error) {
@@ -154,7 +174,7 @@ async function postGraphql<T>(
       throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL HTTP ${response.status.toString(10)} (${context}): ${redactHttpBody(body, bodyText)}`);
     }
 
-    emitCostTelemetry(retrySettings.onTelemetry, shop, body);
+    emitCostTelemetry(retrySettings.onTelemetry, shop, operationName, body);
 
     if (isJsonPlainRecord(body) && body.errors !== undefined) {
       throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL returned errors (${context}): ${redactGraphqlErrors(body.errors)}`);
@@ -244,13 +264,30 @@ function resolveJitterMs(jitter: number | (() => number)): number {
   return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
 }
 
-function formatOperationContext(shop: string): string {
-  return `shop=${shop}, operation=admin_graphql`;
+function normalizeGraphqlOperationName(operationName: string | undefined): string | undefined {
+  if (operationName === undefined) {
+    return undefined;
+  }
+
+  if (!GRAPHQL_OPERATION_NAME_PATTERN.test(operationName) || isSensitiveOperationName(operationName) || redactSensitiveText(operationName) !== operationName) {
+    throw new ShopifyAdminGraphqlError('Invalid Shopify Admin GraphQL operation name.');
+  }
+
+  return operationName;
+}
+
+function isSensitiveOperationName(operationName: string): boolean {
+  return /(?:secret|token|auth|oauth|authorization|password|api[_-]?key|apikey|private[_-]?key|privatekey|cookie|session|credentials?|callback)/iu.test(operationName);
+}
+
+function formatOperationContext(shop: string, operationName: string | undefined): string {
+  return `shop=${shop}, operation=admin_graphql${operationName === undefined ? '' : `, operationName=${operationName}`}`;
 }
 
 function emitCostTelemetry(
   onTelemetry: ((telemetry: AdminGraphqlCostTelemetry) => void) | undefined,
   shop: string,
+  operationName: string | undefined,
   body: unknown,
 ): void {
   if (onTelemetry === undefined || !isJsonPlainRecord(body)) {
@@ -269,6 +306,7 @@ function emitCostTelemetry(
 
   const telemetry: AdminGraphqlCostTelemetry = {
     shop,
+    ...(operationName === undefined ? {} : { operationName }),
     ...numberField(cost, 'requestedQueryCost'),
     ...numberField(cost, 'actualQueryCost'),
     ...parseThrottleStatus(cost.throttleStatus),

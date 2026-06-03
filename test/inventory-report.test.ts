@@ -12,11 +12,11 @@ import {
 
 describe('inventory report service', () => {
   it('paginates products and maps product, variant, inventory item, multi-location quantities, and low-stock flags', async () => {
-    const calls: { readonly query: 'products' | 'levels'; readonly inventoryItemId?: string; readonly after: string | null; readonly first: number }[] = [];
+    const calls: { readonly query: 'products' | 'levels'; readonly inventoryItemId?: string; readonly after: string | null; readonly first: number; readonly operationName?: string }[] = [];
     const client: InventoryReportGraphqlClient = {
-      query: (query, variables) => {
+      query: (query, variables, options) => {
         if (query === INVENTORY_REPORT_QUERY) {
-          calls.push({ query: 'products', after: variables.after, first: variables.first });
+          calls.push({ query: 'products', after: variables.after, first: variables.first, operationName: options?.operationName });
           if (variables.after === null) {
             return Promise.resolve({
               data: {
@@ -41,7 +41,7 @@ describe('inventory report service', () => {
         if (!('inventoryItemId' in variables)) {
           throw new Error('expected inventory item variables');
         }
-        calls.push({ query: 'levels', inventoryItemId: variables.inventoryItemId, after: variables.after, first: variables.first });
+        calls.push({ query: 'levels', inventoryItemId: variables.inventoryItemId, after: variables.after, first: variables.first, operationName: options?.operationName });
         return Promise.resolve(inventoryLevelsResponse(variables.inventoryItemId === 'gid://shopify/InventoryItem/3002'
           ? [{ node: { location: { name: 'Main Warehouse' }, quantities: [{ name: 'available', quantity: 9 }] } }]
           : defaultInventoryLevelEdges()));
@@ -86,10 +86,10 @@ describe('inventory report service', () => {
       ],
     });
     expect(calls).toEqual([
-      { query: 'products', after: null, first: 10 },
-      { query: 'levels', inventoryItemId: 'gid://shopify/InventoryItem/3001', after: null, first: 10 },
-      { query: 'products', after: 'cursor-1', first: 10 },
-      { query: 'levels', inventoryItemId: 'gid://shopify/InventoryItem/3002', after: null, first: 10 },
+      { query: 'products', after: null, first: 10, operationName: 'InventoryReportProducts' },
+      { query: 'levels', inventoryItemId: 'gid://shopify/InventoryItem/3001', after: null, first: 10, operationName: 'InventoryReportInventoryLevels' },
+      { query: 'products', after: 'cursor-1', first: 10, operationName: 'InventoryReportProducts' },
+      { query: 'levels', inventoryItemId: 'gid://shopify/InventoryItem/3002', after: null, first: 10, operationName: 'InventoryReportInventoryLevels' },
     ]);
   });
 

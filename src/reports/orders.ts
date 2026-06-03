@@ -43,7 +43,11 @@ export const ORDERS_REPORT_QUERY = `
 export type OrdersReportFormat = 'markdown' | 'json' | 'csv';
 
 export interface OrdersReportGraphqlClient {
-  query(query: string, variables: OrdersReportVariables): Promise<unknown>;
+  query(query: string, variables: OrdersReportVariables, options?: OrdersReportGraphqlQueryOptions): Promise<unknown>;
+}
+
+export interface OrdersReportGraphqlQueryOptions {
+  readonly operationName?: string;
 }
 
 export interface OrdersReportVariables {
@@ -135,7 +139,7 @@ export async function generateOrdersReport(options: OrdersReportOptions): Promis
   const seenCursors = new Set<string>();
 
   for (let page = 0; page < maxPages; page += 1) {
-    const graphqlResponse = await options.client.query(ORDERS_REPORT_QUERY, { first: pageSize, after, query: window.query }) as OrdersReportGraphqlResponse;
+    const graphqlResponse = await options.client.query(ORDERS_REPORT_QUERY, { first: pageSize, after, query: window.query }, { operationName: 'OrdersReport' }) as OrdersReportGraphqlResponse;
     const connection = graphqlResponse.data?.orders;
 
     if (connection?.edges === undefined || connection.pageInfo === undefined) {
