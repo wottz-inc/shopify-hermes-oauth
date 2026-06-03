@@ -102,6 +102,7 @@ describe('Shopify Admin GraphQL client', () => {
         if (apiVersion.trim().length > 0) {
           expect(message).not.toContain(apiVersion);
         }
+        expect((error as ShopifyAdminGraphqlError).code).toBe('INVALID_API_VERSION');
       }
     },
   );
@@ -153,6 +154,7 @@ describe('Shopify Admin GraphQL client', () => {
       const message = error instanceof Error ? error.message : String(error);
       expect(message).not.toContain(leakedValue);
       expect(message).not.toContain(unsafeOperationName);
+      expect((error as ShopifyAdminGraphqlError).code).toBe('INVALID_OPERATION_NAME');
     }
   });
 
@@ -228,6 +230,7 @@ describe('Shopify Admin GraphQL client', () => {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       expect(message).toContain('[REDACTED]');
+      expect((error as ShopifyAdminGraphqlError).code).toBe('HTTP_ERROR');
       for (const secret of [plainSecret, bearerSecret, headerSecret]) {
         expect(message).not.toContain(secret);
       }
@@ -304,6 +307,61 @@ describe('Shopify Admin GraphQL client', () => {
 
     expect(redacted).toBe("{'clientSecret':'[REDACTED]','safe':'ok'}");
     expect(redacted).not.toContain(rawSecret);
+  });
+
+  it('preserves non-secret diagnostic code and state fields while redacting OAuth-specific fields', () => {
+    expect(redactSensitiveText('GraphQL extension code=ACCESS_DENIED state=published')).toBe('GraphQL extension code=ACCESS_DENIED state=published');
+    expect(redactSensitiveText('OAuth callback oauthCode=secret-code oauthState=secret-state')).toBe('OAuth callback oauthCode=[REDACTED] oauthState=[REDACTED]');
+    expect(redactHttpBody({
+      errors: [{ message: 'denied', extensions: { code: 'ACCESS_DENIED', state: 'published', oauthCode: 'oauth-code-secret', oauthState: 'oauth-state-secret' } }],
+    }, '')).toBe('{"errors":[{"message":"denied","extensions":{"code":"ACCESS_DENIED","state":"published","[REDACTED]":"[REDACTED]"}}]}');
+  });
+
+  it('assigns stable safe error codes to major Admin GraphQL failure paths', async () => {
+    const cases: readonly [typeof globalThis.fetch, string][] = [
+      [() => Promise.reject(new Error('network token=secret')), 'NETWORK_ERROR'],
+      [() => Promise.resolve(new Response('<html>bad json</html>', { status: 200 })), 'INVALID_JSON'],
+      [() => Promise.resolve(jsonResponse({ error: 'denied' }, { status: 403 })), 'HTTP_ERROR'],
+      [() => Promise.resolve(jsonResponse({ errors: [{ message: 'denied' }] })), 'GRAPHQL_ERRORS'],
+      [() => Promise.resolve(jsonResponse({ data: { shop: {} } })), 'INVALID_SHOP_METADATA'],
+    ];
+
+    for (const [fetch, expectedCode] of cases) {
+      const client = createShopifyAdminGraphqlClient({ apiVersion: '2026-01', fetch, maxRetries: 0 });
+      try {
+        await client.getShopMetadata({ shop: SHOP, accessToken: TOKEN });
+        expect.unreachable('expected Admin GraphQL failure');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ShopifyAdminGraphqlError);
+        expect((error as ShopifyAdminGraphqlError).code).toBe(expectedCode);
+      }
+    }
+  });
+
+  it('redacts OAuth, webhook, and embedded app secrets across query strings, JSON, arrays, and thrown messages', () => {
+    const secrets = [
+      'oauth-code-secret',
+      'oauth-state-secret',
+      'hmac-secret-value',
+      'signature-secret-value',
+      'id-token-secret-value',
+      'client-secret-value',
+      'old-client-secret-value',
+      'refresh-token-value',
+      'access-token-value',
+    ];
+    const redacted = redactSensitiveText([
+      'https://app.example.test/auth/callback?code=oauth-code-secret&state=oauth-state-secret&hmac=hmac-secret-value&signature=signature-secret-value',
+      JSON.stringify({ id_token: 'id-token-secret-value', client_secret: 'client-secret-value', old_client_secret: 'old-client-secret-value', nested: [{ refresh_token: 'refresh-token-value' }] }),
+      'Authorization: Bearer access-token-value',
+      'X-Shopify-Access-Token: access-token-value',
+      'thrown callback error oauthCode=oauth-code-secret oauthState=oauth-state-secret hmac=hmac-secret-value signature=signature-secret-value',
+    ].join('\n'));
+
+    for (const secret of secrets) {
+      expect(redacted).not.toContain(secret);
+    }
+    expect(redacted).toContain('[REDACTED]');
   });
 
   it('retries HTTP 429 using bounded Retry-After delays before succeeding', async () => {

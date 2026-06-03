@@ -268,13 +268,13 @@ describe('curated MCP server', () => {
         action: 'mcp.tool',
         shop: 'alpha.myshopify.com',
         result: 'failure',
-        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'json', reason: 'Tool call failed.' },
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'json', reason: 'Tool call failed.', errorCode: 'MCP_TOOL_CALL_FAILED' },
       },
       {
         action: 'mcp.tool',
         shop: 'alpha.myshopify.com',
         result: 'failure',
-        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_orders', format: 'json', reason: 'Tool call failed.' },
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_orders', format: 'json', reason: 'Tool call failed.', errorCode: 'MCP_TOOL_CALL_FAILED' },
       },
     ]);
     const serializedAudit = JSON.stringify(auditEvents);
@@ -336,13 +336,13 @@ describe('curated MCP server', () => {
       {
         action: 'mcp.tool',
         result: 'failure',
-        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.raw_graphql', reason: 'Tool is not allowed.' },
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.raw_graphql', reason: 'Tool is not allowed.', errorCode: 'MCP_TOOL_NOT_ALLOWED' },
       },
       {
         action: 'mcp.tool',
         shop: 'alpha.myshopify.com',
         result: 'failure',
-        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.delete_shop', reason: 'Tool is not allowed.' },
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.delete_shop', reason: 'Tool is not allowed.', errorCode: 'MCP_TOOL_NOT_ALLOWED' },
       },
     ]);
     expect(JSON.stringify(auditEvents)).not.toContain('shpat_secret');
@@ -371,13 +371,13 @@ describe('curated MCP server', () => {
       {
         action: 'mcp.tool',
         result: 'failure',
-        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.[REDACTED]', reason: 'Tool is not allowed.' },
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.[REDACTED]', reason: 'Tool is not allowed.', errorCode: 'MCP_TOOL_NOT_ALLOWED' },
       },
       {
         action: 'mcp.tool',
         shop: 'alpha.myshopify.com',
         result: 'failure',
-        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'markdown', reason: 'Tool call failed.' },
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'markdown', reason: 'Tool call failed.', errorCode: 'MCP_TOOL_CALL_FAILED' },
       },
     ]);
     expect(serializedAudit).not.toContain(providerPlaceholder);
@@ -411,8 +411,8 @@ describe('curated MCP server', () => {
     await server;
 
     expect(lines).toEqual([
-      { jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'Tool call failed.' } },
-      { jsonrpc: '2.0', id: 2, error: { code: -32000, message: 'Tool is not allowed.' } },
+      { jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'Tool call failed.', data: { errorCode: 'MCP_TOOL_CALL_FAILED' } } },
+      { jsonrpc: '2.0', id: 2, error: { code: -32000, message: 'Tool is not allowed.', data: { errorCode: 'MCP_TOOL_NOT_ALLOWED' } } },
     ]);
     const serializedLines = JSON.stringify(lines);
     expect(serializedLines).not.toContain(bearerPlaceholder);
@@ -447,21 +447,21 @@ describe('curated MCP server', () => {
     await server;
 
     expect(lines).toEqual([
-      { jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'Tool call failed.' } },
-      { jsonrpc: '2.0', id: 2, error: { code: -32000, message: 'Unknown argument: internal.' } },
+      { jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'Tool call failed.', data: { errorCode: 'MCP_TOOL_CALL_FAILED' } } },
+      { jsonrpc: '2.0', id: 2, error: { code: -32000, message: 'Unknown argument: internal.', data: { errorCode: 'MCP_TOOL_CALL_FAILED' } } },
     ]);
     expect(auditEvents).toEqual([
       {
         action: 'mcp.tool',
         shop: 'alpha.myshopify.com',
         result: 'failure',
-        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'markdown', reason: 'Tool call failed.' },
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'markdown', reason: 'Tool call failed.', errorCode: 'MCP_TOOL_CALL_FAILED' },
       },
       {
         action: 'mcp.tool',
         shop: 'alpha.myshopify.com',
         result: 'failure',
-        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'markdown', reason: 'Unknown argument: internal.' },
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'markdown', reason: 'Unknown argument: internal.', errorCode: 'MCP_TOOL_CALL_FAILED' },
       },
     ]);
     const serialized = JSON.stringify({ lines, auditEvents });

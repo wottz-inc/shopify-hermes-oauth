@@ -5,6 +5,7 @@ import { type Readable, type Writable } from 'node:stream';
 import { type AuditEventInput } from '../audit.js';
 import { CAPABILITY_MCP_TOOL_DEFINITIONS, type McpToolDefinition } from '../capabilities.js';
 import { InventoryReportError, INVENTORY_MAX_COST_REMEDIATION_MESSAGE } from '../reports/inventory.js';
+import { safeErrorCode, type SafeErrorCode } from '../safe-errors.js';
 import { type ProductsReportFormat } from '../reports/products.js';
 import { redactSensitiveText } from '../shopify/admin-client.js';
 import { MissingShopifyScopesError } from '../shopify/scopes.js';
@@ -87,9 +88,12 @@ export interface McpLifecycleEvent {
 }
 
 export class McpToolError extends Error {
-  public constructor(message = 'Tool is not allowed.') {
+  public readonly code: SafeErrorCode;
+
+  public constructor(message = 'Tool is not allowed.', code?: SafeErrorCode) {
     super(message);
     this.name = 'McpToolError';
+    this.code = code ?? (message === 'Tool is not allowed.' ? 'MCP_TOOL_NOT_ALLOWED' : 'MCP_TOOL_CALL_FAILED');
   }
 }
 
@@ -105,16 +109,16 @@ export function listTools(): readonly McpToolDefinition[] {
 }
 
 export async function callTool(name: string, args: unknown, deps: McpServerDependencies): Promise<unknown> {
-  const auditEvent = (result: 'success' | 'failure', reason?: string): AuditEventInput => ({
+  const auditEvent = (result: 'success' | 'failure', reason?: string, errorCode?: SafeErrorCode): AuditEventInput => ({
     action: 'mcp.tool',
     ...readAuditShop(args),
     result,
-    metadata: buildMcpAuditMetadata(name, args, reason),
+    metadata: buildMcpAuditMetadata(name, args, reason, errorCode),
   });
 
   if (!ALLOWED_TOOL_NAMES.has(name)) {
     const error = new McpToolError();
-    await appendMcpAuditEventBestEffort(deps, auditEvent('failure', error.message));
+    await appendMcpAuditEventBestEffort(deps, auditEvent('failure', error.message, error.code));
     throw error;
   }
 
@@ -173,11 +177,11 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
   } catch (error) {
     if (error instanceof McpToolError) {
       const safeMessage = sanitizeMcpErrorMessage(error.message);
-      await appendMcpAuditEventBestEffort(deps, auditEvent('failure', safeMessage));
-      throw safeMessage === error.message ? error : new McpToolError(safeMessage);
+      await appendMcpAuditEventBestEffort(deps, auditEvent('failure', safeMessage, error.code));
+      throw safeMessage === error.message ? error : new McpToolError(safeMessage, error.code);
     }
-    await appendMcpAuditEventBestEffort(deps, auditEvent('failure', 'Tool call failed.'));
-    throw new McpToolError('Tool call failed.');
+    await appendMcpAuditEventBestEffort(deps, auditEvent('failure', 'Tool call failed.', 'MCP_TOOL_CALL_FAILED'));
+    throw new McpToolError('Tool call failed.', 'MCP_TOOL_CALL_FAILED');
   }
 }
 
@@ -186,12 +190,12 @@ async function callDependency<T>(operation: () => Promise<T> | T): Promise<T> {
     return await operation();
   } catch (error) {
     if (error instanceof InventoryReportError && error.code === 'MAX_COST_EXCEEDED') {
-      throw new McpToolError(INVENTORY_MAX_COST_REMEDIATION_MESSAGE);
+      throw new McpToolError(INVENTORY_MAX_COST_REMEDIATION_MESSAGE, 'MCP_TOOL_CALL_FAILED');
     }
     if (error instanceof MissingShopifyScopesError) {
-      throw new McpToolError(error.message);
+      throw new McpToolError(error.message, 'MCP_TOOL_CALL_FAILED');
     }
-    throw new Error('Tool call failed.', { cause: error });
+    throw new McpToolError('Tool call failed.', safeErrorCode(error, 'MCP_TOOL_CALL_FAILED'));
   }
 }
 
@@ -203,7 +207,7 @@ async function appendMcpAuditEventBestEffort(deps: McpServerDependencies, event:
   }
 }
 
-function buildMcpAuditMetadata(name: string, args: unknown, reason?: string): Record<string, unknown> {
+function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, errorCode?: SafeErrorCode): Record<string, unknown> {
   return {
     source: 'mcp',
     actor: 'mcp',
@@ -212,6 +216,7 @@ function buildMcpAuditMetadata(name: string, args: unknown, reason?: string): Re
     ...(isReportToolName(name) ? readAuditFormat(args) : {}),
     ...(name === 'shopify.report_inventory' ? readAuditThreshold(args) : {}),
     ...(reason === undefined ? {} : { reason: sanitizeAuditString(reason) }),
+    ...(errorCode === undefined ? {} : { errorCode }),
   };
 }
 
@@ -365,7 +370,9 @@ async function handleJsonRpcMessage(line: string, deps: McpServerDependencies): 
         return jsonRpcError(id, -32601, 'Method not found');
     }
   } catch (error) {
-    return jsonRpcError(id, -32000, error instanceof McpToolError ? error.message : 'Tool call failed.');
+    return error instanceof McpToolError
+      ? jsonRpcError(id, -32000, error.message, error.code)
+      : jsonRpcError(id, -32000, 'Tool call failed.', 'MCP_TOOL_CALL_FAILED');
   }
 }
 
@@ -523,8 +530,8 @@ function readOptionalIntegerProperty(args: unknown, key: string): Record<string,
   return { [key]: args[key] as number };
 }
 
-function jsonRpcError(id: string | number | null, code: number, message: string): unknown {
-  return { jsonrpc: '2.0', id, error: { code, message } };
+function jsonRpcError(id: string | number | null, code: number, message: string, errorCode?: SafeErrorCode): unknown {
+  return { jsonrpc: '2.0', id, error: { code, message, ...(errorCode === undefined ? {} : { data: { errorCode } }) } };
 }
 
 function readJsonRpcId(value: unknown): string | number | null {

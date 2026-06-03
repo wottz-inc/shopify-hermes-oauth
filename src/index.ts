@@ -28,6 +28,9 @@ export type { LocalFileDependencies } from './storage/local-files.js';
 
 export { ShopDomainValidationError, normalizeShopDomain } from './shop-domain.js';
 
+export { SAFE_ERROR_CODES, SafeError, isSafeOperationError, safeErrorCode } from './safe-errors.js';
+export type { SafeErrorCode, SafeOperationError } from './safe-errors.js';
+
 export { InMemoryOAuthStateStore, OAuthStateError } from './oauth/state-store.js';
 export type {
   CreateOAuthStateInput,
@@ -35,7 +38,7 @@ export type {
   OAuthStateStoreOptions,
 } from './oauth/state-store.js';
 
-export { LocalJsonTokenStore, createLocalJsonTokenStore, normalizeTokenStoreShopDomain } from './tokens/local-token-store.js';
+export { LocalJsonTokenStore, TokenStoreError, createLocalJsonTokenStore, normalizeTokenStoreShopDomain } from './tokens/local-token-store.js';
 export type {
   LocalJsonTokenStoreOptions,
   StoredShopToken,
@@ -48,6 +51,7 @@ export {
   SHOP_METADATA_QUERY,
   ShopifyAdminGraphqlError,
   createShopifyAdminGraphqlClient,
+  redactSensitiveErrorMessage,
   redactSensitiveText,
 } from './shopify/admin-client.js';
 export type {
@@ -56,6 +60,7 @@ export type {
   AdminShopMetadata,
   AdminShopMetadataInput,
   ShopifyAdminClient,
+  ShopifyAdminGraphqlErrorCode,
   ShopifyAdminGraphqlClientOptions,
   ShopifyAdminQueryClient,
 } from './shopify/admin-client.js';

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LocalJsonTokenStore } from '../src/tokens/local-token-store.js';
+import { LocalJsonTokenStore, TokenStoreError } from '../src/tokens/local-token-store.js';
 
 const tempRoots: string[] = [];
 
@@ -226,6 +226,13 @@ describe('LocalJsonTokenStore', () => {
     const { store } = await makeStore();
 
     await expect(store.storeToken({ shop: 'example', accessToken: '   ', scopes: ['read_products'] })).rejects.toThrow('Access token cannot be blank');
+    try {
+      await store.storeToken({ shop: 'example', accessToken: '   ', scopes: ['read_products'] });
+      expect.unreachable('expected blank token failure');
+    } catch (error) {
+      expect(error).toBeInstanceOf(TokenStoreError);
+      expect((error as TokenStoreError).code).toBe('TOKEN_STORE_ERROR');
+    }
     await expect(store.storeToken({ shop: 'example', accessToken: 'token', scopes: ['read_products', '  '] })).rejects.toThrow('Scopes must be non-blank strings');
     await expect(store.storeToken({ shop: 'example', accessToken: 'token', scopes: [] })).rejects.toThrow('At least one scope is required');
     await expect(store.storeToken({ shop: 'example', accessToken: 'token', scopes: ['read_products'], metadata: { shopName: '  ' } })).rejects.toThrow('Metadata values must be non-blank strings');

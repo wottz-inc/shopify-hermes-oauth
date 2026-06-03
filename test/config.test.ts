@@ -256,6 +256,17 @@ describe('config redaction', () => {
         cookie: 'dummy-cookie',
         session: 'dummy-session',
         credentials: 'dummy-credentials',
+        hmac: 'dummy-hmac',
+        signature: 'dummy-signature',
+        code: 'ACCESS_DENIED',
+        state: 'published',
+        oauthCode: 'dummy-oauth-code',
+        oauthState: 'dummy-oauth-state',
+        id_token: 'dummy-id-token',
+        old_client_secret: 'dummy-old-client-secret',
+        headers: {
+          'x-shopify-access-token': 'dummy-shopify-header-token',
+        },
       },
     };
 
@@ -270,6 +281,17 @@ describe('config redaction', () => {
         cookie: '[REDACTED]',
         session: '[REDACTED]',
         credentials: '[REDACTED]',
+        hmac: '[REDACTED]',
+        signature: '[REDACTED]',
+        code: 'ACCESS_DENIED',
+        state: 'published',
+        oauthCode: '[REDACTED]',
+        oauthState: '[REDACTED]',
+        id_token: '[REDACTED]',
+        old_client_secret: '[REDACTED]',
+        headers: {
+          'x-shopify-access-token': '[REDACTED]',
+        },
       },
     });
 
@@ -281,6 +303,13 @@ describe('config redaction', () => {
     expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-cookie');
     expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-session');
     expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-credentials');
+    expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-hmac');
+    expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-signature');
+    expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-oauth-code');
+    expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-oauth-state');
+    expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-id-token');
+    expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-old-client-secret');
+    expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-shopify-header-token');
   });
 
   it('redacts token-looking scalar values even without sensitive keys', () => {

@@ -1,5 +1,6 @@
 import { shopMetadataFromAdmin, summarizeShopMetadata } from './metadata.js';
 import { type AuditEventInput } from '../audit.js';
+import { type SafeErrorCode, safeErrorCode } from '../safe-errors.js';
 import { redactSensitiveErrorMessage, type AdminShopMetadata, type ShopifyAdminClient } from '../shopify/admin-client.js';
 import { MissingShopifyScopesError, missingShopifyScopes } from '../shopify/scopes.js';
 import { normalizeTokenStoreShopDomain, type TokenStore } from '../tokens/local-token-store.js';
@@ -18,9 +19,12 @@ export interface VerifyShopResult {
 }
 
 export class ShopVerificationError extends Error {
-  public constructor(message: string) {
+  public readonly code: SafeErrorCode;
+
+  public constructor(message: string, code: SafeErrorCode = 'SHOP_VERIFICATION_ADMIN_ERROR') {
     super(message);
     this.name = 'ShopVerificationError';
+    this.code = code;
   }
 }
 
@@ -35,7 +39,7 @@ export async function verifyShop(options: VerifyShopOptions): Promise<VerifyShop
       result: 'failure',
       metadata: { reason: 'missing_oauth_record' },
     });
-    throw new ShopVerificationError(`No stored OAuth token found for ${shop}.`);
+    throw new ShopVerificationError(`No stored OAuth token found for ${shop}.`, 'SHOP_VERIFICATION_MISSING_TOKEN');
   }
 
   const missingScopes = missingShopifyScopes(storedToken.scopes, options.requiredScopes ?? []);
@@ -46,7 +50,7 @@ export async function verifyShop(options: VerifyShopOptions): Promise<VerifyShop
       result: 'failure',
       metadata: { reason: 'missing_required_scope' },
     });
-    throw new ShopVerificationError(new MissingShopifyScopesError(shop, missingScopes).message);
+    throw new ShopVerificationError(new MissingShopifyScopesError(shop, missingScopes).message, 'SHOP_VERIFICATION_MISSING_SCOPES');
   }
 
   let metadata: AdminShopMetadata;
@@ -64,7 +68,7 @@ export async function verifyShop(options: VerifyShopOptions): Promise<VerifyShop
       result: 'failure',
       metadata: { reason: 'admin_graphql_error', error: message },
     });
-    throw new ShopVerificationError(message);
+    throw new ShopVerificationError(message, safeErrorCode(error, 'SHOP_VERIFICATION_ADMIN_ERROR'));
   }
 
   const safeMetadata = shopMetadataFromAdmin(metadata);

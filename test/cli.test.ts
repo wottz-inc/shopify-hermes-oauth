@@ -1136,7 +1136,34 @@ describe('Shopify OAuth token exchange', () => {
 
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toBe('At least one scope is required');
+    expect((thrown as Error & { readonly code?: string }).code).toBe('OAUTH_MISSING_REQUIRED_SCOPES');
     expect((thrown as Error).message).not.toMatch(/oauth-code|client-secret|shpat_|access_token|client_secret|invalid_request/u);
+  });
+
+  it('classifies generic OAuth token exchange failures with safe stable codes', async () => {
+    await expect(exchangeShopifyOAuthToken({
+      fetch: () => Promise.resolve(new Response(JSON.stringify({ error: 'invalid_client', client_secret: 'client-secret-should-not-leak' }), { status: 401 })),
+      shop: 'Example',
+      code: 'oauth-code-should-not-leak',
+      redirectUri: 'https://public-app.example.test/auth/callback',
+      clientId: 'client-id',
+      clientSecret: 'client-secret-should-not-leak',
+    })).rejects.toMatchObject({
+      code: 'OAUTH_TOKEN_EXCHANGE_HTTP_ERROR',
+      message: 'Shopify OAuth token exchange failed with HTTP 401.',
+    });
+
+    await expect(exchangeShopifyOAuthToken({
+      fetch: () => Promise.resolve(new Response(JSON.stringify({ scope: 'read_products', access_token: '' }), { status: 200 })),
+      shop: 'Example',
+      code: 'oauth-code-should-not-leak',
+      redirectUri: 'https://public-app.example.test/auth/callback',
+      clientId: 'client-id',
+      clientSecret: 'client-secret-should-not-leak',
+    })).rejects.toMatchObject({
+      code: 'OAUTH_TOKEN_EXCHANGE_INVALID_RESPONSE',
+      message: 'Shopify OAuth token exchange response did not include an access token.',
+    });
   });
 
   it.each([

@@ -1,8 +1,12 @@
+import { SafeError, type SafeErrorCode } from '../safe-errors.js';
 import { normalizeTokenStoreShopDomain } from '../tokens/local-token-store.js';
 
 export class MissingRequiredAdminApiScopesError extends Error {
+  public readonly code: SafeErrorCode = 'OAUTH_MISSING_REQUIRED_SCOPES';
+
   constructor() {
     super('At least one scope is required');
+    this.name = 'MissingRequiredAdminApiScopesError';
   }
 }
 
@@ -17,29 +21,40 @@ export interface ShopifyOAuthExchangeInput {
 
 export async function exchangeShopifyOAuthToken(input: ShopifyOAuthExchangeInput): Promise<{ readonly accessToken: string; readonly scopes?: string }> {
   const shop = normalizeTokenStoreShopDomain(input.shop);
-  const response = await input.fetch(`https://${shop}/admin/oauth/access_token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      client_id: input.clientId,
-      client_secret: input.clientSecret,
-      code: input.code,
-      redirect_uri: input.redirectUri,
-    }),
-  });
+  let response: Response;
+
+  try {
+    response = await input.fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        client_id: input.clientId,
+        client_secret: input.clientSecret,
+        code: input.code,
+        redirect_uri: input.redirectUri,
+      }),
+    });
+  } catch {
+    throw new SafeError('Shopify OAuth token exchange request failed.', 'OAUTH_TOKEN_EXCHANGE_HTTP_ERROR');
+  }
 
   if (!response.ok) {
     if (await responseBodyMentionsMissingRequiredAdminApiScopes(response)) {
       throw new MissingRequiredAdminApiScopesError();
     }
 
-    throw new Error(`Shopify OAuth token exchange failed with HTTP ${String(response.status)}.`);
+    throw new SafeError(`Shopify OAuth token exchange failed with HTTP ${String(response.status)}.`, 'OAUTH_TOKEN_EXCHANGE_HTTP_ERROR');
   }
 
-  const payload = await response.json() as { readonly access_token?: unknown; readonly scope?: unknown };
+  let payload: { readonly access_token?: unknown; readonly scope?: unknown };
+  try {
+    payload = await response.json() as { readonly access_token?: unknown; readonly scope?: unknown };
+  } catch {
+    throw new SafeError('Shopify OAuth token exchange response was not valid JSON.', 'OAUTH_TOKEN_EXCHANGE_INVALID_RESPONSE');
+  }
 
   if (typeof payload.access_token !== 'string' || payload.access_token.length === 0) {
-    throw new Error('Shopify OAuth token exchange response did not include an access token.');
+    throw new SafeError('Shopify OAuth token exchange response did not include an access token.', 'OAUTH_TOKEN_EXCHANGE_INVALID_RESPONSE');
   }
 
   return {

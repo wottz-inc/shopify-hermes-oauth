@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { verifyShop } from '../src/shops/verify.js';
+import { ShopVerificationError, verifyShop } from '../src/shops/verify.js';
 import type { AdminShopMetadata, ShopifyAdminClient } from '../src/shopify/admin-client.js';
 import { normalizeTokenStoreShopDomain, type StoreShopTokenInput, type TokenStore } from '../src/tokens/local-token-store.js';
 
@@ -85,6 +85,18 @@ describe('verifyShop', () => {
         auditEvents.push(event);
       },
     })).rejects.toThrow('No stored OAuth token found for missing.myshopify.com.');
+    try {
+      await verifyShop({
+        shop: 'missing',
+        tokenStore: new MemoryTokenStore(),
+        adminClient,
+        appendAuditEvent: () => undefined,
+      });
+      expect.unreachable('expected missing token failure');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ShopVerificationError);
+      expect((error as ShopVerificationError).code).toBe('SHOP_VERIFICATION_MISSING_TOKEN');
+    }
 
     expect(adminClient.calls).toEqual([]);
     expect(JSON.stringify(auditEvents)).not.toContain('shpat_');
@@ -94,6 +106,27 @@ describe('verifyShop', () => {
       result: 'failure',
       metadata: { reason: 'missing_oauth_record' },
     }]);
+  });
+
+  it('reports stable code for missing required scopes without calling Admin GraphQL', async () => {
+    const adminClient = new FakeAdminClient({ name: 'Should Not Call', myshopifyDomain: 'example.myshopify.com', currencyCode: 'USD' });
+
+    let thrown: unknown;
+    try {
+      await verifyShop({
+        shop: 'example',
+        tokenStore: new MemoryTokenStore([{ shop: 'example.myshopify.com', accessToken: 'shpat_do_not_leak', scopes: ['read_products'] }]),
+        adminClient,
+        requiredScopes: ['read_orders'],
+        appendAuditEvent: () => undefined,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ShopVerificationError);
+    expect((thrown as ShopVerificationError).code).toBe('SHOP_VERIFICATION_MISSING_SCOPES');
+    expect(adminClient.calls).toEqual([]);
   });
 
   it('returns safe metadata, updates non-secret token metadata, and audits success without printing tokens', async () => {
@@ -198,14 +231,22 @@ describe('verifyShop', () => {
     const auditEvents: unknown[] = [];
     const adminClient = new FakeAdminClient(new Error(`GraphQL failed for token=[REDACTED]`));
 
-    await expect(verifyShop({
-      shop: 'example',
-      tokenStore: new MemoryTokenStore([{ shop: 'example.myshopify.com', accessToken, scopes: ['read_products'] }]),
-      adminClient,
-      appendAuditEvent: (event) => {
-        auditEvents.push(event);
-      },
-    })).rejects.toThrow('[REDACTED]');
+    let thrown: unknown;
+    try {
+      await verifyShop({
+        shop: 'example',
+        tokenStore: new MemoryTokenStore([{ shop: 'example.myshopify.com', accessToken, scopes: ['read_products'] }]),
+        adminClient,
+        appendAuditEvent: (event) => {
+          auditEvents.push(event);
+        },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ShopVerificationError);
+    expect((thrown as ShopVerificationError).message).toContain('[REDACTED]');
+    expect((thrown as ShopVerificationError).code).toBe('SHOP_VERIFICATION_ADMIN_ERROR');
 
     expect(JSON.stringify(auditEvents)).not.toContain(accessToken);
     expect(auditEvents).toEqual([{
