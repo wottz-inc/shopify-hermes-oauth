@@ -4,6 +4,7 @@ import '@shopify/shopify-api/adapters/node';
 import { ApiVersion, LogSeverity, shopifyApi } from '@shopify/shopify-api';
 
 import { MissingRequiredAdminApiScopesError } from './shopify-oauth-token-exchange.js';
+import { type SafeErrorCode } from '../safe-errors.js';
 import { normalizeShopDomain } from '../shop-domain.js';
 
 const SERVICE_NAME = 'shopify-hermes-oauth';
@@ -14,6 +15,16 @@ const SHOPIFY_OAUTH_PATH = '/admin/oauth/authorize';
 const DEFAULT_MAX_CALLBACK_AGE_MS = 5 * 60 * 1_000;
 const MAX_SAFE_TIMESTAMP_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1_000);
 const DEFAULT_REQUIRED_ADMIN_API_SCOPES = ['read_products', 'read_orders', 'read_inventory', 'read_locations'] as const;
+
+class OAuthCallbackError extends Error {
+  public readonly code: SafeErrorCode;
+
+  public constructor(message: string, code: SafeErrorCode = 'OAUTH_INVALID_CALLBACK') {
+    super(message);
+    this.name = 'OAuthCallbackError';
+    this.code = code;
+  }
+}
 
 export interface OAuthHttpServerConfig {
   readonly clientId: string;
@@ -260,11 +271,11 @@ async function validateCallbackRequest(
   const latestFreshTimestamp = Math.floor((nowMs + maxAgeMs) / 1_000);
 
   if (timestamp < earliestFreshTimestamp || timestamp > latestFreshTimestamp) {
-    throw new Error('Stale OAuth callback');
+    throw new OAuthCallbackError('Stale OAuth callback', 'OAUTH_STALE_CALLBACK');
   }
 
   if (!(await dependencies.hmacValidator(callbackQuery(url.searchParams)))) {
-    throw new Error('Invalid HMAC');
+    throw new OAuthCallbackError('Invalid HMAC', 'OAUTH_INVALID_HMAC');
   }
 
   return { shop, code, state };
@@ -275,7 +286,7 @@ function assertNoDuplicateCallbackParams(params: URLSearchParams): void {
 
   for (const key of params.keys()) {
     if (seen.has(key)) {
-      throw new Error('Duplicate OAuth callback parameter');
+      throw new OAuthCallbackError('Duplicate OAuth callback parameter', 'OAUTH_INVALID_CALLBACK');
     }
 
     seen.add(key);
@@ -305,7 +316,7 @@ function requiredParam(url: URL, name: string): string {
   const value = url.searchParams.get(name);
 
   if (value === null || value.length === 0) {
-    throw new Error('Missing OAuth callback parameter');
+    throw new OAuthCallbackError('Missing OAuth callback parameter', 'OAUTH_INVALID_CALLBACK');
   }
 
   return value;
@@ -313,13 +324,13 @@ function requiredParam(url: URL, name: string): string {
 
 function parseTimestamp(value: string): number {
   if (!/^\d+$/u.test(value)) {
-    throw new Error('Invalid timestamp');
+    throw new OAuthCallbackError('Invalid timestamp', 'OAUTH_INVALID_CALLBACK');
   }
 
   const timestamp = Number(value);
 
   if (!Number.isSafeInteger(timestamp) || timestamp > MAX_SAFE_TIMESTAMP_SECONDS) {
-    throw new Error('Invalid timestamp');
+    throw new OAuthCallbackError('Invalid timestamp', 'OAUTH_INVALID_CALLBACK');
   }
 
   return timestamp;

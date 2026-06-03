@@ -1,3 +1,4 @@
+import { type SafeErrorCode } from '../safe-errors.js';
 import { normalizeShopDomain } from '../shop-domain.js';
 import { normalizeShopifyScopes } from '../shopify/scopes.js';
 import { type LocalFileDependencies, readJsonFile, withFileLock, writeJsonAtomic } from '../storage/local-files.js';
@@ -41,6 +42,15 @@ export interface LocalJsonTokenStoreOptions {
 interface TokenStoreFile {
   readonly version: 1;
   readonly shops: Record<string, StoredShopToken>;
+}
+
+export class TokenStoreError extends Error {
+  public readonly code: SafeErrorCode = 'TOKEN_STORE_ERROR';
+
+  public constructor(message: string) {
+    super(message);
+    this.name = 'TokenStoreError';
+  }
 }
 
 export class LocalJsonTokenStore implements TokenStore {
@@ -146,14 +156,14 @@ export function createLocalJsonTokenStore(options: LocalJsonTokenStoreOptions): 
 
 export function parseLocalJsonTokenStoreFile(raw: unknown): TokenStoreFile {
   if (!isRecord(raw) || raw.version !== 1 || !isRecord(raw.shops)) {
-    throw new Error('Invalid token store file.');
+    throw new TokenStoreError('Invalid token store file.');
   }
 
   const shops: Record<string, StoredShopToken> = {};
 
   for (const [key, value] of Object.entries(raw.shops)) {
     if (!isRecord(value)) {
-      throw new Error('Invalid token store file.');
+      throw new TokenStoreError('Invalid token store file.');
     }
 
     const shop = normalizeTokenStoreShopDomain(typeof value.shop === 'string' ? value.shop : key);
@@ -172,7 +182,7 @@ export function parseLocalJsonTokenStoreFile(raw: unknown): TokenStoreFile {
 
 function normalizeAccessToken(value: unknown): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error('Access token cannot be blank');
+    throw new TokenStoreError('Access token cannot be blank');
   }
 
   return value;
@@ -193,17 +203,17 @@ function normalizeScopes(value: unknown): readonly string[] {
   }
 
   if (!scopes?.every((scope): scope is string => typeof scope === 'string')) {
-    throw new Error('Scopes must be strings');
+    throw new TokenStoreError('Scopes must be strings');
   }
 
   if (scopes.some((scope) => scope.length === 0)) {
-    throw new Error('Scopes must be non-blank strings');
+    throw new TokenStoreError('Scopes must be non-blank strings');
   }
 
   const normalizedScopes = normalizeShopifyScopes(scopes);
 
   if (normalizedScopes.length === 0) {
-    throw new Error('At least one scope is required');
+    throw new TokenStoreError('At least one scope is required');
   }
 
   return normalizedScopes;
@@ -215,7 +225,7 @@ function normalizeMetadata(value: unknown): TokenMetadata | undefined {
   }
 
   if (!isRecord(value)) {
-    throw new Error('Metadata must be an object of non-blank strings');
+    throw new TokenStoreError('Metadata must be an object of non-blank strings');
   }
 
   const metadata: Record<string, string> = {};
@@ -226,7 +236,7 @@ function normalizeMetadata(value: unknown): TokenMetadata | undefined {
     }
 
     if (typeof metadataValue !== 'string' || metadataValue.trim().length === 0) {
-      throw new Error('Metadata values must be non-blank strings');
+      throw new TokenStoreError('Metadata values must be non-blank strings');
     }
 
     metadata[key] = key === 'myshopifyDomain' ? normalizeTokenStoreShopDomain(metadataValue) : metadataValue;
@@ -237,7 +247,7 @@ function normalizeMetadata(value: unknown): TokenMetadata | undefined {
 
 function normalizeTimestamp(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`Token ${name} must be a non-blank string`);
+    throw new TokenStoreError(`Token ${name} must be a non-blank string`);
   }
 
   return value;

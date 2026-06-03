@@ -1,3 +1,4 @@
+import { type SafeErrorCode } from '../safe-errors.js';
 import { normalizeTokenStoreShopDomain } from '../tokens/local-token-store.js';
 import { isJsonPlainRecord } from '../util/json.js';
 
@@ -72,17 +73,30 @@ const DEFAULT_MAX_RETRY_DELAY_MS = 5_000;
 const SHOPIFY_ADMIN_API_VERSION_PATTERN = /^(?:unstable|\d{4}-(?:0[1-9]|1[0-2]))$/u;
 const GRAPHQL_OPERATION_NAME_PATTERN = /^[_A-Za-z][_0-9A-Za-z]*$/u;
 
+export type ShopifyAdminGraphqlErrorCode = Extract<SafeErrorCode,
+  | 'INVALID_API_VERSION'
+  | 'INVALID_OPERATION_NAME'
+  | 'NETWORK_ERROR'
+  | 'INVALID_JSON'
+  | 'HTTP_ERROR'
+  | 'GRAPHQL_ERRORS'
+  | 'INVALID_SHOP_METADATA'
+>;
+
 export class ShopifyAdminGraphqlError extends Error {
-  public constructor(message: string) {
+  public readonly code: ShopifyAdminGraphqlErrorCode;
+
+  public constructor(message: string, code: ShopifyAdminGraphqlErrorCode = 'NETWORK_ERROR') {
     super(message);
     this.name = 'ShopifyAdminGraphqlError';
+    this.code = code;
   }
 }
 
 export function normalizeShopifyAdminApiVersion(version: string): string {
   const normalized = version.trim();
   if (!SHOPIFY_ADMIN_API_VERSION_PATTERN.test(normalized)) {
-    throw new ShopifyAdminGraphqlError('Invalid Shopify Admin API version.');
+    throw new ShopifyAdminGraphqlError('Invalid Shopify Admin API version.', 'INVALID_API_VERSION');
   }
 
   return normalized;
@@ -148,7 +162,7 @@ async function postGraphql<T>(
         continue;
       }
 
-      throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL request failed (${context}): ${redactError(error)}`);
+      throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL request failed (${context}): ${redactError(error)}`, 'NETWORK_ERROR');
     }
 
     let body: unknown;
@@ -162,7 +176,7 @@ async function postGraphql<T>(
         continue;
       }
 
-      throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL response was not valid JSON (${context}).`);
+      throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL response was not valid JSON (${context}).`, 'INVALID_JSON');
     }
 
     if (!response.ok) {
@@ -171,19 +185,19 @@ async function postGraphql<T>(
         continue;
       }
 
-      throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL HTTP ${response.status.toString(10)} (${context}): ${redactHttpBody(body, bodyText)}`);
+      throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL HTTP ${response.status.toString(10)} (${context}): ${redactHttpBody(body, bodyText)}`, 'HTTP_ERROR');
     }
 
     emitCostTelemetry(retrySettings.onTelemetry, shop, operationName, body);
 
     if (isJsonPlainRecord(body) && body.errors !== undefined) {
-      throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL returned errors (${context}): ${redactGraphqlErrors(body.errors)}`);
+      throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL returned errors (${context}): ${redactGraphqlErrors(body.errors)}`, 'GRAPHQL_ERRORS');
     }
 
     return body as T;
   }
 
-  throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL request failed (${context}): ${redactError(lastNetworkError)}`);
+  throw new ShopifyAdminGraphqlError(`Shopify Admin GraphQL request failed (${context}): ${redactError(lastNetworkError)}`, 'NETWORK_ERROR');
 }
 
 export function redactSensitiveText(text: string): string {
@@ -194,9 +208,10 @@ export function redactSensitiveText(text: string): string {
     .replace(/\bcallback(?:_url)?=\S+/giu, 'callback=[REDACTED]')
     .replace(/\bhttps?:\/\/[^\s"'<>]+(?:callback|oauth|auth)[^\s"'<>]*/giu, '[REDACTED]')
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu, '[REDACTED]')
-    .replace(/((?:access[_-]?token|token|authorization|cookie|session|secret|password|api[_-]?key|private[_-]?key|credentials?)\s*[=:]\s*)(?:(?:Bearer|Basic)\s+)?\S+/giu, '$1[REDACTED]')
-    .replace(/("[^"]*(?:access[_-]?token|token|authorization|cookie|session|secret|password|api[_-]?key|private[_-]?key|credentials?|x-shopify-access-token)[^"]*"\s*:\s*)"(?:[^"\\]|\\.)*"/giu, '$1"[REDACTED]"')
-    .replace(/('[^']*(?:access[_-]?token|token|authorization|cookie|session|secret|password|api[_-]?key|private[_-]?key|credentials?|x-shopify-access-token)[^']*'\s*:\s*)'(?:[^'\\]|\\.)*'/giu, "$1'[REDACTED]'")
+    .replace(/((?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|authorization|cookie|session|client[_-]?secret|old[_-]?client[_-]?secret|secret|password|api[_-]?key|private[_-]?key|credentials?|x-shopify-access-token|hmac|signature|oauth[_-]?(?:code|state)|authorization[_-]?code)\s*[=:]\s*)(?:(?:Bearer|Basic)\s+)?[^\s&;)]+/giu, '$1[REDACTED]')
+    .replace(/([?&](?:access[_-]?token|refresh[_-]?token|id[_-]?token|authorization|client[_-]?secret|old[_-]?client[_-]?secret|x-shopify-access-token|hmac|signature|oauth[_-]?(?:code|state)|authorization[_-]?code)=)[^\s&"'<>]+/giu, '$1[REDACTED]')
+    .replace(/("[^"]*(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|authorization|cookie|session|client[_-]?secret|old[_-]?client[_-]?secret|secret|password|api[_-]?key|private[_-]?key|credentials?|x-shopify-access-token|hmac|signature|oauth[_-]?(?:code|state)|authorization[_-]?code)[^"]*"\s*:\s*)"(?:[^"\\]|\\.)*"/giu, '$1"[REDACTED]"')
+    .replace(/('[^']*(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|authorization|cookie|session|client[_-]?secret|old[_-]?client[_-]?secret|secret|password|api[_-]?key|private[_-]?key|credentials?|x-shopify-access-token|hmac|signature|oauth[_-]?(?:code|state)|authorization[_-]?code)[^']*'\s*:\s*)'(?:[^'\\]|\\.)*'/giu, "$1'[REDACTED]'")
     .replace(/\b(?:shpat|shpca|shpss|shppa)_[A-Za-z0-9_-]+\b/giu, '[REDACTED]')
     .replace(/\bya29\.[A-Za-z0-9._-]+\b/giu, '[REDACTED]')
     .replace(/\bxox[a-z]-[A-Za-z0-9-]+\b/giu, '[REDACTED]')
@@ -270,7 +285,7 @@ function normalizeGraphqlOperationName(operationName: string | undefined): strin
   }
 
   if (!GRAPHQL_OPERATION_NAME_PATTERN.test(operationName) || isSensitiveOperationName(operationName) || redactSensitiveText(operationName) !== operationName) {
-    throw new ShopifyAdminGraphqlError('Invalid Shopify Admin GraphQL operation name.');
+    throw new ShopifyAdminGraphqlError('Invalid Shopify Admin GraphQL operation name.', 'INVALID_OPERATION_NAME');
   }
 
   return operationName;
@@ -365,7 +380,7 @@ function parseShopMetadata(response: unknown): AdminShopMetadata {
     typeof shop.myshopifyDomain !== 'string' ||
     typeof shop.currencyCode !== 'string'
   ) {
-    throw new ShopifyAdminGraphqlError('Shopify Admin GraphQL response did not include expected shop metadata.');
+    throw new ShopifyAdminGraphqlError('Shopify Admin GraphQL response did not include expected shop metadata.', 'INVALID_SHOP_METADATA');
   }
 
   return {
@@ -420,5 +435,5 @@ function redactError(error: unknown): string {
 }
 
 function isSensitiveKey(key: string): boolean {
-  return /(?:secret|token|authorization|password|api[_-]?key|private[_-]?key|cookie|session|credentials?)/iu.test(key);
+  return /(?:secret|token|authorization|password|api[_-]?key|private[_-]?key|cookie|session|credentials?|x-shopify-access-token|hmac|signature|id[_-]?token|oauth[_-]?(?:code|state)|authorization[_-]?code)/iu.test(key);
 }

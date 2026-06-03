@@ -237,7 +237,7 @@ function isSensitiveKey(key: string | undefined): boolean {
     return false;
   }
 
-  return /(?:secret|token|authorization|password|api[_-]?key|private[_-]?key|cookie|session|credentials?)/iu.test(
+  return /(?:secret|token|authorization|password|api[_-]?key|private[_-]?key|cookie|session|credentials?|x-shopify-access-token|hmac|signature|id[_-]?token|oauth[_-]?(?:code|state)|authorization[_-]?code)/iu.test(
     key,
   );
 }
