@@ -5,11 +5,16 @@ import { ShopifyAdminGraphqlError, createShopifyAdminGraphqlClient, redactHttpBo
 const SHOP = 'example.myshopify.com';
 const TOKEN = 'shpat_super_secret_token';
 
-function jsonResponse(body: unknown, init: { readonly ok?: boolean; readonly status?: number; readonly statusText?: string } = {}): Response {
+function jsonResponse(
+  body: unknown,
+  init: { readonly ok?: boolean; readonly status?: number; readonly statusText?: string; readonly headers?: HeadersInit } = {},
+): Response {
+  const headers = new Headers(init.headers);
+  headers.set('content-type', 'application/json');
   return new Response(JSON.stringify(body), {
     status: init.status ?? (init.ok === false ? 500 : 200),
     statusText: init.statusText,
-    headers: { 'content-type': 'application/json' },
+    headers,
   });
 }
 
@@ -108,7 +113,12 @@ describe('Shopify Admin GraphQL client', () => {
     expect(redactSensitiveText(`token=${TOKEN}`)).toBe('token=[REDACTED]');
 
     const fetch: typeof globalThis.fetch = () => Promise.reject(new Error(`network failed with token=${TOKEN}`));
-    const client = createShopifyAdminGraphqlClient({ apiVersion: '2026-01', fetch });
+    const client = createShopifyAdminGraphqlClient({
+      apiVersion: '2026-01',
+      fetch,
+      retryJitterMs: 0,
+      sleep: () => Promise.resolve(),
+    });
 
     await expect(client.getShopMetadata({ shop: SHOP, accessToken: TOKEN })).rejects.not.toThrow(TOKEN);
     await expect(client.getShopMetadata({ shop: SHOP, accessToken: TOKEN })).rejects.toThrow('token=[REDACTED]');
@@ -207,5 +217,198 @@ describe('Shopify Admin GraphQL client', () => {
 
     expect(redacted).toBe("{'clientSecret':'[REDACTED]','safe':'ok'}");
     expect(redacted).not.toContain(rawSecret);
+  });
+
+  it('retries HTTP 429 using bounded Retry-After delays before succeeding', async () => {
+    const delays: number[] = [];
+    const fetchCalls: number[] = [];
+    const fetch: typeof globalThis.fetch = () => {
+      fetchCalls.push(1);
+      if (fetchCalls.length === 1) {
+        return Promise.resolve(jsonResponse({ errors: [{ message: 'throttled' }] }, {
+          status: 429,
+          headers: { 'retry-after': '999' },
+        }));
+      }
+
+      return Promise.resolve(jsonResponse({ data: { ok: true } }));
+    };
+    const client = createShopifyAdminGraphqlClient({
+      apiVersion: '2026-01',
+      fetch,
+      maxRetries: 2,
+      maxRetryDelayMs: 1_000,
+      sleep: (delayMs) => {
+        delays.push(delayMs);
+        return Promise.resolve();
+      },
+    });
+
+    await expect(client.query({ shop: SHOP, accessToken: TOKEN, query: '{ ok }' })).resolves.toEqual({ data: { ok: true } });
+    expect(fetchCalls).toHaveLength(2);
+    expect(delays).toEqual([1_000]);
+  });
+
+  it('retries retryable HTTP responses even when the transient body is not JSON', async () => {
+    const delays: number[] = [];
+    let attempts = 0;
+    const fetch: typeof globalThis.fetch = () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return Promise.resolve(new Response('<html>temporary throttle</html>', {
+          status: 429,
+          headers: { 'retry-after': '2' },
+        }));
+      }
+
+      return Promise.resolve(jsonResponse({ data: { ok: true } }));
+    };
+    const client = createShopifyAdminGraphqlClient({
+      apiVersion: '2026-01',
+      fetch,
+      maxRetries: 1,
+      maxRetryDelayMs: 500,
+      sleep: (delayMs) => {
+        delays.push(delayMs);
+        return Promise.resolve();
+      },
+    });
+
+    await expect(client.query({ shop: SHOP, accessToken: TOKEN, query: '{ ok }' })).resolves.toEqual({ data: { ok: true } });
+    expect(attempts).toBe(2);
+    expect(delays).toEqual([500]);
+  });
+
+  it('retries transient 5xx and network failures with bounded exponential backoff and jitter', async () => {
+    const delays: number[] = [];
+    let attempts = 0;
+    const fetch: typeof globalThis.fetch = () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return Promise.reject(new Error('ECONNRESET token=network-secret'));
+      }
+      if (attempts === 2) {
+        return Promise.resolve(jsonResponse({ error: 'temporarily unavailable' }, { status: 503 }));
+      }
+
+      return Promise.resolve(jsonResponse({ data: { ok: true } }));
+    };
+    const client = createShopifyAdminGraphqlClient({
+      apiVersion: '2026-01',
+      fetch,
+      maxRetries: 3,
+      retryDelayMs: 100,
+      retryJitterMs: () => 7,
+      sleep: (delayMs) => {
+        delays.push(delayMs);
+        return Promise.resolve();
+      },
+    });
+
+    await expect(client.query({ shop: SHOP, accessToken: TOKEN, query: '{ ok }' })).resolves.toEqual({ data: { ok: true } });
+    expect(attempts).toBe(3);
+    expect(delays).toEqual([107, 207]);
+  });
+
+  it('does not retry non-retryable HTTP errors or GraphQL errors', async () => {
+    let httpAttempts = 0;
+    const httpClient = createShopifyAdminGraphqlClient({
+      apiVersion: '2026-01',
+      fetch: () => {
+        httpAttempts += 1;
+        return Promise.resolve(jsonResponse({ errors: [{ message: 'bad request' }] }, { status: 400 }));
+      },
+      maxRetries: 3,
+      sleep: () => {
+        expect.unreachable('non-retryable HTTP errors must not sleep');
+      },
+    });
+
+    await expect(httpClient.query({ shop: SHOP, accessToken: TOKEN, query: '{ ok }' })).rejects.toThrow('HTTP 400');
+    expect(httpAttempts).toBe(1);
+
+    let graphqlAttempts = 0;
+    const graphqlClient = createShopifyAdminGraphqlClient({
+      apiVersion: '2026-01',
+      fetch: () => {
+        graphqlAttempts += 1;
+        return Promise.resolve(jsonResponse({ errors: [{ message: 'user error with customer email alice@example.com' }] }));
+      },
+      maxRetries: 3,
+      sleep: () => {
+        expect.unreachable('GraphQL errors must not sleep');
+      },
+    });
+
+    await expect(graphqlClient.query({ shop: SHOP, accessToken: TOKEN, query: '{ ok }' })).rejects.toThrow('Shopify Admin GraphQL returned errors');
+    expect(graphqlAttempts).toBe(1);
+  });
+
+  it('bounds retry loops and redacts retry exhaustion errors', async () => {
+    let attempts = 0;
+    const fetch: typeof globalThis.fetch = () => {
+      attempts += 1;
+      return Promise.reject(new Error(`failed with X-Shopify-Access-Token: ${TOKEN} callback=https://example.test/callback?code=secret`));
+    };
+    const client = createShopifyAdminGraphqlClient({
+      apiVersion: '2026-01',
+      fetch,
+      maxRetries: 2,
+      retryDelayMs: 10,
+      retryJitterMs: 0,
+      sleep: () => Promise.resolve(),
+    });
+
+    try {
+      await client.query({ shop: SHOP, accessToken: TOKEN, query: '{ ok }', operationName: 'SafeOperation' });
+      expect.unreachable('expected retry exhaustion');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(attempts).toBe(3);
+      expect(message).toContain('admin_graphql');
+      expect(message).toContain('[REDACTED]');
+      expect(message).not.toContain(TOKEN);
+      expect(message).not.toContain('callback=https://example.test/callback?code=secret');
+    }
+  });
+
+  it('emits safe Admin GraphQL cost telemetry parsed from throttleStatus extensions', async () => {
+    const telemetry: unknown[] = [];
+    const fetch: typeof globalThis.fetch = () => Promise.resolve(jsonResponse({
+      data: { ok: true },
+      extensions: {
+        cost: {
+          requestedQueryCost: 12,
+          actualQueryCost: 8,
+          throttleStatus: {
+            maximumAvailable: 1000,
+            currentlyAvailable: 992,
+            restoreRate: 50,
+          },
+        },
+      },
+    }));
+    const client = createShopifyAdminGraphqlClient({
+      apiVersion: '2026-01',
+      fetch,
+      onTelemetry: (event) => telemetry.push(event),
+    });
+
+    await client.query({ shop: SHOP, accessToken: TOKEN, query: '{ customers { edges { node { email } } } }', operationName: 'Customers Report alice@example.test' });
+
+    expect(telemetry).toEqual([{
+      shop: SHOP,
+      requestedQueryCost: 12,
+      actualQueryCost: 8,
+      throttleStatus: {
+        maximumAvailable: 1000,
+        currentlyAvailable: 992,
+        restoreRate: 50,
+      },
+    }]);
+    expect(JSON.stringify(telemetry)).not.toContain(TOKEN);
+    expect(JSON.stringify(telemetry)).not.toContain('customers');
+    expect(JSON.stringify(telemetry)).not.toContain('email');
+    expect(JSON.stringify(telemetry)).not.toContain('alice');
   });
 });
