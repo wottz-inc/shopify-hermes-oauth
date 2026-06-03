@@ -51,6 +51,8 @@ export {
   redactSensitiveText,
 } from './shopify/admin-client.js';
 export type {
+  AdminGraphqlCostTelemetry,
+  AdminGraphqlQueryInput,
   AdminShopMetadata,
   AdminShopMetadataInput,
   ShopifyAdminClient,
