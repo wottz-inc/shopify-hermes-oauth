@@ -10,6 +10,10 @@ export type McpToolName =
   | 'shopify.report_products'
   | 'shopify.report_orders'
   | 'shopify.report_inventory'
+  | 'shopify.bulk.start'
+  | 'shopify.bulk.status'
+  | 'shopify.bulk.result'
+  | 'shopify.bulk.cancel'
   | 'shopify.webhooks.list'
   | 'shopify.webhooks.get';
 
@@ -82,6 +86,36 @@ const INVENTORY_REPORT_SCHEMA: JsonSchema = {
     ...REPORT_SCHEMA.properties,
     lowStockThreshold: { type: 'integer', minimum: 0, description: 'Low-stock threshold. Defaults to 5.' },
   },
+};
+const BULK_START_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    templateId: { type: 'string', enum: ['products-basic', 'orders-basic', 'inventory-items-basic'], description: 'Curated read-only bulk operation template.' },
+  },
+  required: ['shop', 'templateId'],
+  additionalProperties: false,
+};
+const BULK_STATUS_SCHEMA: JsonSchema = SHOP_SCHEMA;
+const BULK_RESULT_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    url: { type: 'string', description: 'HTTPS Shopify bulk operation result URL or opaque bulk-result handle returned by status.' },
+    maxLines: { type: 'integer', minimum: 1, maximum: 100, description: 'Maximum JSONL rows to preview. Defaults to 100 and is capped at 100.' },
+    maxBytes: { type: 'integer', minimum: 1, maximum: 1000000, description: 'Maximum response bytes to process. Defaults to 1000000 and is capped at 1000000.' },
+  },
+  required: ['shop', 'url'],
+  additionalProperties: false,
+};
+const BULK_CANCEL_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    id: { type: 'string', description: 'BulkOperation GID to cancel.' },
+  },
+  required: ['shop', 'id'],
+  additionalProperties: false,
 };
 const WEBHOOK_LIST_SCHEMA: JsonSchema = {
   ...SHOP_SCHEMA,
@@ -212,6 +246,78 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
         toolName: 'shopify.report_inventory',
         description: 'Generate a read-only Shopify inventory report.',
         inputSchema: INVENTORY_REPORT_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'bulk.operations.read.start',
+    domain: 'reports',
+    operationName: 'BulkOperationRunQuery',
+    requiredScopes: ['read_products', 'read_orders', 'read_inventory', 'read_locations'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Starts a Shopify Admin GraphQL bulk operation from a curated read-only template; no arbitrary GraphQL input is exposed.',
+    cost: 'Uses Shopify bulkOperationRunQuery to avoid normal nested pagination and query-cost ceilings for large exports.',
+    auditEvent: 'bulk.start',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.bulk.start',
+        description: 'Start a curated read-only Shopify Admin GraphQL bulk export.',
+        inputSchema: BULK_START_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'bulk.operations.read.status',
+    domain: 'reports',
+    operationName: 'CurrentBulkOperation',
+    requiredScopes: [],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Reads currentBulkOperation status only.',
+    cost: 'Low-cost status query.',
+    auditEvent: 'bulk.status',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.bulk.status',
+        description: 'Poll the current Shopify Admin GraphQL bulk operation status.',
+        inputSchema: BULK_STATUS_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'bulk.operations.read.result',
+    domain: 'reports',
+    operationName: 'BulkOperationResultPreview',
+    requiredScopes: [],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Fetches a bounded JSONL preview from a Shopify bulk operation result URL.',
+    cost: 'No Admin GraphQL cost; bounded HTTPS result download.',
+    auditEvent: 'bulk.result',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.bulk.result',
+        description: 'Fetch a bounded JSONL preview from a Shopify bulk operation result URL.',
+        inputSchema: BULK_RESULT_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'bulk.operations.read.cancel',
+    domain: 'reports',
+    operationName: 'BulkOperationCancel',
+    requiredScopes: [],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Cancels a running curated read-only bulk operation by ID.',
+    cost: 'Low-cost bulk operation cancellation request used only to stop read-only exports.',
+    auditEvent: 'bulk.cancel',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.bulk.cancel',
+        description: 'Cancel a running curated read-only Shopify bulk operation.',
+        inputSchema: BULK_CANCEL_SCHEMA,
       },
     },
   },

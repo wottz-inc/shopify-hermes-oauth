@@ -31,6 +31,26 @@ export { ShopDomainValidationError, normalizeShopDomain } from './shop-domain.js
 export { SAFE_ERROR_CODES, SafeError, isSafeOperationError, safeErrorCode } from './safe-errors.js';
 export type { SafeErrorCode, SafeOperationError } from './safe-errors.js';
 
+export {
+  BULK_OPERATION_TEMPLATES,
+  BulkOperationError,
+  cancelBulkOperation,
+  fetchBulkOperationResult,
+  getBulkOperationTemplate,
+  getCurrentBulkOperation,
+  startBulkOperation,
+  waitForBulkOperation,
+} from './bulk/operations.js';
+export type {
+  BulkOperationClient,
+  BulkOperationErrorCode,
+  BulkOperationRecord,
+  BulkOperationStatus,
+  BulkOperationTemplate,
+  BulkOperationTemplateId,
+  BulkOperationWaitResult,
+} from './bulk/operations.js';
+
 export { InMemoryOAuthStateStore, OAuthStateError } from './oauth/state-store.js';
 export type {
   CreateOAuthStateInput,

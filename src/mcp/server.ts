@@ -36,6 +36,27 @@ export interface WebhookGetToolArgs {
   readonly id: string;
 }
 
+export interface BulkStartToolArgs {
+  readonly shop: string;
+  readonly templateId: string;
+}
+
+export interface BulkStatusToolArgs {
+  readonly shop: string;
+}
+
+export interface BulkResultToolArgs {
+  readonly shop: string;
+  readonly url: string;
+  readonly maxLines?: number;
+  readonly maxBytes?: number;
+}
+
+export interface BulkCancelToolArgs {
+  readonly shop: string;
+  readonly id: string;
+}
+
 export type McpToolOutput = Record<string, unknown>;
 
 export interface McpServerDependencies {
@@ -46,6 +67,10 @@ export interface McpServerDependencies {
   readonly reportInventory: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listWebhookSubscriptions: (args: WebhookListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getWebhookSubscription: (args: WebhookGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly startBulkOperation: (args: BulkStartToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getCurrentBulkOperation: (args: BulkStatusToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly fetchBulkOperationResult: (args: BulkResultToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly cancelBulkOperation: (args: BulkCancelToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly appendAuditEvent?: (event: AuditEventInput) => Promise<void> | void;
 }
 
@@ -157,6 +182,32 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
         result = sanitizeToolOutput(await callDependency(() => deps.reportInventory(reportArgs)));
         break;
       }
+      case 'shopify.bulk.start': {
+        validateExactArgs(args, ['shop', 'templateId']);
+        result = sanitizeToolOutput(await callDependency(() => deps.startBulkOperation({
+          shop: readRequiredString(args, 'shop'),
+          templateId: readRequiredString(args, 'templateId'),
+        })));
+        break;
+      }
+      case 'shopify.bulk.status': {
+        validateExactArgs(args, ['shop']);
+        result = sanitizeToolOutput(await callDependency(() => deps.getCurrentBulkOperation({ shop: readRequiredString(args, 'shop') })));
+        break;
+      }
+      case 'shopify.bulk.result': {
+        validateExactArgs(args, ['shop', 'url', 'maxLines', 'maxBytes']);
+        result = sanitizeToolOutput(await callDependency(() => deps.fetchBulkOperationResult(readBulkResultArgs(args))));
+        break;
+      }
+      case 'shopify.bulk.cancel': {
+        validateExactArgs(args, ['shop', 'id']);
+        result = sanitizeToolOutput(await callDependency(() => deps.cancelBulkOperation({
+          shop: readRequiredString(args, 'shop'),
+          id: readRequiredString(args, 'id'),
+        })));
+        break;
+      }
       case 'shopify.webhooks.list': {
         validateExactArgs(args, ['shop', 'first', 'after']);
         const webhookArgs = readWebhookListArgs(args);
@@ -214,6 +265,8 @@ function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, err
     mode: 'read-only',
     toolName: sanitizeAuditString(name),
     ...(isReportToolName(name) ? readAuditFormat(args) : {}),
+    ...(name === 'shopify.bulk.start' ? readAuditTemplate(args) : {}),
+    ...(name === 'shopify.bulk.result' ? readAuditResultLimits(args) : {}),
     ...(name === 'shopify.report_inventory' ? readAuditThreshold(args) : {}),
     ...(reason === undefined ? {} : { reason: sanitizeAuditString(reason) }),
     ...(errorCode === undefined ? {} : { errorCode }),
@@ -293,6 +346,17 @@ function readAuditFormat(args: unknown): { readonly format?: ProductsReportForma
 
 function readAuditThreshold(args: unknown): { readonly threshold?: number } {
   return isRecord(args) && Number.isInteger(args.lowStockThreshold) ? { threshold: args.lowStockThreshold as number } : {};
+}
+
+function readAuditTemplate(args: unknown): { readonly templateId?: string } {
+  return isRecord(args) && typeof args.templateId === 'string' ? { templateId: sanitizeAuditString(args.templateId) } : {};
+}
+
+function readAuditResultLimits(args: unknown): { readonly maxLines?: number; readonly maxBytes?: number } {
+  return {
+    ...(isRecord(args) && Number.isInteger(args.maxLines) ? { maxLines: args.maxLines as number } : {}),
+    ...(isRecord(args) && Number.isInteger(args.maxBytes) ? { maxBytes: args.maxBytes as number } : {}),
+  };
 }
 
 function sanitizeAuditString(value: string): string {
@@ -493,6 +557,15 @@ function readWebhookGetArgs(args: unknown): WebhookGetToolArgs {
   };
 }
 
+function readBulkResultArgs(args: unknown): BulkResultToolArgs {
+  return {
+    shop: readRequiredString(args, 'shop'),
+    url: readRequiredString(args, 'url'),
+    ...readOptionalBoundedPositiveIntegerProperty(args, 'maxLines', 100),
+    ...readOptionalBoundedPositiveIntegerProperty(args, 'maxBytes', 1_000_000),
+  };
+}
+
 function readRequiredString(args: unknown, key: string): string {
   if (!isRecord(args) || typeof args[key] !== 'string' || args[key].trim().length === 0) {
     throw new McpToolError(`Missing required argument: ${key}.`);
@@ -528,6 +601,24 @@ function readOptionalIntegerProperty(args: unknown, key: string): Record<string,
     throw new McpToolError(`Invalid argument: ${key}.`);
   }
   return { [key]: args[key] as number };
+}
+
+function readOptionalPositiveIntegerProperty(args: unknown, key: string): Record<string, number> {
+  if (!isRecord(args) || args[key] === undefined) {
+    return {};
+  }
+  if (!Number.isInteger(args[key]) || (args[key] as number) < 1) {
+    throw new McpToolError(`Invalid argument: ${key}.`);
+  }
+  return { [key]: args[key] as number };
+}
+
+function readOptionalBoundedPositiveIntegerProperty(args: unknown, key: string, max: number): Record<string, number> {
+  const value = readOptionalPositiveIntegerProperty(args, key);
+  if (value[key] !== undefined && value[key] > max) {
+    throw new McpToolError(`Invalid argument: ${key}.`);
+  }
+  return value;
 }
 
 function jsonRpcError(id: string | number | null, code: number, message: string, errorCode?: SafeErrorCode): unknown {

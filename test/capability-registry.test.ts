@@ -27,6 +27,10 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'reports.products.read',
       'reports.orders.read',
       'reports.inventory.read',
+      'bulk.operations.read.start',
+      'bulk.operations.read.status',
+      'bulk.operations.read.result',
+      'bulk.operations.read.cancel',
       'webhooks.list.read',
       'webhooks.get.read',
     ]);
@@ -67,6 +71,28 @@ describe('Admin Graph capability registry and tool policy model', () => {
     });
     expect(inventoryReport.pagination).toContain('inventory levels');
     expect(inventoryReport.cost).toContain('MAX_COST_EXCEEDED');
+
+    const bulkStart = expectCapability('bulk.operations.read.start');
+    expect(bulkStart).toMatchObject({
+      domain: 'reports',
+      operationName: 'BulkOperationRunQuery',
+      requiredScopes: ['read_products', 'read_orders', 'read_inventory', 'read_locations'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'bulk.start',
+      surfaces: { mcp: { toolName: 'shopify.bulk.start' } },
+    });
+    expect(bulkStart.pagination).toContain('curated read-only template');
+    expect(bulkStart.pagination).toContain('no arbitrary GraphQL input');
+    expect(expectCapability('bulk.operations.read.result')).toMatchObject({
+      operationName: 'BulkOperationResultPreview',
+      surfaces: { mcp: { toolName: 'shopify.bulk.result' } },
+    });
+    expect(expectCapability('bulk.operations.read.cancel')).toMatchObject({
+      operationName: 'BulkOperationCancel',
+      access: 'read',
+      surfaces: { mcp: { toolName: 'shopify.bulk.cancel' } },
+    });
 
     const webhookList = expectCapability('webhooks.list.read');
     expect(webhookList).toMatchObject({
