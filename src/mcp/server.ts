@@ -6,9 +6,10 @@ import { type AuditEventInput } from '../audit.js';
 import { CAPABILITY_MCP_TOOL_DEFINITIONS, type McpToolDefinition } from '../capabilities.js';
 import { InventoryReportError, INVENTORY_MAX_COST_REMEDIATION_MESSAGE } from '../reports/inventory.js';
 import { type ProductsReportFormat } from '../reports/products.js';
+import { redactSensitiveText } from '../shopify/admin-client.js';
+import { MissingShopifyScopesError } from '../shopify/scopes.js';
 import { type VerifyShopResult } from '../shops/verify.js';
 import { summarizeShopMetadata, type AllowedShopMetadata } from '../shops/metadata.js';
-import { redactSensitiveText } from '../shopify/admin-client.js';
 import { type StoredShopToken, type TokenStore } from '../tokens/local-token-store.js';
 import { isJsonPlainRecord as isRecord } from '../util/json.js';
 
@@ -186,6 +187,9 @@ async function callDependency<T>(operation: () => Promise<T> | T): Promise<T> {
   } catch (error) {
     if (error instanceof InventoryReportError && error.code === 'MAX_COST_EXCEEDED') {
       throw new McpToolError(INVENTORY_MAX_COST_REMEDIATION_MESSAGE);
+    }
+    if (error instanceof MissingShopifyScopesError) {
+      throw new McpToolError(error.message);
     }
     throw new Error('Tool call failed.', { cause: error });
   }

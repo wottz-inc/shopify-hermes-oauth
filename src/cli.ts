@@ -17,6 +17,7 @@ import { formatOrdersReport, generateOrdersReport, parseOrdersReportWindow, type
 import { formatProductsReport, generateProductsReport, type ProductsReportFormat } from './reports/products.js';
 import { createOAuthHttpServer } from './server.js';
 import { createShopifyAdminGraphqlClient, redactSensitiveErrorMessage } from './shopify/admin-client.js';
+import { compareShopifyScopes, MissingShopifyScopesError, missingShopifyScopes, normalizeShopifyScopes } from './shopify/scopes.js';
 import { verifyShop, type VerifyShopResult } from './shops/verify.js';
 import { LocalJsonTokenStore, normalizeTokenStoreShopDomain, parseLocalJsonTokenStoreFile, type StoredShopToken } from './tokens/local-token-store.js';
 import { getWebhookSubscription, listWebhookSubscriptions } from './webhooks/subscriptions.js';
@@ -348,22 +349,10 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
       throw new Error(`No stored OAuth token found for ${normalizedShop}.`);
     }
 
-    if (subcommand === 'orders' && !token.scopes.includes('read_orders')) {
-      throw new Error(`Stored OAuth token for ${normalizedShop} is missing required scope: read_orders.`);
-    }
-
-    if (subcommand === 'inventory') {
-      if (!token.scopes.includes('read_inventory')) {
-        throw new Error(`Stored OAuth token for ${normalizedShop} is missing required scope: read_inventory.`);
-      }
-
-      if (!token.scopes.includes('read_products')) {
-        throw new Error(`Stored OAuth token for ${normalizedShop} is missing required scope: read_products.`);
-      }
-
-      if (!token.scopes.includes('read_locations')) {
-        throw new Error(`Stored OAuth token for ${normalizedShop} is missing required scope: read_locations.`);
-      }
+    const requiredScopes = requiredReportScopes(subcommand);
+    const missingScopes = missingShopifyScopes(token.scopes, requiredScopes);
+    if (missingScopes.length > 0) {
+      throw new MissingShopifyScopesError(normalizedShop, missingScopes);
     }
 
     const adminClient = createShopifyAdminGraphqlClient({
@@ -799,13 +788,29 @@ function parseServeArgs(args: readonly string[]): ServeArgs | undefined {
 }
 
 function parseScopeList(value: string): readonly string[] {
-  const scopes = value.split(',').map((scope) => scope.trim()).filter((scope) => scope.length > 0);
+  const scopes = normalizeShopifyScopes(value);
 
   if (scopes.length > MAX_SHOPIFY_HERMES_SCOPES) {
     throw new Error('Invalid Shopify OAuth scope configuration.');
   }
 
   return scopes;
+}
+
+function requiredReportScopes(report: string): readonly string[] {
+  if (report === 'products') {
+    return ['read_products'];
+  }
+
+  if (report === 'orders') {
+    return ['read_orders'];
+  }
+
+  if (report === 'inventory') {
+    return ['read_inventory', 'read_products', 'read_locations'];
+  }
+
+  return [];
 }
 
 async function runHermes(args: readonly string[], context: CliContext): Promise<number> {
@@ -1303,6 +1308,9 @@ async function runDoctor(context: CliContext): Promise<number> {
   const cloudflaredOk = await context.commandExists('cloudflared');
   const ngrokOk = await context.commandExists('ngrok');
   const tokenStoreStatus = await checkTokenStoreStatus(context, paths.tokenStore);
+  const scopeDriftWarnings = tokenStoreStatus === 'ok'
+    ? await readScopeDriftWarnings(context, paths.tokenStore, mergedEnv.SHOPIFY_HERMES_SCOPES ?? DEFAULT_SHOPIFY_HERMES_SCOPES)
+    : [];
   const auditWritable = await checkAuditWritable(context, paths.auditLog);
 
   context.stdout('Shopify Hermes OAuth doctor');
@@ -1320,6 +1328,10 @@ async function runDoctor(context: CliContext): Promise<number> {
     context.stdout('Required configuration: ok');
   } else {
     context.stdout(`Missing required configuration: ${missingConfigKeys.join(', ')}`);
+  }
+
+  for (const warning of scopeDriftWarnings) {
+    context.stdout(warning);
   }
 
   if (tokenStoreStatus === 'corrupted') {
@@ -1479,6 +1491,30 @@ async function checkAuditWritable(context: CliContext, auditLogPath: string): Pr
     return true;
   } catch {
     return false;
+  }
+}
+
+async function readScopeDriftWarnings(context: CliContext, tokenStorePath: string, configuredScopesInput: string): Promise<readonly string[]> {
+  try {
+    const content = await context.readFile(tokenStorePath);
+    if (content === undefined) {
+      return [];
+    }
+
+    const tokenStoreFile = parseLocalJsonTokenStoreFile(JSON.parse(content) as unknown);
+    const configuredScopes = parseScopeList(configuredScopesInput);
+    const warnings: string[] = [];
+
+    for (const token of Object.values(tokenStoreFile.shops)) {
+      const extraScopes = compareShopifyScopes({ granted: token.scopes, configured: configuredScopes }).extra;
+      if (extraScopes.length > 0) {
+        warnings.push(`Scope drift warning: ${sanitizeCliField(token.shop)} has granted scopes outside current configuration: ${sanitizeCliField(extraScopes.join(','))}. Reinstall or re-authorize the shop to return to least privilege.`);
+      }
+    }
+
+    return warnings;
+  } catch {
+    return [];
   }
 }
 
@@ -1912,10 +1948,9 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
       throw new Error(`No stored OAuth token found for ${shop}.`);
     }
 
-    for (const scope of requiredScopes) {
-      if (!token.scopes.includes(scope)) {
-        throw new Error(`Stored OAuth token for ${shop} is missing required scope: ${scope}.`);
-      }
+    const missingScopes = missingShopifyScopes(token.scopes, requiredScopes);
+    if (missingScopes.length > 0) {
+      throw new MissingShopifyScopesError(shop, missingScopes);
     }
 
     return {
@@ -1941,7 +1976,7 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
       appendAuditEvent: async (event) => appendAuditEventBestEffort(context, runtime.paths.auditLog, enrichAuditEvent(event, 'mcp', 'read-only')),
     }),
     reportProducts: async ({ shop, format }) => {
-      const reportRuntime = await reportClientFor(shop);
+      const reportRuntime = await reportClientFor(shop, ['read_products']);
       const report = await generateProductsReport({ client: reportRuntime.client });
       return { shop: reportRuntime.shop, format, report, formatted: formatProductsReport(report, format) };
     },
