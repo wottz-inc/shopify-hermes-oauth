@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { ShopifyAdminGraphqlError, createShopifyAdminGraphqlClient, redactHttpBody, redactSensitiveText } from '../src/shopify/admin-client.js';
+import {
+  ShopifyAdminGraphqlError,
+  buildShopifyAdminGraphqlEndpoint,
+  createShopifyAdminGraphqlClient,
+  normalizeShopifyAdminApiVersion,
+  redactHttpBody,
+  redactSensitiveText,
+} from '../src/shopify/admin-client.js';
 
 const SHOP = 'example.myshopify.com';
 const TOKEN = 'shpat_super_secret_token';
@@ -65,8 +72,88 @@ describe('Shopify Admin GraphQL client', () => {
       'x-shopify-access-token': TOKEN,
     });
     expect(JSON.parse(calls[0]?.init.body as string)).toEqual({
-      query: '{ shop { name myshopifyDomain currencyCode } }',
+      query: 'query ShopMetadata { shop { name myshopifyDomain currencyCode } }',
+      operationName: 'ShopMetadata',
     });
+  });
+
+  it('normalizes Shopify Admin API versions and centrally builds GraphQL endpoints', () => {
+    expect(normalizeShopifyAdminApiVersion(' 2026-01 ')).toBe('2026-01');
+    expect(normalizeShopifyAdminApiVersion('unstable')).toBe('unstable');
+    expect(buildShopifyAdminGraphqlEndpoint('Example.MyShopify.com', '2026-12')).toBe(
+      'https://example.myshopify.com/admin/api/2026-12/graphql.json',
+    );
+  });
+
+  it.each(['', ' ', '2026-00', '2026-13', '2026-1', '2026-01/../unstable', '2026-01?x=1', '2026 01'])(
+    'rejects invalid Shopify Admin API version %j before fetching without echoing the raw input', async (apiVersion) => {
+      const fetch: typeof globalThis.fetch = () => {
+        expect.unreachable('invalid API versions must fail before network I/O');
+      };
+      const client = createShopifyAdminGraphqlClient({ apiVersion, fetch });
+
+      await expect(client.query({ shop: SHOP, accessToken: TOKEN, query: '{ ok }' })).rejects.toThrow(ShopifyAdminGraphqlError);
+      await expect(client.query({ shop: SHOP, accessToken: TOKEN, query: '{ ok }' })).rejects.toThrow('Invalid Shopify Admin API version.');
+      try {
+        await client.query({ shop: SHOP, accessToken: TOKEN, query: '{ ok }' });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        expect(message).toBe('Invalid Shopify Admin API version.');
+        if (apiVersion.trim().length > 0) {
+          expect(message).not.toContain(apiVersion);
+        }
+      }
+    },
+  );
+
+  it('serializes safe GraphQL operation names and includes them in safe diagnostics and telemetry', async () => {
+    const calls: { readonly url: string; readonly init: RequestInit }[] = [];
+    const telemetry: unknown[] = [];
+    const fetch: typeof globalThis.fetch = (url, init) => {
+      calls.push({ url: fetchInputToString(url), init: init ?? {} });
+      return Promise.resolve(jsonResponse({
+        errors: [{ message: 'safe failure' }],
+        extensions: { cost: { requestedQueryCost: 1 } },
+      }));
+    };
+    const client = createShopifyAdminGraphqlClient({ apiVersion: '2026-01', fetch, onTelemetry: (event) => telemetry.push(event) });
+
+    await expect(client.query({ shop: SHOP, accessToken: TOKEN, query: 'query ProductsReport { products { edges { node { id } } } }', operationName: 'ProductsReport' })).rejects.toThrow(
+      'operationName=ProductsReport',
+    );
+
+    expect(JSON.parse(calls[0]?.init.body as string)).toEqual({
+      query: 'query ProductsReport { products { edges { node { id } } } }',
+      operationName: 'ProductsReport',
+    });
+    expect(telemetry).toEqual([{ shop: SHOP, operationName: 'ProductsReport', requestedQueryCost: 1 }]);
+  });
+
+  it.each([
+    ['PII-like operation name', 'Customers Report alice@example.test', 'alice'],
+    ['secret-like GraphQL identifier', 'shpat_abc123TOKEN', 'shpat_abc123TOKEN'],
+    ['access-token identifier', 'accessToken', 'accessToken'],
+    ['callback identifier', 'callbackUrl', 'callbackUrl'],
+    ['API-key identifier', 'ApiKeyLookup', 'ApiKeyLookup'],
+    ['auth identifier', 'AuthLookup', 'AuthLookup'],
+    ['OAuth identifier', 'OAuthLookup', 'OAuthLookup'],
+    ['session-cookie identifier', 'sessionCookie', 'sessionCookie'],
+  ] as const)('rejects unsafe GraphQL operation names before fetching without echoing raw input: %s', async (_name, unsafeOperationName, leakedValue) => {
+    const fetch: typeof globalThis.fetch = () => {
+      expect.unreachable('invalid operation names must fail before network I/O');
+    };
+    const client = createShopifyAdminGraphqlClient({ apiVersion: '2026-01', fetch });
+
+    await expect(client.query({ shop: SHOP, accessToken: TOKEN, query: '{ ok }', operationName: unsafeOperationName })).rejects.toThrow(
+      'Invalid Shopify Admin GraphQL operation name.',
+    );
+    try {
+      await client.query({ shop: SHOP, accessToken: TOKEN, query: '{ ok }', operationName: unsafeOperationName });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).not.toContain(leakedValue);
+      expect(message).not.toContain(unsafeOperationName);
+    }
   });
 
   it('throws redacted errors for GraphQL failures without raw tokens or sensitive headers', async () => {
@@ -394,10 +481,11 @@ describe('Shopify Admin GraphQL client', () => {
       onTelemetry: (event) => telemetry.push(event),
     });
 
-    await client.query({ shop: SHOP, accessToken: TOKEN, query: '{ customers { edges { node { email } } } }', operationName: 'Customers Report alice@example.test' });
+    await client.query({ shop: SHOP, accessToken: TOKEN, query: '{ customers { edges { node { email } } } }', operationName: 'CustomersReport' });
 
     expect(telemetry).toEqual([{
       shop: SHOP,
+      operationName: 'CustomersReport',
       requestedQueryCost: 12,
       actualQueryCost: 8,
       throttleStatus: {

@@ -64,6 +64,27 @@ describe('products report service', () => {
     expect(calls).toEqual([{ after: null }, { after: 'cursor-1' }]);
   });
 
+  it('passes the ProductsReport operation name with each query', async () => {
+    const operationNames: unknown[] = [];
+    const client: ProductsReportGraphqlClient = {
+      query: (_query, _variables, options) => {
+        operationNames.push(options?.operationName);
+        return Promise.resolve({
+          data: {
+            products: {
+              edges: [],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+        });
+      },
+    };
+
+    await generateProductsReport({ client });
+
+    expect(operationNames).toEqual(['ProductsReport']);
+  });
+
   it('formats markdown, json, and csv without nondeterministic fields', () => {
     const report = {
       products: [
