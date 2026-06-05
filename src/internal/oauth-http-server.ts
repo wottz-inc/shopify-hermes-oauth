@@ -29,6 +29,7 @@ class OAuthCallbackError extends Error {
 export interface OAuthHttpServerConfig {
   readonly clientId: string;
   readonly clientSecret: string;
+  readonly oldClientSecret?: string;
   readonly appUrl: string;
   readonly scopes: readonly string[];
 }
@@ -294,9 +295,27 @@ function assertNoDuplicateCallbackParams(params: URLSearchParams): void {
 }
 
 export function createShopifyHmacValidator(config: OAuthHttpServerConfig): OAuthCallbackHmacValidator {
+  const currentValidator = createShopifyHmacValidatorForSecret(config, config.clientSecret);
+  const oldValidator = isPresent(config.oldClientSecret) && config.oldClientSecret !== config.clientSecret
+    ? createShopifyHmacValidatorForSecret(config, config.oldClientSecret)
+    : undefined;
+
+  return async (query) => {
+    if (await currentValidator(query)) {
+      return true;
+    }
+
+    return oldValidator === undefined ? false : oldValidator(query);
+  };
+}
+
+function createShopifyHmacValidatorForSecret(
+  config: OAuthHttpServerConfig,
+  clientSecret: string,
+): OAuthCallbackHmacValidator {
   const shopify = shopifyApi({
     apiKey: config.clientId,
-    apiSecretKey: config.clientSecret,
+    apiSecretKey: clientSecret,
     apiVersion: ApiVersion.January26,
     hostName: new URL(config.appUrl).host,
     isEmbeddedApp: false,
@@ -336,6 +355,10 @@ function parseTimestamp(value: string): number {
   return timestamp;
 }
 
+
+function isPresent(value: string | undefined): value is string {
+  return value !== undefined && value.trim().length > 0;
+}
 
 function normalizeScopes(scopes: readonly string[] | string): readonly string[] {
   const scopeList = typeof scopes === 'string' ? scopes.split(',') : scopes;

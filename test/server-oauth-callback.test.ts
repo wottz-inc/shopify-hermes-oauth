@@ -403,6 +403,117 @@ describe('OAuth callback HMAC validation', () => {
     expect(exchangedCodes).toEqual(['oauth-code']);
     expect(storedShops).toEqual(['example.myshopify.com']);
   });
+
+  it('accepts callback HMACs signed with the current secret when an old secret is configured', async () => {
+    const storedShops: string[] = [];
+    const timestamp = Math.floor(Date.now() / 1_000).toString(10);
+    const dependencies: OAuthHttpServerDependencies = {
+      ...baseDependencies(),
+      now: Date.now,
+      config: {
+        ...baseDependencies().config,
+        clientSecret: 'current-client-secret',
+        oldClientSecret: 'old-client-secret',
+      },
+      tokenStore: {
+        storeToken: ({ shop }) => {
+          storedShops.push(shop);
+        },
+      },
+    };
+    const server = await listen(createOAuthHttpServer(dependencies));
+    const baseUrl = serverBaseUrl(server);
+    const params = new URLSearchParams({
+      shop: 'example.myshopify.com',
+      code: 'oauth-code',
+      state: 'state-value',
+      timestamp,
+    });
+    params.set('hmac', signCallbackParams(params, 'current-client-secret'));
+
+    const response = await fetch(`${baseUrl}/auth/callback?${params.toString()}`);
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toBe('OAuth install complete');
+    expect(storedShops).toEqual(['example.myshopify.com']);
+  });
+
+  it('accepts callback HMACs signed with the old secret during rotation without exposing which secret matched', async () => {
+    const storedShops: string[] = [];
+    const timestamp = Math.floor(Date.now() / 1_000).toString(10);
+    const dependencies: OAuthHttpServerDependencies = {
+      ...baseDependencies(),
+      now: Date.now,
+      config: {
+        ...baseDependencies().config,
+        clientSecret: 'current-client-secret',
+        oldClientSecret: 'old-client-secret',
+      },
+      tokenStore: {
+        storeToken: ({ shop }) => {
+          storedShops.push(shop);
+        },
+      },
+    };
+    const server = await listen(createOAuthHttpServer(dependencies));
+    const baseUrl = serverBaseUrl(server);
+    const params = new URLSearchParams({
+      shop: 'example.myshopify.com',
+      code: 'oauth-code',
+      state: 'state-value',
+      timestamp,
+    });
+    params.set('hmac', signCallbackParams(params, 'old-client-secret'));
+
+    const response = await fetch(`${baseUrl}/auth/callback?${params.toString()}`);
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toBe('OAuth install complete');
+    expect(body).not.toContain('old');
+    expect(body).not.toContain('current');
+    expect(storedShops).toEqual(['example.myshopify.com']);
+  });
+
+  it('rejects callback HMACs that match neither the current nor old secret without leaking rotation details', async () => {
+    let consumedState: string | undefined;
+    const timestamp = Math.floor(Date.now() / 1_000).toString(10);
+    const dependencies: OAuthHttpServerDependencies = {
+      ...baseDependencies(),
+      now: Date.now,
+      config: {
+        ...baseDependencies().config,
+        clientSecret: 'current-client-secret',
+        oldClientSecret: 'old-client-secret',
+      },
+      stateStore: {
+        ...baseDependencies().stateStore,
+        consume: (state) => {
+          consumedState = state;
+          throw new Error('state must not be consumed after invalid HMAC');
+        },
+      },
+    };
+    const server = await listen(createOAuthHttpServer(dependencies));
+    const baseUrl = serverBaseUrl(server);
+    const params = new URLSearchParams({
+      shop: 'example.myshopify.com',
+      code: 'oauth-code',
+      state: 'state-value',
+      timestamp,
+    });
+    params.set('hmac', signCallbackParams(params, 'neither-client-secret'));
+
+    const response = await fetch(`${baseUrl}/auth/callback?${params.toString()}`);
+    const body = await response.text();
+
+    expect(response.status).toBe(400);
+    expect(body).toBe('Invalid OAuth callback');
+    expect(body).not.toContain('old');
+    expect(body).not.toContain('current');
+    expect(consumedState).toBeUndefined();
+  });
 });
 
 async function listen(server: Server): Promise<Server> {

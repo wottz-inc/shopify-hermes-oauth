@@ -655,6 +655,7 @@ async function runServe(args: readonly string[], context: CliContext): Promise<n
     const appUrl = parsedArgs.appUrl ?? runtime.mergedEnv.SHOPIFY_HERMES_APP_URL;
     const clientId = runtime.mergedEnv.SHOPIFY_HERMES_CLIENT_ID;
     const clientSecret = runtime.mergedEnv.SHOPIFY_HERMES_CLIENT_SECRET;
+    const oldClientSecret = runtime.mergedEnv.SHOPIFY_HERMES_OLD_CLIENT_SECRET;
 
     if (!isPresent(clientId) || !isPresent(clientSecret) || !isPresent(appUrl)) {
       context.stderr('Missing required configuration. Set SHOPIFY_HERMES_CLIENT_ID, SHOPIFY_HERMES_CLIENT_SECRET, and SHOPIFY_HERMES_APP_URL or pass --app-url.');
@@ -666,7 +667,13 @@ async function runServe(args: readonly string[], context: CliContext): Promise<n
     const scopes = parseScopeList(runtime.mergedEnv.SHOPIFY_HERMES_SCOPES ?? DEFAULT_SHOPIFY_HERMES_SCOPES);
     const tokenStore = createTokenStoreForPath(runtime.paths.tokenStore, context);
     const server = createOAuthHttpServer({
-      config: { clientId, clientSecret, appUrl, scopes },
+      config: {
+        clientId,
+        clientSecret,
+        ...(isPresent(oldClientSecret) ? { oldClientSecret } : {}),
+        appUrl,
+        scopes,
+      },
       stateStore: new InMemoryOAuthStateStore(),
       tokenStore,
       tokenExchange: async ({ shop, code, redirectUri }) => exchangeShopifyOAuthToken({
@@ -1334,6 +1341,12 @@ async function runDoctor(context: CliContext): Promise<number> {
     context.stdout(`Missing required configuration: ${missingConfigKeys.join(', ')}`);
   }
 
+  context.stdout(formatClientSecretRotationStatus(mergedEnv));
+
+  for (const warning of clientSecretRotationWarnings(mergedEnv)) {
+    context.stdout(warning);
+  }
+
   for (const warning of scopeDriftWarnings) {
     context.stdout(warning);
   }
@@ -1536,6 +1549,33 @@ function formatTokenStoreStatus(status: TokenStoreDoctorStatus): string {
   }
 
   return 'Token store: corrupted/invalid JSON';
+}
+
+function formatClientSecretRotationStatus(
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  if (!isPresent(env.SHOPIFY_HERMES_OLD_CLIENT_SECRET)) {
+    return 'OAuth client secret rotation fallback: disabled';
+  }
+
+  return 'OAuth client secret rotation fallback: enabled (current secret first, then old secret; does not report which secret matched)';
+}
+
+function clientSecretRotationWarnings(
+  env: Readonly<Record<string, string | undefined>>,
+): readonly string[] {
+  if (!isPresent(env.SHOPIFY_HERMES_OLD_CLIENT_SECRET)) {
+    return [];
+  }
+
+  const rotatedAt = env.SHOPIFY_HERMES_OLD_CLIENT_SECRET_ROTATED_AT;
+  const cleanup = 'remove SHOPIFY_HERMES_OLD_CLIENT_SECRET after the transition window';
+
+  if (isPresent(rotatedAt)) {
+    return [`Old client secret configured since ${sanitizeCliField(rotatedAt)}; ${cleanup}.`];
+  }
+
+  return [`Old client secret fallback is temporary; ${cleanup}.`];
 }
 
 async function runCredentials(args: readonly string[], context: CliContext): Promise<number> {

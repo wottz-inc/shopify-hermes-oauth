@@ -17,6 +17,7 @@ const REQUIRED_ENV_KEYS = [
 export interface ShopifyHermesConfig {
   readonly clientId: string;
   readonly clientSecret: string;
+  readonly oldClientSecret?: string;
   readonly appUrl: string;
   readonly scopes: readonly string[];
   readonly paths: ShopifyHermesPaths;
@@ -55,6 +56,7 @@ export function loadShopifyHermesConfig(
   return {
     clientId: getRequiredValue(values, 'SHOPIFY_HERMES_CLIENT_ID'),
     clientSecret: getRequiredValue(values, 'SHOPIFY_HERMES_CLIENT_SECRET'),
+    oldClientSecret: getOptionalValue(values, 'SHOPIFY_HERMES_OLD_CLIENT_SECRET'),
     appUrl: getRequiredValue(values, 'SHOPIFY_HERMES_APP_URL'),
     scopes: parseScopes(values.SHOPIFY_HERMES_SCOPES),
     paths,
@@ -201,6 +203,12 @@ function getRequiredValue(values: Record<string, string>, key: string): string {
   }
 
   return value;
+}
+
+function getOptionalValue(values: Record<string, string>, key: string): string | undefined {
+  const value = values[key];
+
+  return isPresent(value) ? value : undefined;
 }
 
 function redactUnknown(value: unknown, key?: string): unknown {
