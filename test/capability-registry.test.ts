@@ -33,6 +33,9 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'bulk.operations.read.cancel',
       'webhooks.list.read',
       'webhooks.get.read',
+      'products.get.read',
+      'collections.list.read',
+      'collections.get.read',
       'customers.list.read',
       'customers.get.read',
     ]);
@@ -117,6 +120,39 @@ describe('Admin Graph capability registry and tool policy model', () => {
       riskLevel: 'read_low',
       auditEvent: 'webhooks.get',
       surfaces: { mcp: { toolName: 'shopify.webhooks.get' } },
+    });
+
+    expect(expectCapability('products.get.read')).toMatchObject({
+      domain: 'products',
+      operationName: 'ProductDetail',
+      requiredScopes: ['read_products'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'products.get',
+      surfaces: { mcp: { toolName: 'shopify.products.get' } },
+    });
+
+    const collectionList = expectCapability('collections.list.read');
+    expect(collectionList).toMatchObject({
+      domain: 'collections',
+      operationName: 'Collections',
+      requiredScopes: ['read_products'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'collections.list',
+      surfaces: { mcp: { toolName: 'shopify.collections.list' } },
+    });
+    expect(collectionList.pagination).toContain('1..50');
+    expect(collectionList.cost).toContain('bounded');
+
+    expect(expectCapability('collections.get.read')).toMatchObject({
+      domain: 'collections',
+      operationName: 'CollectionDetail',
+      requiredScopes: ['read_products'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'collections.get',
+      surfaces: { mcp: { toolName: 'shopify.collections.get' } },
     });
 
     const customerList = expectCapability('customers.list.read');

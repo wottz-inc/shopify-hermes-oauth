@@ -36,6 +36,23 @@ export interface WebhookGetToolArgs {
   readonly id: string;
 }
 
+export interface ProductGetToolArgs {
+  readonly shop: string;
+  readonly id: string;
+}
+
+export interface CollectionListToolArgs {
+  readonly shop: string;
+  readonly first?: number;
+  readonly after?: string;
+  readonly query?: string;
+}
+
+export interface CollectionGetToolArgs {
+  readonly shop: string;
+  readonly id: string;
+}
+
 export interface CustomerListToolArgs {
   readonly shop: string;
   readonly first?: number;
@@ -79,6 +96,9 @@ export interface McpServerDependencies {
   readonly reportInventory: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listWebhookSubscriptions: (args: WebhookListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getWebhookSubscription: (args: WebhookGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getProductDetail: (args: ProductGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listCollections: (args: CollectionListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getCollection: (args: CollectionGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listCustomers: (args: CustomerListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getCustomer: (args: CustomerGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly startBulkOperation: (args: BulkStartToolArgs) => Promise<McpToolOutput> | McpToolOutput;
@@ -234,6 +254,28 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
         result = sanitizeToolOutput(await callDependency(() => deps.getWebhookSubscription(webhookArgs)));
         break;
       }
+      case 'shopify.products.get': {
+        validateExactArgs(args, ['shop', 'id']);
+        result = sanitizeToolOutput(await callDependency(() => deps.getProductDetail({
+          shop: readRequiredString(args, 'shop'),
+          id: readRequiredString(args, 'id'),
+        })));
+        break;
+      }
+      case 'shopify.collections.list': {
+        validateExactArgs(args, ['shop', 'first', 'after', 'query']);
+        const collectionArgs = readCollectionListArgs(args);
+        result = sanitizeToolOutput(await callDependency(() => deps.listCollections(collectionArgs)));
+        break;
+      }
+      case 'shopify.collections.get': {
+        validateExactArgs(args, ['shop', 'id']);
+        result = sanitizeToolOutput(await callDependency(() => deps.getCollection({
+          shop: readRequiredString(args, 'shop'),
+          id: readRequiredString(args, 'id'),
+        })));
+        break;
+      }
       case 'shopify.customers.list': {
         validateExactArgs(args, ['shop', 'first', 'after', 'query']);
         const customerArgs = readCustomerListArgs(args);
@@ -294,7 +336,7 @@ function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, err
     ...(name === 'shopify.bulk.start' ? readAuditTemplate(args) : {}),
     ...(name === 'shopify.bulk.result' ? readAuditResultLimits(args) : {}),
     ...(name === 'shopify.report_inventory' ? readAuditThreshold(args) : {}),
-    ...(name === 'shopify.customers.list' ? readAuditCustomerList(args) : {}),
+    ...(name === 'shopify.customers.list' || name === 'shopify.collections.list' ? readAuditBoundedList(args) : {}),
     ...(reason === undefined ? {} : { reason: sanitizeAuditString(reason) }),
     ...(errorCode === undefined ? {} : { errorCode }),
   };
@@ -386,7 +428,7 @@ function readAuditResultLimits(args: unknown): { readonly maxLines?: number; rea
   };
 }
 
-function readAuditCustomerList(args: unknown): { readonly first?: number; readonly queryPresent?: boolean; readonly afterPresent?: boolean } {
+function readAuditBoundedList(args: unknown): { readonly first?: number; readonly queryPresent?: boolean; readonly afterPresent?: boolean } {
   return {
     ...(isRecord(args) && Number.isInteger(args.first) ? { first: args.first as number } : {}),
     ...(isRecord(args) && typeof args.query === 'string' ? { queryPresent: true } : {}),
@@ -590,6 +632,23 @@ function readWebhookGetArgs(args: unknown): WebhookGetToolArgs {
     shop: readRequiredString(args, 'shop'),
     id: readRequiredString(args, 'id'),
   };
+}
+
+function readCollectionListArgs(args: unknown): CollectionListToolArgs {
+  return {
+    shop: readRequiredString(args, 'shop'),
+    ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50),
+    ...readOptionalStringProperty(args, 'after'),
+    ...readOptionalCollectionSearchQuery(args),
+  };
+}
+
+function readOptionalCollectionSearchQuery(args: unknown): Record<string, string> {
+  const query = readOptionalStringProperty(args, 'query');
+  if (query.query !== undefined && /[{}]|\b(?:mutation|query)\b/iu.test(query.query)) {
+    throw new McpToolError('Invalid argument: query.');
+  }
+  return query;
 }
 
 function readCustomerListArgs(args: unknown): CustomerListToolArgs {
