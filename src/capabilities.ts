@@ -1,6 +1,6 @@
 export type CapabilityAccess = 'read' | 'write' | 'diagnostic';
 export type CapabilityRiskLevel = 'read_low' | 'read_pii' | 'read_financial' | 'write_medium' | 'write_high' | 'protected_data' | 'diagnostic_low';
-export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks';
+export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers';
 export type CapabilityRequiredGate = 'dry_run' | 'explicit_confirmation' | 'audit_logging' | 'rollback_notes';
 
 export type McpToolName =
@@ -15,7 +15,9 @@ export type McpToolName =
   | 'shopify.bulk.result'
   | 'shopify.bulk.cancel'
   | 'shopify.webhooks.list'
-  | 'shopify.webhooks.get';
+  | 'shopify.webhooks.get'
+  | 'shopify.customers.list'
+  | 'shopify.customers.get';
 
 export interface JsonSchema {
   readonly type: 'object';
@@ -130,6 +132,24 @@ const WEBHOOK_GET_SCHEMA: JsonSchema = {
   properties: {
     shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
     id: { type: 'string', description: 'WebhookSubscription GID.' },
+  },
+  required: ['shop', 'id'],
+  additionalProperties: false,
+};
+const CUSTOMER_LIST_SCHEMA: JsonSchema = {
+  ...SHOP_SCHEMA,
+  properties: {
+    ...SHOP_SCHEMA.properties,
+    first: { type: 'integer', minimum: 1, maximum: 50, description: 'Page size. Defaults to 25 and is capped at 50.' },
+    after: { type: 'string', description: 'Optional Shopify cursor for the next page.' },
+    query: { type: 'string', description: 'Explicit Shopify customer search string; omitted means Shopify default customer ordering.' },
+  },
+};
+const CUSTOMER_GET_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    id: { type: 'string', description: 'Customer GID, e.g. gid://shopify/Customer/123.' },
   },
   required: ['shop', 'id'],
   additionalProperties: false,
@@ -354,6 +374,42 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
         toolName: 'shopify.webhooks.get',
         description: 'Inspect one read-only webhook subscription by GID.',
         inputSchema: WEBHOOK_GET_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'customers.list.read',
+    domain: 'customers',
+    operationName: 'Customers',
+    requiredScopes: ['read_customers'],
+    access: 'read',
+    riskLevel: 'read_pii',
+    pagination: 'Paginates customers with explicit cursor and page size 1..50 (default 25); no nested connections.',
+    cost: 'Uses a bounded curated customers query with minimal fields and no raw GraphQL input.',
+    auditEvent: 'customers.list',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.customers.list',
+        description: 'List/search Shopify customers with minimal PII and safe aggregate summaries.',
+        inputSchema: CUSTOMER_LIST_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'customers.get.read',
+    domain: 'customers',
+    operationName: 'Customer',
+    requiredScopes: ['read_customers'],
+    access: 'read',
+    riskLevel: 'read_pii',
+    pagination: 'Single customer lookup by stable Customer GID; no nested connections.',
+    cost: 'Low-cost single customer query with minimal fields only.',
+    auditEvent: 'customers.get',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.customers.get',
+        description: 'Inspect one Shopify customer by stable ID with minimal PII fields.',
+        inputSchema: CUSTOMER_GET_SCHEMA,
       },
     },
   },

@@ -33,6 +33,8 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'bulk.operations.read.cancel',
       'webhooks.list.read',
       'webhooks.get.read',
+      'customers.list.read',
+      'customers.get.read',
     ]);
 
     expect(expectCapability('shops.verify.read')).toMatchObject({
@@ -115,6 +117,32 @@ describe('Admin Graph capability registry and tool policy model', () => {
       riskLevel: 'read_low',
       auditEvent: 'webhooks.get',
       surfaces: { mcp: { toolName: 'shopify.webhooks.get' } },
+    });
+
+    const customerList = expectCapability('customers.list.read');
+    expect(customerList).toMatchObject({
+      domain: 'customers',
+      operationName: 'Customers',
+      requiredScopes: ['read_customers'],
+      access: 'read',
+      riskLevel: 'read_pii',
+      auditEvent: 'customers.list',
+      surfaces: { mcp: { toolName: 'shopify.customers.list' } },
+    });
+    expect(customerList.pagination).toContain('1..50');
+    expect(customerList.cost).toContain('bounded');
+    expect(customerList.surfaces.mcp?.inputSchema.additionalProperties).toBe(false);
+    expect(customerList.surfaces.mcp?.inputSchema.properties).not.toHaveProperty('graphql');
+    expect(customerList.surfaces.mcp?.inputSchema.properties).not.toHaveProperty('mutation');
+
+    expect(expectCapability('customers.get.read')).toMatchObject({
+      domain: 'customers',
+      operationName: 'Customer',
+      requiredScopes: ['read_customers'],
+      access: 'read',
+      riskLevel: 'read_pii',
+      auditEvent: 'customers.get',
+      surfaces: { mcp: { toolName: 'shopify.customers.get' } },
     });
   });
 

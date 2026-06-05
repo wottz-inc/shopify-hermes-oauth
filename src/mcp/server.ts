@@ -36,6 +36,18 @@ export interface WebhookGetToolArgs {
   readonly id: string;
 }
 
+export interface CustomerListToolArgs {
+  readonly shop: string;
+  readonly first?: number;
+  readonly after?: string;
+  readonly query?: string;
+}
+
+export interface CustomerGetToolArgs {
+  readonly shop: string;
+  readonly id: string;
+}
+
 export interface BulkStartToolArgs {
   readonly shop: string;
   readonly templateId: string;
@@ -67,6 +79,8 @@ export interface McpServerDependencies {
   readonly reportInventory: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listWebhookSubscriptions: (args: WebhookListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getWebhookSubscription: (args: WebhookGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listCustomers: (args: CustomerListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getCustomer: (args: CustomerGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly startBulkOperation: (args: BulkStartToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getCurrentBulkOperation: (args: BulkStatusToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly fetchBulkOperationResult: (args: BulkResultToolArgs) => Promise<McpToolOutput> | McpToolOutput;
@@ -220,6 +234,18 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
         result = sanitizeToolOutput(await callDependency(() => deps.getWebhookSubscription(webhookArgs)));
         break;
       }
+      case 'shopify.customers.list': {
+        validateExactArgs(args, ['shop', 'first', 'after', 'query']);
+        const customerArgs = readCustomerListArgs(args);
+        result = sanitizeToolOutput(await callDependency(() => deps.listCustomers(customerArgs)));
+        break;
+      }
+      case 'shopify.customers.get': {
+        validateExactArgs(args, ['shop', 'id']);
+        const customerArgs = readCustomerGetArgs(args);
+        result = sanitizeToolOutput(await callDependency(() => deps.getCustomer(customerArgs)));
+        break;
+      }
       default:
         throw new McpToolError();
     }
@@ -268,6 +294,7 @@ function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, err
     ...(name === 'shopify.bulk.start' ? readAuditTemplate(args) : {}),
     ...(name === 'shopify.bulk.result' ? readAuditResultLimits(args) : {}),
     ...(name === 'shopify.report_inventory' ? readAuditThreshold(args) : {}),
+    ...(name === 'shopify.customers.list' ? readAuditCustomerList(args) : {}),
     ...(reason === undefined ? {} : { reason: sanitizeAuditString(reason) }),
     ...(errorCode === undefined ? {} : { errorCode }),
   };
@@ -356,6 +383,14 @@ function readAuditResultLimits(args: unknown): { readonly maxLines?: number; rea
   return {
     ...(isRecord(args) && Number.isInteger(args.maxLines) ? { maxLines: args.maxLines as number } : {}),
     ...(isRecord(args) && Number.isInteger(args.maxBytes) ? { maxBytes: args.maxBytes as number } : {}),
+  };
+}
+
+function readAuditCustomerList(args: unknown): { readonly first?: number; readonly queryPresent?: boolean; readonly afterPresent?: boolean } {
+  return {
+    ...(isRecord(args) && Number.isInteger(args.first) ? { first: args.first as number } : {}),
+    ...(isRecord(args) && typeof args.query === 'string' ? { queryPresent: true } : {}),
+    ...(isRecord(args) && typeof args.after === 'string' ? { afterPresent: true } : {}),
   };
 }
 
@@ -551,6 +586,30 @@ function readWebhookListArgs(args: unknown): WebhookListToolArgs {
 }
 
 function readWebhookGetArgs(args: unknown): WebhookGetToolArgs {
+  return {
+    shop: readRequiredString(args, 'shop'),
+    id: readRequiredString(args, 'id'),
+  };
+}
+
+function readCustomerListArgs(args: unknown): CustomerListToolArgs {
+  return {
+    shop: readRequiredString(args, 'shop'),
+    ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50),
+    ...readOptionalStringProperty(args, 'after'),
+    ...readOptionalCustomerSearchQuery(args),
+  };
+}
+
+function readOptionalCustomerSearchQuery(args: unknown): Record<string, string> {
+  const query = readOptionalStringProperty(args, 'query');
+  if (query.query !== undefined && /[{}]|\b(?:mutation|query)\b/iu.test(query.query)) {
+    throw new McpToolError('Invalid argument: query.');
+  }
+  return query;
+}
+
+function readCustomerGetArgs(args: unknown): CustomerGetToolArgs {
   return {
     shop: readRequiredString(args, 'shop'),
     id: readRequiredString(args, 'id'),
