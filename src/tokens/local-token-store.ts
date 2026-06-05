@@ -10,10 +10,32 @@ export interface TokenMetadata {
   readonly [key: string]: string | undefined;
 }
 
+export type TokenAccessMode = 'offline' | 'online';
+export type TokenSource = 'authorization_code' | 'token_exchange' | 'client_credentials' | 'manual_import';
+
+export interface AssociatedUserMetadata {
+  readonly id?: string;
+  readonly firstName?: string;
+  readonly lastName?: string;
+  readonly email?: string;
+  readonly accountOwner?: boolean;
+  readonly locale?: string;
+  readonly collaborator?: boolean;
+}
+
 export interface StoredShopToken {
+  readonly schemaVersion?: number;
   readonly shop: string;
   readonly accessToken: string;
   readonly scopes: readonly string[];
+  readonly accessMode?: TokenAccessMode;
+  readonly expiresAt?: string;
+  readonly refreshToken?: string;
+  readonly refreshTokenExpiresAt?: string;
+  readonly grantedScopes?: readonly string[];
+  readonly requestedScopes?: readonly string[];
+  readonly tokenSource?: TokenSource;
+  readonly associatedUser?: AssociatedUserMetadata;
   readonly storedAt: string;
   readonly updatedAt: string;
   readonly metadata?: TokenMetadata;
@@ -23,6 +45,14 @@ export interface StoreShopTokenInput {
   readonly shop: string;
   readonly accessToken: string;
   readonly scopes: readonly string[] | string;
+  readonly accessMode?: TokenAccessMode;
+  readonly expiresAt?: string;
+  readonly refreshToken?: string;
+  readonly refreshTokenExpiresAt?: string;
+  readonly grantedScopes?: readonly string[] | string;
+  readonly requestedScopes?: readonly string[] | string;
+  readonly tokenSource?: TokenSource;
+  readonly associatedUser?: AssociatedUserMetadata;
   readonly metadata?: TokenMetadata;
 }
 
@@ -69,15 +99,36 @@ export class LocalJsonTokenStore implements TokenStore {
     const accessToken = normalizeAccessToken(input.accessToken);
     const scopes = normalizeScopes(input.scopes);
     const metadata = normalizeMetadata(input.metadata);
+    const inputAccessMode = input.accessMode === undefined ? undefined : normalizeAccessMode(input.accessMode);
+    const inputGrantedScopes = input.grantedScopes === undefined ? undefined : normalizeScopes(input.grantedScopes);
+    const inputRequestedScopes = input.requestedScopes === undefined ? undefined : normalizeScopes(input.requestedScopes);
+    const inputTokenSource = input.tokenSource === undefined ? undefined : normalizeTokenSource(input.tokenSource);
+    const inputExpiresAt = normalizeOptionalTimestamp(input.expiresAt, 'expiresAt');
+    const inputRefreshToken = normalizeOptionalSecret(input.refreshToken, 'refreshToken');
+    const inputRefreshTokenExpiresAt = normalizeOptionalTimestamp(input.refreshTokenExpiresAt, 'refreshTokenExpiresAt');
+    const inputAssociatedUser = normalizeAssociatedUser(input.associatedUser);
 
     await this.#withWriteLock(async () => {
       const file = await this.#readStoreFile();
       const existing = file.shops[shop];
       const now = this.#now();
+      const expiresAt = input.expiresAt === undefined ? existing?.expiresAt : inputExpiresAt;
+      const refreshToken = input.refreshToken === undefined ? existing?.refreshToken : inputRefreshToken;
+      const refreshTokenExpiresAt = input.refreshTokenExpiresAt === undefined ? existing?.refreshTokenExpiresAt : inputRefreshTokenExpiresAt;
+      const associatedUser = input.associatedUser === undefined ? existing?.associatedUser : inputAssociatedUser;
       const record: StoredShopToken = {
+        schemaVersion: 1,
         shop,
         accessToken,
         scopes,
+        accessMode: inputAccessMode ?? existing?.accessMode ?? 'offline',
+        ...(expiresAt === undefined ? {} : { expiresAt }),
+        ...(refreshToken === undefined ? {} : { refreshToken }),
+        ...(refreshTokenExpiresAt === undefined ? {} : { refreshTokenExpiresAt }),
+        grantedScopes: inputGrantedScopes ?? existing?.grantedScopes ?? scopes,
+        requestedScopes: inputRequestedScopes ?? existing?.requestedScopes ?? scopes,
+        tokenSource: inputTokenSource ?? existing?.tokenSource ?? 'authorization_code',
+        ...(associatedUser === undefined ? {} : { associatedUser }),
         storedAt: existing?.storedAt ?? now,
         updatedAt: now,
         ...(metadata === undefined ? {} : { metadata }),
@@ -167,10 +218,27 @@ export function parseLocalJsonTokenStoreFile(raw: unknown): TokenStoreFile {
     }
 
     const shop = normalizeTokenStoreShopDomain(typeof value.shop === 'string' ? value.shop : key);
+    const scopes = normalizeScopes(value.scopes);
+    const grantedScopes = normalizeScopes(value.grantedScopes ?? value.scopes);
+    const requestedScopes = normalizeScopes(value.requestedScopes ?? value.scopes);
+    const expiresAt = normalizeOptionalTimestamp(value.expiresAt, 'expiresAt');
+    const refreshToken = normalizeOptionalSecret(value.refreshToken, 'refreshToken');
+    const refreshTokenExpiresAt = normalizeOptionalTimestamp(value.refreshTokenExpiresAt, 'refreshTokenExpiresAt');
+    const associatedUser = normalizeAssociatedUser(value.associatedUser);
+
     shops[shop] = {
+      schemaVersion: normalizeSchemaVersion(value.schemaVersion),
       shop,
       accessToken: normalizeAccessToken(value.accessToken),
-      scopes: normalizeScopes(value.scopes),
+      scopes,
+      accessMode: normalizeAccessMode(value.accessMode ?? 'offline'),
+      ...(expiresAt === undefined ? {} : { expiresAt }),
+      ...(refreshToken === undefined ? {} : { refreshToken }),
+      ...(refreshTokenExpiresAt === undefined ? {} : { refreshTokenExpiresAt }),
+      grantedScopes,
+      requestedScopes,
+      tokenSource: normalizeTokenSource(value.tokenSource ?? 'authorization_code'),
+      ...(associatedUser === undefined ? {} : { associatedUser }),
       storedAt: normalizeTimestamp(value.storedAt, 'storedAt'),
       updatedAt: normalizeTimestamp(value.updatedAt, 'updatedAt'),
       ...(value.metadata === undefined ? {} : { metadata: normalizeMetadata(value.metadata) ?? {} }),
@@ -253,8 +321,98 @@ function normalizeTimestamp(value: unknown, name: string): string {
   return value;
 }
 
+function normalizeOptionalTimestamp(value: unknown, name: string): string | undefined {
+  return value === undefined ? undefined : normalizeTimestamp(value, name);
+}
+
+function normalizeOptionalSecret(value: unknown, name: string): string | undefined {
+  return value === undefined ? undefined : normalizeSecret(value, name);
+}
+
+function normalizeSecret(value: unknown, name: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new TokenStoreError(`Token ${name} must be a non-blank string`);
+  }
+
+  return value;
+}
+
+function normalizeSchemaVersion(value: unknown): number {
+  if (value === undefined) {
+    return 1;
+  }
+
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new TokenStoreError('Token schemaVersion must be a positive integer');
+  }
+
+  return value;
+}
+
+function normalizeAccessMode(value: unknown): TokenAccessMode {
+  if (value === 'offline' || value === 'online') {
+    return value;
+  }
+
+  throw new TokenStoreError('Token accessMode must be offline or online');
+}
+
+function normalizeTokenSource(value: unknown): TokenSource {
+  if (value === 'authorization_code' || value === 'token_exchange' || value === 'client_credentials' || value === 'manual_import') {
+    return value;
+  }
+
+  throw new TokenStoreError('Token source is invalid');
+}
+
+function normalizeAssociatedUser(value: unknown): AssociatedUserMetadata | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    throw new TokenStoreError('Associated user metadata must be an object');
+  }
+
+  const associatedUser: AssociatedUserMetadata = {
+    ...normalizeOptionalStringField(value.id, 'id', 'associatedUser.id'),
+    ...normalizeOptionalStringField(value.firstName, 'firstName', 'associatedUser.firstName'),
+    ...normalizeOptionalStringField(value.lastName, 'lastName', 'associatedUser.lastName'),
+    ...normalizeOptionalStringField(value.email, 'email', 'associatedUser.email'),
+    ...normalizeOptionalBooleanField(value.accountOwner, 'accountOwner', 'associatedUser.accountOwner'),
+    ...normalizeOptionalStringField(value.locale, 'locale', 'associatedUser.locale'),
+    ...normalizeOptionalBooleanField(value.collaborator, 'collaborator', 'associatedUser.collaborator'),
+  };
+
+  return Object.keys(associatedUser).length === 0 ? undefined : associatedUser;
+}
+
+function normalizeOptionalStringField(value: unknown, key: keyof AssociatedUserMetadata, name: string): Partial<AssociatedUserMetadata> {
+  if (value === undefined) {
+    return {};
+  }
+
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new TokenStoreError(`Token ${name} must be a non-blank string`);
+  }
+
+  return { [key]: value };
+}
+
+function normalizeOptionalBooleanField(value: unknown, key: keyof AssociatedUserMetadata, name: string): Partial<AssociatedUserMetadata> {
+  if (value === undefined) {
+    return {};
+  }
+
+  if (typeof value !== 'boolean') {
+    throw new TokenStoreError(`Token ${name} must be a boolean`);
+  }
+
+  return { [key]: value };
+}
+
 function cloneToken(record: StoredShopToken): StoredShopToken {
-  return {
+  const token: StoredShopToken = {
     shop: record.shop,
     accessToken: record.accessToken,
     scopes: [...record.scopes],
@@ -262,6 +420,36 @@ function cloneToken(record: StoredShopToken): StoredShopToken {
     updatedAt: record.updatedAt,
     ...(record.metadata === undefined ? {} : { metadata: { ...record.metadata } }),
   };
+
+  if (record.schemaVersion !== undefined) {
+    (token as { schemaVersion: number }).schemaVersion = record.schemaVersion;
+  }
+  if (record.accessMode !== undefined) {
+    (token as { accessMode: TokenAccessMode }).accessMode = record.accessMode;
+  }
+  if (record.expiresAt !== undefined) {
+    (token as { expiresAt: string }).expiresAt = record.expiresAt;
+  }
+  if (record.refreshToken !== undefined) {
+    (token as { refreshToken: string }).refreshToken = record.refreshToken;
+  }
+  if (record.refreshTokenExpiresAt !== undefined) {
+    (token as { refreshTokenExpiresAt: string }).refreshTokenExpiresAt = record.refreshTokenExpiresAt;
+  }
+  if (record.grantedScopes !== undefined) {
+    (token as { grantedScopes: readonly string[] }).grantedScopes = [...record.grantedScopes];
+  }
+  if (record.requestedScopes !== undefined) {
+    (token as { requestedScopes: readonly string[] }).requestedScopes = [...record.requestedScopes];
+  }
+  if (record.tokenSource !== undefined) {
+    (token as { tokenSource: TokenSource }).tokenSource = record.tokenSource;
+  }
+  if (record.associatedUser !== undefined) {
+    (token as { associatedUser: AssociatedUserMetadata }).associatedUser = { ...record.associatedUser };
+  }
+
+  return token;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

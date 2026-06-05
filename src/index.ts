@@ -60,10 +60,13 @@ export type {
 
 export { LocalJsonTokenStore, TokenStoreError, createLocalJsonTokenStore, normalizeTokenStoreShopDomain } from './tokens/local-token-store.js';
 export type {
+  AssociatedUserMetadata,
   LocalJsonTokenStoreOptions,
   StoredShopToken,
   StoreShopTokenInput,
+  TokenAccessMode,
   TokenMetadata,
+  TokenSource,
   TokenStore,
 } from './tokens/local-token-store.js';
 
