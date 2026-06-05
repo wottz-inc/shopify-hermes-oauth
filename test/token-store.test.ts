@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LocalJsonTokenStore, TokenStoreError } from '../src/tokens/local-token-store.js';
+import { LocalJsonTokenStore, TokenStoreError, type AssociatedUserMetadata } from '../src/tokens/local-token-store.js';
 
 const tempRoots: string[] = [];
 
@@ -84,6 +84,134 @@ describe('LocalJsonTokenStore', () => {
     });
     const updated = await store.getToken('example');
     expect(tokenLength(updated)).toBe('second-token'.length);
+  });
+
+  it('migrates legacy token records to schemaVersion 1 richer metadata without losing tokens', async () => {
+    const { file, store } = await makeStore();
+    await writeFile(file, JSON.stringify({
+      version: 1,
+      shops: {
+        'legacy.myshopify.com': {
+          shop: 'legacy.myshopify.com',
+          accessToken: 'legacy-secret-token',
+          scopes: 'read_orders,read_products',
+          storedAt: '2026-05-21T12:00:00.000Z',
+          updatedAt: '2026-05-21T12:00:00.000Z',
+          metadata: { shopName: 'Legacy Shop' },
+        },
+      },
+    }), { mode: 0o600 });
+
+    const token = await store.getToken('legacy');
+    expect(token).toMatchObject({
+      shop: 'legacy.myshopify.com',
+      schemaVersion: 1,
+      accessMode: 'offline',
+      scopes: ['read_orders', 'read_products'],
+      grantedScopes: ['read_orders', 'read_products'],
+      requestedScopes: ['read_orders', 'read_products'],
+      tokenSource: 'authorization_code',
+      storedAt: '2026-05-21T12:00:00.000Z',
+      updatedAt: '2026-05-21T12:00:00.000Z',
+      metadata: { shopName: 'Legacy Shop' },
+    });
+    expect(tokenLength(token)).toBe('legacy-secret-token'.length);
+
+    await store.storeToken({ shop: 'legacy', accessToken: 'new-secret-token', scopes: ['read_orders'] });
+    const serialized = JSON.parse(await readFile(file, 'utf8')) as { readonly shops: Record<string, { readonly accessToken: string; readonly schemaVersion?: number }> };
+    expect(serialized.shops['legacy.myshopify.com']).toMatchObject({ schemaVersion: 1, accessToken: 'new-secret-token' });
+  });
+
+  it('stores and reads richer token metadata while preserving CLI/report compatibility fields', async () => {
+    const { store } = await makeStore();
+
+    await store.storeToken({
+      shop: 'online',
+      accessToken: 'online-access-token',
+      scopes: ['read_products'],
+      accessMode: 'online',
+      expiresAt: '2026-05-22T13:00:00.000Z',
+      refreshToken: 'refresh-secret-token',
+      refreshTokenExpiresAt: '2026-05-29T12:00:00.000Z',
+      grantedScopes: ['read_products'],
+      requestedScopes: ['read_products', 'read_orders'],
+      tokenSource: 'token_exchange',
+      associatedUser: {
+        id: 'gid://shopify/StaffMember/1',
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        email: 'ada@example.test',
+        accountOwner: true,
+        locale: 'en',
+        collaborator: false,
+        token: 'must-not-be-stored',
+      } as AssociatedUserMetadata,
+    });
+
+    const token = await store.getToken('online');
+    expect(token).toMatchObject({
+      shop: 'online.myshopify.com',
+      accessToken: 'online-access-token',
+      scopes: ['read_products'],
+      schemaVersion: 1,
+      accessMode: 'online',
+      expiresAt: '2026-05-22T13:00:00.000Z',
+      refreshToken: 'refresh-secret-token',
+      refreshTokenExpiresAt: '2026-05-29T12:00:00.000Z',
+      grantedScopes: ['read_products'],
+      requestedScopes: ['read_products', 'read_orders'],
+      tokenSource: 'token_exchange',
+      associatedUser: {
+        id: 'gid://shopify/StaffMember/1',
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        email: 'ada@example.test',
+        accountOwner: true,
+        locale: 'en',
+        collaborator: false,
+      },
+    });
+    expect(token?.associatedUser).not.toHaveProperty('token');
+  });
+
+  it('accepts future per-record schema versions and ignores unknown stored fields', async () => {
+    const { file, store } = await makeStore();
+    await writeFile(file, JSON.stringify({
+      version: 1,
+      shops: {
+        'future.myshopify.com': {
+          shop: 'future.myshopify.com',
+          schemaVersion: 99,
+          accessToken: 'future-secret-token',
+          refreshToken: 'future-refresh-token',
+          scopes: ['read_products'],
+          grantedScopes: ['read_products'],
+          requestedScopes: ['read_products', 'read_orders'],
+          accessMode: 'offline',
+          tokenSource: 'manual_import',
+          storedAt: '2026-05-21T12:00:00.000Z',
+          updatedAt: '2026-05-21T12:00:00.000Z',
+          unknownSecretField: 'must-not-leak',
+          associatedUser: { id: '1', email: 'safe@example.test', ssn: 'must-not-leak' },
+        },
+      },
+    }), { mode: 0o600 });
+
+    const token = await store.getToken('future');
+    expect(token).toMatchObject({
+      schemaVersion: 99,
+      shop: 'future.myshopify.com',
+      accessToken: 'future-secret-token',
+      refreshToken: 'future-refresh-token',
+      scopes: ['read_products'],
+      grantedScopes: ['read_products'],
+      requestedScopes: ['read_products', 'read_orders'],
+      accessMode: 'offline',
+      tokenSource: 'manual_import',
+      associatedUser: { id: '1', email: 'safe@example.test' },
+    });
+    expect(token).not.toHaveProperty('unknownSecretField');
+    expect(token?.associatedUser).not.toHaveProperty('ssn');
   });
 
   it('preserves both shops when two store instances write concurrently to the same file', async () => {
