@@ -53,6 +53,12 @@ export interface CollectionGetToolArgs {
   readonly id: string;
 }
 
+export interface OrderGetToolArgs {
+  readonly shop: string;
+  readonly id?: string;
+  readonly name?: string;
+}
+
 export interface CustomerListToolArgs {
   readonly shop: string;
   readonly first?: number;
@@ -99,6 +105,7 @@ export interface McpServerDependencies {
   readonly getProductDetail: (args: ProductGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listCollections: (args: CollectionListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getCollection: (args: CollectionGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getOrder: (args: OrderGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listCustomers: (args: CustomerListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getCustomer: (args: CustomerGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly startBulkOperation: (args: BulkStartToolArgs) => Promise<McpToolOutput> | McpToolOutput;
@@ -276,6 +283,11 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
         })));
         break;
       }
+      case 'shopify.orders.get': {
+        validateExactArgs(args, ['shop', 'id', 'name']);
+        result = sanitizeToolOutput(await callDependency(() => deps.getOrder(readOrderGetArgs(args))));
+        break;
+      }
       case 'shopify.customers.list': {
         validateExactArgs(args, ['shop', 'first', 'after', 'query']);
         const customerArgs = readCustomerListArgs(args);
@@ -337,6 +349,7 @@ function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, err
     ...(name === 'shopify.bulk.result' ? readAuditResultLimits(args) : {}),
     ...(name === 'shopify.report_inventory' ? readAuditThreshold(args) : {}),
     ...(name === 'shopify.customers.list' || name === 'shopify.collections.list' ? readAuditBoundedList(args) : {}),
+    ...(name === 'shopify.orders.get' ? readAuditOrderGet(args) : {}),
     ...(reason === undefined ? {} : { reason: sanitizeAuditString(reason) }),
     ...(errorCode === undefined ? {} : { errorCode }),
   };
@@ -425,6 +438,13 @@ function readAuditResultLimits(args: unknown): { readonly maxLines?: number; rea
   return {
     ...(isRecord(args) && Number.isInteger(args.maxLines) ? { maxLines: args.maxLines as number } : {}),
     ...(isRecord(args) && Number.isInteger(args.maxBytes) ? { maxBytes: args.maxBytes as number } : {}),
+  };
+}
+
+function readAuditOrderGet(args: unknown): { readonly idPresent?: boolean; readonly namePresent?: boolean } {
+  return {
+    ...(isRecord(args) && typeof args.id === 'string' ? { idPresent: true } : {}),
+    ...(isRecord(args) && typeof args.name === 'string' ? { namePresent: true } : {}),
   };
 }
 
@@ -649,6 +669,18 @@ function readOptionalCollectionSearchQuery(args: unknown): Record<string, string
     throw new McpToolError('Invalid argument: query.');
   }
   return query;
+}
+
+function readOrderGetArgs(args: unknown): OrderGetToolArgs {
+  const id = readOptionalStringProperty(args, 'id').id;
+  const name = readOptionalStringProperty(args, 'name').name;
+  if ((id === undefined && name === undefined) || (id !== undefined && name !== undefined)) {
+    throw new McpToolError('Provide exactly one of order id or order name.');
+  }
+  if (name !== undefined && /[{}]|\b(?:mutation|query)\b/iu.test(name)) {
+    throw new McpToolError('Invalid argument: name.');
+  }
+  return { shop: readRequiredString(args, 'shop'), ...(id === undefined ? {} : { id }), ...(name === undefined ? {} : { name }) };
 }
 
 function readCustomerListArgs(args: unknown): CustomerListToolArgs {

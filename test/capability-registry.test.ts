@@ -36,6 +36,7 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'products.get.read',
       'collections.list.read',
       'collections.get.read',
+      'orders.get.read',
       'customers.list.read',
       'customers.get.read',
     ]);
@@ -153,6 +154,16 @@ describe('Admin Graph capability registry and tool policy model', () => {
       riskLevel: 'read_low',
       auditEvent: 'collections.get',
       surfaces: { mcp: { toolName: 'shopify.collections.get' } },
+    });
+
+    expect(expectCapability('orders.get.read')).toMatchObject({
+      domain: 'orders',
+      operationName: 'OrderDetail',
+      requiredScopes: ['read_orders'],
+      access: 'read',
+      riskLevel: 'read_pii',
+      auditEvent: 'orders.get',
+      surfaces: { mcp: { toolName: 'shopify.orders.get' } },
     });
 
     const customerList = expectCapability('customers.list.read');

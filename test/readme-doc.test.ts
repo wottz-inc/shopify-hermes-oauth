@@ -119,6 +119,20 @@ describe('SAFETY-CRITICAL README documentation contracts', () => {
     ]);
   });
 
+  it('documents curated order detail lookup separately from order reports', () => {
+    const markdown = readReadme();
+
+    expectAllPresent(markdown, [
+      '## Curated order detail lookup tool',
+      '`shopify.report_orders` remains the aggregate/windowed report surface',
+      '`shopify.orders.get`',
+      'This tool requires `read_orders`',
+      'read_all_orders',
+      'omits customer identity/contact fields, billing/shipping addresses, notes, tags, tracking numbers/URLs, and transactions',
+      'order detail caps line items at 25, fulfillments at 10, and refunds at 10',
+    ]);
+  });
+
   it('documents curated product and collection lookup tools separately from reports', () => {
     const markdown = readReadme();
 
