@@ -97,7 +97,7 @@ v0.1 ceilings:
 - Orders report: shows at most the first 50 line items per order and marks omitted line items.
 - Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels, including safe affected GIDs.
 
-Use `shopify.report_products` for aggregate reports; `shopify.products.get` for one Product GID; `shopify.collections.list/get` for collections. Lookup caps: product variants 25, media 10, metafield metadata 20; collection list page 50; collection detail products 25 and metafield metadata 20. Metafields expose namespace/key/type plus value presence/length, not raw values. If limits hit, narrow the scope or use a custom paginated Shopify Admin GraphQL workflow.
+Use `shopify.report_products`/`shopify.report_orders` for aggregate reports; `shopify.products.get`, `shopify.collections.list/get`, and `shopify.orders.get` for targeted lookups. Lookup caps: product variants 25, media 10, metafield metadata 20; collection page 50/detail products 25/metafields 20; order line items 25, fulfillments 10, refunds 10. Metafields expose namespace/key/type plus value presence/length, not raw values. `shopify.orders.get` omits customer contact/address, notes/tags, tracking numbers/URLs, and transactions. If limits hit, narrow the scope or use a custom paginated Shopify Admin GraphQL workflow.
 
 ## MCP tools
 
@@ -112,6 +112,7 @@ After `shopify-hermes-oauth hermes install`, MCP tools:
 - `shopify.products.get`
 - `shopify.collections.list`
 - `shopify.collections.get`
+- `shopify.orders.get`
 - `shopify.webhooks.list`
 - `shopify.webhooks.get`
 - `shopify.customers.list`

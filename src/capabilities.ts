@@ -1,6 +1,6 @@
 export type CapabilityAccess = 'read' | 'write' | 'diagnostic';
 export type CapabilityRiskLevel = 'read_low' | 'read_pii' | 'read_financial' | 'write_medium' | 'write_high' | 'protected_data' | 'diagnostic_low';
-export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections';
+export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'orders';
 export type CapabilityRequiredGate = 'dry_run' | 'explicit_confirmation' | 'audit_logging' | 'rollback_notes';
 
 export type McpToolName =
@@ -20,7 +20,8 @@ export type McpToolName =
   | 'shopify.customers.get'
   | 'shopify.products.get'
   | 'shopify.collections.list'
-  | 'shopify.collections.get';
+  | 'shopify.collections.get'
+  | 'shopify.orders.get';
 
 export interface JsonSchema {
   readonly type: 'object';
@@ -182,6 +183,16 @@ const COLLECTION_GET_SCHEMA: JsonSchema = {
     id: { type: 'string', description: 'Collection GID, e.g. gid://shopify/Collection/123.' },
   },
   required: ['shop', 'id'],
+  additionalProperties: false,
+};
+const ORDER_GET_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    id: { type: 'string', description: 'Order GID, e.g. gid://shopify/Order/123. Provide exactly one of id or name.' },
+    name: { type: 'string', description: 'Shopify order name such as #1001. Provide exactly one of id or name.' },
+  },
+  required: ['shop'],
   additionalProperties: false,
 };
 
@@ -459,6 +470,25 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
         toolName: 'shopify.collections.get',
         description: 'Inspect one Shopify collection by stable ID with bounded product and metafield previews.',
         inputSchema: COLLECTION_GET_SCHEMA,
+      },
+    },
+  },
+
+  {
+    id: 'orders.get.read',
+    domain: 'orders',
+    operationName: 'OrderDetail',
+    requiredScopes: ['read_orders'],
+    access: 'read',
+    riskLevel: 'read_pii',
+    pagination: 'Single order lookup by stable Order GID or bounded name lookup; line items capped at 25, fulfillments at 10, and refunds at 10.',
+    cost: 'Uses curated bounded order lookup/detail queries separate from the aggregate orders report; older orders may require read_all_orders.',
+    auditEvent: 'orders.get',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.orders.get',
+        description: 'Inspect one Shopify order by GID or order name with minimized PII and bounded line item, fulfillment, and refund summaries.',
+        inputSchema: ORDER_GET_SCHEMA,
       },
     },
   },

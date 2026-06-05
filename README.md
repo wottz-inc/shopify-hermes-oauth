@@ -145,6 +145,15 @@ These tools require a stored token with `read_webhooks`. Create/update/delete we
 
 These tools require `read_products`. They are curated read-only surfaces: no raw Admin GraphQL input, product/collection mutations, or unbounded nested pagination are exposed. Metafield output intentionally returns namespace/key/type plus value presence/length metadata, not raw metafield values.
 
+
+## Curated order detail lookup tool
+
+`shopify.report_orders` remains the aggregate/windowed report surface. The MCP allowlist also includes one read-only order lookup/detail tool:
+
+- `shopify.orders.get` — inspect one order by stable `gid://shopify/Order/...` ID or bounded Shopify order name such as `#1001`, with minimized PII and bounded line item, fulfillment, and refund summaries.
+
+This tool requires `read_orders`; Shopify may require `read_all_orders` for older orders outside the normal API read window, but that scope is not part of the default v0.1 install. Returned order detail intentionally omits customer identity/contact fields, billing/shipping addresses, notes, tags, tracking numbers/URLs, and transactions. Audit metadata records only shop/tool and whether ID or name input was present, not the raw order ID/name.
+
 ## Curated customer tools
 
 The MCP allowlist includes read-only, privacy-aware customer tools:
@@ -167,7 +176,7 @@ These tools do not expose arbitrary raw GraphQL input. Result previews are bound
 
 ## Nested connection limits
 
-v0.1 report and lookup queries intentionally avoid unbounded nested pagination. The products report shows at most the first 100 variants per product, and the orders report shows at most the first 50 line items per order; both summaries explicitly say when additional nested records were omitted. The inventory report fails rather than silently truncating when a product has more than 100 variants or a variant has more than 50 inventory levels, and its error identifies the affected product/variant/inventory item GID where safe. Product detail lookup caps variants at 25, media at 10, and metafield metadata at 20; collection list caps page size at 50, and collection detail caps products at 25 and metafield metadata at 20. If a store hits these ceilings, narrow the report or lookup scope or use a custom paginated Shopify Admin GraphQL workflow outside the curated v0.1 reports or lookup surfaces.
+v0.1 report and lookup queries intentionally avoid unbounded nested pagination. The products report shows at most the first 100 variants per product, and the orders report shows at most the first 50 line items per order; both summaries explicitly say when additional nested records were omitted. The inventory report fails rather than silently truncating when a product has more than 100 variants or a variant has more than 50 inventory levels, and its error identifies the affected product/variant/inventory item GID where safe. Product detail lookup caps variants at 25, media at 10, and metafield metadata at 20; collection list caps page size at 50; collection detail caps products at 25 and metafield metadata at 20; order detail caps line items at 25, fulfillments at 10, and refunds at 10. If a store hits these ceilings, narrow the report or lookup scope or use a custom paginated Shopify Admin GraphQL workflow outside the curated v0.1 reports or lookup surfaces.
 
 ## Documentation test maintenance
 
