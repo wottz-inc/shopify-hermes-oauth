@@ -31,7 +31,7 @@ If neither tunnel tool is installed, it does not start a misleading local-only O
 - Hermes-native: uses `HERMES_HOME`, `~/.hermes/.env`, `hermes mcp add`, and an optional Hermes skill.
 - Minimal human setup: automate everything except unavoidable Shopify app creation/callback approval/store install approval.
 - Read-only by default.
-- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, and `read_locations`. Curated webhook subscription tools additionally require `read_webhooks` on stores where those tools are enabled.
+- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, `read_locations`. Curated customer and webhook tools additionally require `read_customers` / `read_webhooks` on stores where those tools are enabled.
 - Required Admin API Scopes are the Shopify app scopes that grant Admin API access for OAuth installs. Optional scopes are not a substitute for required Admin API scopes; optional-only app configuration can fail the callback with Shopify's `At least one scope is required` validation.
 - Use the store's canonical Admin `*.myshopify.com` domain for `/auth/start?shop=...`. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.
 - No required private infrastructure, hosted forge, hosted service, or third-party secret manager.
@@ -133,6 +133,15 @@ The MCP allowlist includes read-only webhook subscription tools:
 - `shopify.webhooks.get` — inspect one webhook subscription by Shopify GID.
 
 These tools require a stored token with `read_webhooks`. Create/update/delete webhook flows remain intentionally absent from the public MCP surface until they have dry-run, explicit confirmation, audit logging, and rollback notes. Webhook payload handling must validate Shopify HMACs with official Shopify helpers where practical, reject stale/replayed deliveries idempotently, redact callback URLs/secrets in logs, and handle delivery failures without leaking tokens or customer payloads.
+
+## Curated customer tools
+
+The MCP allowlist includes read-only, privacy-aware customer tools:
+
+- `shopify.customers.list` — list/search customers with explicit Shopify customer search semantics (`query` is a search string, not GraphQL), bounded pagination (`first` defaults to 25 and is capped at 50), and safe aggregate summaries.
+- `shopify.customers.get` — inspect one customer by stable `gid://shopify/Customer/...` ID.
+
+These tools require `read_customers`. Returned customer fields intentionally minimize PII: full email is reduced to `emailDomain`, phone is reduced to `phonePresent`, addresses/notes/tags/full email/full phone are not returned, and audit metadata records only shop, tool name, page bounds, and whether query/cursor inputs were present. Tag, note, metafield, or other customer updates are intentionally out of scope for this read-only surface.
 
 ## Curated bulk export tools
 

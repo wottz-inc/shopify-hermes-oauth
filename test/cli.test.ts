@@ -2076,7 +2076,9 @@ describe('CLI hermes install', () => {
     expect(skill).toContain('canonical Admin `*.myshopify.com` domain');
     expect(skill).toContain('If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain');
     expect(skill).not.toContain('read_products,read_orders,read_inventory,read_locations,read_customers');
-    expect(skill).not.toContain('`read_customers`');
+    expect(skill).toContain('shopify.customers.list');
+    expect(skill).toContain('shopify.customers.get');
+    expect(skill).toContain('requires `read_customers`');
     expect(skill).toContain('writes missing `.env` keys from current environment values or safe placeholders without printing secrets');
     expect(skill).toContain('it is not an interactive prompt');
     expect(skill).toContain('shopify-hermes-oauth credentials set');

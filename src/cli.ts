@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { BulkOperationError, cancelBulkOperation, fetchBulkOperationResult, getBulkOperationTemplate, getCurrentBulkOperation, startBulkOperation } from './bulk/operations.js';
+import { getCustomer, listCustomers } from './customers/index.js';
 import { resolveShopifyHermesPaths } from './hermes-home.js';
 import { exchangeShopifyOAuthToken } from './internal/shopify-oauth-token-exchange.js';
 import { startStdioMcpServer, type McpLifecycleEvent, type McpServerDependencies } from './mcp/server.js';
@@ -1287,6 +1288,8 @@ function localHermesSkillContent(): string {
     "- `shopify.report_products`",
     "- `shopify.report_orders`",
     "- `shopify.report_inventory`",
+    "- `shopify.customers.list` (requires `read_customers`; returns bounded pages with email domains only, phone presence only, and aggregate order/spend summaries)",
+    "- `shopify.customers.get` (requires `read_customers`; returns one customer by GID with the same minimal PII policy)",
     "",
     "`shopify.health` returns lightweight process memory diagnostics for reconnect/OOM triage without token-store contents. `mcp serve` also emits start/stop lifecycle JSON to stderr, keeping JSON-RPC stdout clean.",
     "",
@@ -2064,6 +2067,16 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
     getWebhookSubscription: async ({ shop, id }) => {
       const reportRuntime = await reportClientFor(shop, ['read_webhooks']);
       const report = await getWebhookSubscription({ client: reportRuntime.client, id });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listCustomers: async ({ shop, first, after, query }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_customers']);
+      const report = await listCustomers({ client: reportRuntime.client, first, after, query });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    getCustomer: async ({ shop, id }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_customers']);
+      const report = await getCustomer({ client: reportRuntime.client, id });
       return { shop: reportRuntime.shop, ...report };
     },
   };
