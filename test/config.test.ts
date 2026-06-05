@@ -103,6 +103,7 @@ describe('Shopify Hermes config loading', () => {
       env: {
         HERMES_HOME: '/tmp/hermes',
         SHOPIFY_HERMES_CLIENT_SECRET: 'env-client-secret',
+        SHOPIFY_HERMES_OLD_CLIENT_SECRET: 'env-old-client-secret',
       },
       homeDir: '/home/alice',
       readFile: (path) => {
@@ -110,6 +111,7 @@ describe('Shopify Hermes config loading', () => {
         return [
           'SHOPIFY_HERMES_CLIENT_ID=file-client-id',
           'SHOPIFY_HERMES_CLIENT_SECRET=file-client-secret',
+          'SHOPIFY_HERMES_OLD_CLIENT_SECRET=file-old-client-secret',
           'SHOPIFY_HERMES_APP_URL=https://example.test',
           'SHOPIFY_HERMES_SCOPES=read_products,write_products',
         ].join('\n');
@@ -119,6 +121,7 @@ describe('Shopify Hermes config loading', () => {
     expect(config).toEqual({
       clientId: 'file-client-id',
       clientSecret: 'env-client-secret',
+      oldClientSecret: 'env-old-client-secret',
       appUrl: 'https://example.test',
       scopes: ['read_products', 'write_products'],
       paths: {
@@ -248,6 +251,7 @@ describe('config redaction', () => {
     const raw = {
       SHOPIFY_HERMES_CLIENT_ID: 'public-client-id',
       SHOPIFY_HERMES_CLIENT_SECRET: 'dummy-client-secret',
+      SHOPIFY_HERMES_OLD_CLIENT_SECRET: 'dummy-old-client-secret',
       accessToken: 'dummy-access-token',
       nested: {
         refresh_token: 'dummy-refresh-token',
@@ -273,6 +277,7 @@ describe('config redaction', () => {
     expect(redactConfig(raw)).toEqual({
       SHOPIFY_HERMES_CLIENT_ID: 'public-client-id',
       SHOPIFY_HERMES_CLIENT_SECRET: '[REDACTED]',
+      SHOPIFY_HERMES_OLD_CLIENT_SECRET: '[REDACTED]',
       accessToken: '[REDACTED]',
       nested: {
         refresh_token: '[REDACTED]',
@@ -296,6 +301,7 @@ describe('config redaction', () => {
     });
 
     expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-client-secret');
+    expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-old-client-secret');
     expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-access-token');
     expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-refresh-token');
     expect(JSON.stringify(redactConfig(raw))).not.toContain('dummy-bearer-token');

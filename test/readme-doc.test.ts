@@ -103,6 +103,22 @@ describe('SAFETY-CRITICAL README documentation contracts', () => {
     ]);
   });
 
+  it('documents Shopify app client secret rotation cleanup without revealing which secret matched', () => {
+    const markdown = readReadme();
+
+    expectAllPresent(markdown, [
+      '## Shopify app client secret rotation',
+      'SHOPIFY_HERMES_CLIENT_SECRET',
+      'SHOPIFY_HERMES_OLD_CLIENT_SECRET',
+      'tries the current secret first and then the old secret',
+      'without logging or reporting which secret matched',
+      'SHOPIFY_HERMES_OLD_CLIENT_SECRET_ROTATED_AT',
+      'Remove `SHOPIFY_HERMES_OLD_CLIENT_SECRET` after the transition window',
+      'rerun `shopify-hermes-oauth doctor` to confirm the rotation fallback is disabled',
+      'Do not commit, print, or paste either client secret',
+    ]);
+  });
+
   it('documents source installs and Hermes profile-local npm PATH expectations', () => {
     const markdown = readReadme();
 

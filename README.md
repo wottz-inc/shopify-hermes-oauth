@@ -63,6 +63,12 @@ Run this command in your local terminal or SSH/Termius shell, not in chat: `shop
 
 After it succeeds, reply `done` in chat without sharing the client ID or client secret. Do not paste Shopify client secrets into chat.
 
+## Shopify app client secret rotation
+
+During Shopify app client secret rotation, configure the new value as `SHOPIFY_HERMES_CLIENT_SECRET` and temporarily configure the previous value as `SHOPIFY_HERMES_OLD_CLIENT_SECRET`. OAuth callback HMAC validation tries the current secret first and then the old secret when present, without logging or reporting which secret matched. Optionally record a safe non-secret timestamp such as `SHOPIFY_HERMES_OLD_CLIENT_SECRET_ROTATED_AT=2026-05-20T00:00:00.000Z`; `shopify-hermes-oauth doctor` uses it to remind operators how long the fallback has been configured. Remove `SHOPIFY_HERMES_OLD_CLIENT_SECRET` after the transition window and rerun `shopify-hermes-oauth doctor` to confirm the rotation fallback is disabled.
+
+Do not commit, print, or paste either client secret. If using Bitwarden mode, store both variable names as secrets for the temporary overlap and delete `SHOPIFY_HERMES_OLD_CLIENT_SECRET` from Bitwarden after cleanup.
+
 ## Guided chat-first onboarding
 
 Use the guided checklist command to reduce decisions and copy/paste during live onboarding:

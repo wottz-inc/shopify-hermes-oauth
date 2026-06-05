@@ -919,6 +919,61 @@ describe('CLI serve', () => {
     }
   });
 
+  it('passes SHOPIFY_HERMES_OLD_CLIENT_SECRET into the served OAuth callback validator', async () => {
+    let server: Server | undefined;
+    let baseUrl = '';
+    const tokenRequests: Request[] = [];
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'current-client-secret',
+        SHOPIFY_HERMES_OLD_CLIENT_SECRET: 'old-client-secret',
+        SHOPIFY_HERMES_APP_URL: 'https://public-app.example.test',
+      },
+      fetch: (input, init) => {
+        tokenRequests.push(new Request(input, init));
+        return Promise.resolve(new Response(JSON.stringify({ access_token: 'shpat_mocked_access_token', scope: 'read_products' }), {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        }));
+      },
+      listenServer: async (createdServer) => {
+        server = createdServer;
+        await new Promise<void>((resolve) => createdServer.listen(0, '127.0.0.1', resolve));
+        const address = createdServer.address() as AddressInfo;
+        baseUrl = `http://127.0.0.1:${address.port.toString(10)}`;
+      },
+    });
+
+    try {
+      const exitCode = await runShopifyHermesOauthCli(['serve', '--host', '127.0.0.1', '--port', '3456'], harness.deps);
+      expect(exitCode).toBe(0);
+
+      const startResponse = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, { redirect: 'manual' });
+      const location = startResponse.headers.get('location');
+      expect(location).not.toBeNull();
+      const state = new URL(location ?? '').searchParams.get('state');
+      expect(state).not.toBeNull();
+
+      const callbackResponse = await fetch(signedCliCallbackUrl(baseUrl, 'old-client-secret', {
+        shop: 'example.myshopify.com',
+        code: 'oauth-code',
+        state: state ?? '',
+        timestamp: Math.floor(Date.now() / 1_000).toString(10),
+      }));
+      const callbackBody = await callbackResponse.text();
+
+      expect(callbackResponse.status).toBe(200);
+      expect(callbackBody).toBe('OAuth install complete');
+      expect(tokenRequests).toHaveLength(1);
+      expect(harness.stdout.join('\n')).not.toContain('old-client-secret');
+      expect(harness.stderr.join('\n')).not.toContain('old-client-secret');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('trims scopes and drops blanks from SHOPIFY_HERMES_SCOPES', async () => {
     let server: Server | undefined;
     let baseUrl = '';
@@ -1347,9 +1402,36 @@ describe('CLI doctor', () => {
 
     expect(exitCode).toBe(0);
     expect(output).toContain('Required configuration: ok');
+    expect(output).toContain('OAuth client secret rotation fallback: disabled');
     expect(output).toContain('Token store: not initialized');
     expect(output).toContain('Audit log: writable');
     expect(output).not.toContain('super-secret-value');
+  });
+
+  it('reports old client secret rotation support safely and reminds operators to remove it', async () => {
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'current-secret-must-not-print',
+        SHOPIFY_HERMES_OLD_CLIENT_SECRET: 'old-secret-must-not-print',
+        SHOPIFY_HERMES_OLD_CLIENT_SECRET_ROTATED_AT: '2026-05-20T00:00:00.000Z',
+        SHOPIFY_HERMES_APP_URL: 'https://app.example.test',
+      },
+      commandExists: (command) => command === 'hermes',
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['doctor'], harness.deps);
+    const output = `${harness.stdout.join('\n')}\n${harness.stderr.join('\n')}`;
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('OAuth client secret rotation fallback: enabled');
+    expect(output).toContain('current secret first, then old secret');
+    expect(output).toContain('does not report which secret matched');
+    expect(output).toContain('Old client secret configured since 2026-05-20T00:00:00.000Z');
+    expect(output).toContain('remove SHOPIFY_HERMES_OLD_CLIENT_SECRET after the transition window');
+    expect(output).not.toContain('current-secret-must-not-print');
+    expect(output).not.toContain('old-secret-must-not-print');
   });
 
   it('warns about granted OAuth scopes outside the configured least-privilege set', async () => {
