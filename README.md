@@ -128,6 +128,17 @@ The MCP allowlist includes read-only webhook subscription tools:
 
 These tools require a stored token with `read_webhooks`. Create/update/delete webhook flows remain intentionally absent from the public MCP surface until they have dry-run, explicit confirmation, audit logging, and rollback notes. Webhook payload handling must validate Shopify HMACs with official Shopify helpers where practical, reject stale/replayed deliveries idempotently, redact callback URLs/secrets in logs, and handle delivery failures without leaking tokens or customer payloads.
 
+## Curated bulk export tools
+
+The MCP allowlist includes template-only read-oriented Shopify Admin GraphQL bulk operation helpers for large exports:
+
+- `shopify.bulk.start` — start one approved template (`products-basic`, `orders-basic`, or `inventory-items-basic`) after validating the template's required scopes.
+- `shopify.bulk.status` — poll `currentBulkOperation` and return status, counts, failure code, redacted result URL paths, and opaque result handles when Shopify provides result URLs.
+- `shopify.bulk.result` — fetch a bounded HTTPS JSONL preview from a Shopify bulk result URL or opaque `bulk-result:` handle using explicit `maxLines` / `maxBytes` limits. Prefer the opaque handle returned by status/cancel responses; raw signed Shopify URLs are accepted only for direct operator-supplied previews and are never echoed with query strings.
+- `shopify.bulk.cancel` — cancel a running read-only bulk operation by BulkOperation GID.
+
+These tools do not expose arbitrary raw GraphQL input. Result previews are bounded and sanitized before returning through MCP structured content. Opaque result handles are process-local, expire after 15 minutes, and are capped to avoid retaining signed result URLs indefinitely.
+
 ## Nested connection limits
 
 v0.1 report queries intentionally avoid unbounded nested pagination. The products report shows at most the first 100 variants per product, and the orders report shows at most the first 50 line items per order; both summaries explicitly say when additional nested records were omitted. The inventory report fails rather than silently truncating when a product has more than 100 variants or a variant has more than 50 inventory levels, and its error identifies the affected product/variant/inventory item GID where safe. If a store hits these ceilings, narrow the report scope or use a custom paginated Shopify Admin GraphQL workflow outside the curated v0.1 reports.

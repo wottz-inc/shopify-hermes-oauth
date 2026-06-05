@@ -61,6 +61,27 @@ function createDeps(): McpServerDependencies {
       shop,
       webhook: { id, topic: 'ORDERS_CREATE', endpoint: 'https://example.test/webhooks/orders', format: 'JSON' },
     }),
+    startBulkOperation: ({ shop, templateId }) => ({
+      shop,
+      templateId,
+      bulkOperation: { id: 'gid://shopify/BulkOperation/1', status: 'CREATED' },
+    }),
+    getCurrentBulkOperation: ({ shop }) => ({
+      shop,
+      bulkOperation: { id: 'gid://shopify/BulkOperation/1', status: 'RUNNING', objectCount: 12 },
+    }),
+    fetchBulkOperationResult: ({ shop, url, maxLines }) => ({
+      shop,
+      url,
+      maxLines,
+      lines: [{ id: 'gid://shopify/Product/1', title: 'Tee' }],
+      lineCount: 1,
+      truncated: false,
+    }),
+    cancelBulkOperation: ({ shop, id }) => ({
+      shop,
+      bulkOperation: { id, status: 'CANCELING' },
+    }),
   };
 }
 
@@ -73,6 +94,10 @@ describe('curated MCP server', () => {
       'shopify.report_products',
       'shopify.report_orders',
       'shopify.report_inventory',
+      'shopify.bulk.start',
+      'shopify.bulk.status',
+      'shopify.bulk.result',
+      'shopify.bulk.cancel',
       'shopify.webhooks.list',
       'shopify.webhooks.get',
     ]);
@@ -123,6 +148,24 @@ describe('curated MCP server', () => {
     await expect(callTool('shopify.webhooks.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/WebhookSubscription/1' }, deps)).resolves.toEqual({
       shop: 'alpha.myshopify.com',
       webhook: { id: 'gid://shopify/WebhookSubscription/1', topic: 'ORDERS_CREATE', endpoint: 'https://example.test/webhooks/orders', format: 'JSON' },
+    });
+    await expect(callTool('shopify.bulk.start', { shop: 'alpha.myshopify.com', templateId: 'products-basic' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      templateId: 'products-basic',
+      bulkOperation: { id: 'gid://shopify/BulkOperation/1', status: 'CREATED' },
+    });
+    await expect(callTool('shopify.bulk.status', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      bulkOperation: { id: 'gid://shopify/BulkOperation/1', status: 'RUNNING', objectCount: 12 },
+    });
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl', maxLines: 1 }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      lineCount: 1,
+      truncated: false,
+    });
+    await expect(callTool('shopify.bulk.cancel', { shop: 'alpha.myshopify.com', id: 'gid://shopify/BulkOperation/1' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      bulkOperation: { id: 'gid://shopify/BulkOperation/1', status: 'CANCELING' },
     });
   });
 
@@ -528,7 +571,16 @@ describe('curated MCP server', () => {
       await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.report_orders', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.report_inventory', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
+      await expect(callTool('shopify.bulk.start', { shop: 'alpha.myshopify.com', templateId: 'products-basic', ...args }, createDeps())).rejects.toThrow(McpToolError);
+      await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl', ...args }, createDeps())).rejects.toThrow(McpToolError);
     }
+  });
+
+  it('rejects non-positive bulk result preview limits before dispatch', async () => {
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl', maxLines: 0 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl', maxBytes: 0 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl', maxLines: 101 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl', maxBytes: 1_000_001 }, createDeps())).rejects.toThrow(McpToolError);
   });
 
   it.each([

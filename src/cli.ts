@@ -8,6 +8,7 @@ import { stdin as processStdin, stdout as processStdout } from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
+import { BulkOperationError, cancelBulkOperation, fetchBulkOperationResult, getBulkOperationTemplate, getCurrentBulkOperation, startBulkOperation } from './bulk/operations.js';
 import { resolveShopifyHermesPaths } from './hermes-home.js';
 import { exchangeShopifyOAuthToken } from './internal/shopify-oauth-token-exchange.js';
 import { startStdioMcpServer, type McpLifecycleEvent, type McpServerDependencies } from './mcp/server.js';
@@ -1994,6 +1995,26 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
       const reportRuntime = await reportClientFor(shop, ['read_inventory', 'read_products', 'read_locations']);
       const report = await generateInventoryReport({ client: reportRuntime.client, lowStockThreshold: threshold });
       return { shop: reportRuntime.shop, format, lowStockThreshold: threshold, report, formatted: formatInventoryReport(report, format) };
+    },
+    startBulkOperation: async ({ shop, templateId }) => {
+      const template = getBulkOperationTemplate(templateId);
+      if (template === undefined) {
+        throw new BulkOperationError('Bulk operation template is not allowed.', 'BULK_OPERATION_INVALID_TEMPLATE');
+      }
+      const reportRuntime = await reportClientFor(shop, template.requiredScopes);
+      return { shop: reportRuntime.shop, ...(await startBulkOperation({ client: reportRuntime.client, templateId })) };
+    },
+    getCurrentBulkOperation: async ({ shop }) => {
+      const reportRuntime = await reportClientFor(shop);
+      return { shop: reportRuntime.shop, ...(await getCurrentBulkOperation({ client: reportRuntime.client })) };
+    },
+    fetchBulkOperationResult: async ({ shop, url, maxLines, maxBytes }) => {
+      const reportRuntime = await reportClientFor(shop);
+      return { shop: reportRuntime.shop, ...(await fetchBulkOperationResult({ fetch: context.fetch, url, maxLines, maxBytes })) };
+    },
+    cancelBulkOperation: async ({ shop, id }) => {
+      const reportRuntime = await reportClientFor(shop);
+      return { shop: reportRuntime.shop, ...(await cancelBulkOperation({ client: reportRuntime.client, id })) };
     },
     listWebhookSubscriptions: async ({ shop, first, after }) => {
       const reportRuntime = await reportClientFor(shop, ['read_webhooks']);
