@@ -119,6 +119,23 @@ describe('SAFETY-CRITICAL README documentation contracts', () => {
     ]);
   });
 
+  it('documents curated product and collection lookup tools separately from reports', () => {
+    const markdown = readReadme();
+
+    expectAllPresent(markdown, [
+      '## Curated product and collection lookup tools',
+      '`shopify.report_products` remains the aggregate report/export surface',
+      '`shopify.products.get`',
+      '`shopify.collections.list`',
+      '`shopify.collections.get`',
+      'These tools require `read_products`',
+      'no raw Admin GraphQL input',
+      'not raw metafield values',
+      'Product detail lookup caps variants at 25, media at 10, and metafield metadata at 20',
+      'collection detail caps products at 25 and metafield metadata at 20',
+    ]);
+  });
+
   it('documents source installs and Hermes profile-local npm PATH expectations', () => {
     const markdown = readReadme();
 

@@ -61,6 +61,21 @@ function createDeps(): McpServerDependencies {
       shop,
       webhook: { id, topic: 'ORDERS_CREATE', endpoint: 'https://example.test/webhooks/orders', format: 'JSON' },
     }),
+    getProductDetail: ({ shop, id }) => ({
+      shop,
+      product: { id, title: 'T-Shirt', handle: 't-shirt', status: 'ACTIVE', variants: [], variantsTruncated: false, media: [], mediaTruncated: false, metafields: [], metafieldsTruncated: false },
+    }),
+    listCollections: ({ shop, first, query }) => ({
+      shop,
+      collections: [{ id: 'gid://shopify/Collection/1', title: 'Summer', handle: 'summer' }],
+      pageInfo: { hasNextPage: false },
+      first,
+      query,
+    }),
+    getCollection: ({ shop, id }) => ({
+      shop,
+      collection: { id, title: 'Summer', handle: 'summer', products: [{ id: 'gid://shopify/Product/1', title: 'T-Shirt' }], productsTruncated: false, metafields: [], metafieldsTruncated: false },
+    }),
     listCustomers: ({ shop, first, query }) => ({
       shop,
       customers: [{ id: 'gid://shopify/Customer/1', emailDomain: 'example.test', phonePresent: true, ordersCount: 2 }],
@@ -114,6 +129,9 @@ describe('curated MCP server', () => {
       'shopify.bulk.cancel',
       'shopify.webhooks.list',
       'shopify.webhooks.get',
+      'shopify.products.get',
+      'shopify.collections.list',
+      'shopify.collections.get',
       'shopify.customers.list',
       'shopify.customers.get',
     ]);
@@ -164,6 +182,20 @@ describe('curated MCP server', () => {
     await expect(callTool('shopify.webhooks.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/WebhookSubscription/1' }, deps)).resolves.toEqual({
       shop: 'alpha.myshopify.com',
       webhook: { id: 'gid://shopify/WebhookSubscription/1', topic: 'ORDERS_CREATE', endpoint: 'https://example.test/webhooks/orders', format: 'JSON' },
+    });
+    await expect(callTool('shopify.products.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Product/1' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      product: { id: 'gid://shopify/Product/1', title: 'T-Shirt' },
+    });
+    await expect(callTool('shopify.collections.list', { shop: 'alpha.myshopify.com', first: 10, query: 'title:Summer' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      collections: [{ id: 'gid://shopify/Collection/1', title: 'Summer' }],
+      first: 10,
+      query: 'title:Summer',
+    });
+    await expect(callTool('shopify.collections.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Collection/1' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      collection: { id: 'gid://shopify/Collection/1', title: 'Summer' },
     });
     await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', first: 10, query: 'created_at:>=2026-01-01' }, deps)).resolves.toEqual({
       shop: 'alpha.myshopify.com',
@@ -252,6 +284,9 @@ describe('curated MCP server', () => {
       shop: 'alpha.myshopify.com',
       webhook: { id: 'gid://shopify/WebhookSubscription/1' },
     });
+    await expect(callTool('shopify.products.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Product/1' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com' });
+    await expect(callTool('shopify.collections.list', { shop: 'alpha.myshopify.com', first: 10, query: 'title:Summer' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com' });
+    await expect(callTool('shopify.collections.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Collection/1' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com' });
     await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', first: 10, query: 'email:ada@example.test' }, deps)).resolves.toMatchObject({
       shop: 'alpha.myshopify.com',
       customers: [{ id: 'gid://shopify/Customer/1' }],
@@ -307,6 +342,24 @@ describe('curated MCP server', () => {
         shop: 'alpha.myshopify.com',
         result: 'success',
         metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.webhooks.get' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.products.get' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.collections.list', first: 10, queryPresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.collections.get' },
       },
       {
         action: 'mcp.tool',
@@ -637,12 +690,18 @@ describe('curated MCP server', () => {
       await expect(callTool('shopify.report_inventory', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.bulk.start', { shop: 'alpha.myshopify.com', templateId: 'products-basic', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl', ...args }, createDeps())).rejects.toThrow(McpToolError);
+      await expect(callTool('shopify.products.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Product/1', ...args }, createDeps())).rejects.toThrow(McpToolError);
+      await expect(callTool('shopify.collections.list', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
+      await expect(callTool('shopify.collections.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Collection/1', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.customers.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Customer/1', ...args }, createDeps())).rejects.toThrow(McpToolError);
     }
   });
 
-  it('rejects customer page sizes above the MCP schema cap before dispatch', async () => {
+  it('rejects bounded page sizes above the MCP schema cap before dispatch', async () => {
+    await expect(callTool('shopify.collections.list', { shop: 'alpha.myshopify.com', first: 0 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.collections.list', { shop: 'alpha.myshopify.com', first: 51 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.collections.list', { shop: 'alpha.myshopify.com', query: 'query { shop { name } }' }, createDeps())).rejects.toThrow(McpToolError);
     await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', first: 0 }, createDeps())).rejects.toThrow(McpToolError);
     await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', first: 51 }, createDeps())).rejects.toThrow(McpToolError);
   });

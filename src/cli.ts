@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { BulkOperationError, cancelBulkOperation, fetchBulkOperationResult, getBulkOperationTemplate, getCurrentBulkOperation, startBulkOperation } from './bulk/operations.js';
+import { getCollection, getProductDetail, listCollections } from './catalog/details.js';
 import { getCustomer, listCustomers } from './customers/index.js';
 import { resolveShopifyHermesPaths } from './hermes-home.js';
 import { exchangeShopifyOAuthToken } from './internal/shopify-oauth-token-exchange.js';
@@ -2067,6 +2068,21 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
     getWebhookSubscription: async ({ shop, id }) => {
       const reportRuntime = await reportClientFor(shop, ['read_webhooks']);
       const report = await getWebhookSubscription({ client: reportRuntime.client, id });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    getProductDetail: async ({ shop, id }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_products']);
+      const report = await getProductDetail({ client: reportRuntime.client, id });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listCollections: async ({ shop, first, after, query }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_products']);
+      const report = await listCollections({ client: reportRuntime.client, first, after, query });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    getCollection: async ({ shop, id }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_products']);
+      const report = await getCollection({ client: reportRuntime.client, id });
       return { shop: reportRuntime.shop, ...report };
     },
     listCustomers: async ({ shop, first, after, query }) => {

@@ -1,6 +1,6 @@
 export type CapabilityAccess = 'read' | 'write' | 'diagnostic';
 export type CapabilityRiskLevel = 'read_low' | 'read_pii' | 'read_financial' | 'write_medium' | 'write_high' | 'protected_data' | 'diagnostic_low';
-export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers';
+export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections';
 export type CapabilityRequiredGate = 'dry_run' | 'explicit_confirmation' | 'audit_logging' | 'rollback_notes';
 
 export type McpToolName =
@@ -17,7 +17,10 @@ export type McpToolName =
   | 'shopify.webhooks.list'
   | 'shopify.webhooks.get'
   | 'shopify.customers.list'
-  | 'shopify.customers.get';
+  | 'shopify.customers.get'
+  | 'shopify.products.get'
+  | 'shopify.collections.list'
+  | 'shopify.collections.get';
 
 export interface JsonSchema {
   readonly type: 'object';
@@ -150,6 +153,33 @@ const CUSTOMER_GET_SCHEMA: JsonSchema = {
   properties: {
     shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
     id: { type: 'string', description: 'Customer GID, e.g. gid://shopify/Customer/123.' },
+  },
+  required: ['shop', 'id'],
+  additionalProperties: false,
+};
+const PRODUCT_GET_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    id: { type: 'string', description: 'Product GID, e.g. gid://shopify/Product/123.' },
+  },
+  required: ['shop', 'id'],
+  additionalProperties: false,
+};
+const COLLECTION_LIST_SCHEMA: JsonSchema = {
+  ...SHOP_SCHEMA,
+  properties: {
+    ...SHOP_SCHEMA.properties,
+    first: { type: 'integer', minimum: 1, maximum: 50, description: 'Page size. Defaults to 25 and is capped at 50.' },
+    after: { type: 'string', description: 'Optional Shopify cursor for the next page.' },
+    query: { type: 'string', description: 'Explicit Shopify collection search string; omitted means Shopify default collection ordering.' },
+  },
+};
+const COLLECTION_GET_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    id: { type: 'string', description: 'Collection GID, e.g. gid://shopify/Collection/123.' },
   },
   required: ['shop', 'id'],
   additionalProperties: false,
@@ -374,6 +404,61 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
         toolName: 'shopify.webhooks.get',
         description: 'Inspect one read-only webhook subscription by GID.',
         inputSchema: WEBHOOK_GET_SCHEMA,
+      },
+    },
+  },
+
+  {
+    id: 'products.get.read',
+    domain: 'products',
+    operationName: 'ProductDetail',
+    requiredScopes: ['read_products'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Single product lookup by stable Product GID; variants capped at 25, media at 10, and metafields at 20.',
+    cost: 'Uses a bounded curated product detail query separate from the aggregate products report.',
+    auditEvent: 'products.get',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.products.get',
+        description: 'Inspect one Shopify product by stable ID with bounded variants, media, options, publication status, and metafield previews.',
+        inputSchema: PRODUCT_GET_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'collections.list.read',
+    domain: 'collections',
+    operationName: 'Collections',
+    requiredScopes: ['read_products'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Paginates collections with explicit cursor and page size 1..50 (default 25).',
+    cost: 'Uses a bounded curated collections query with no raw GraphQL input.',
+    auditEvent: 'collections.list',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.collections.list',
+        description: 'List/search Shopify collections with bounded pagination.',
+        inputSchema: COLLECTION_LIST_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'collections.get.read',
+    domain: 'collections',
+    operationName: 'CollectionDetail',
+    requiredScopes: ['read_products'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Single collection lookup by stable Collection GID; products capped at 25 and metafields at 20.',
+    cost: 'Low-cost bounded collection detail query separate from products report.',
+    auditEvent: 'collections.get',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.collections.get',
+        description: 'Inspect one Shopify collection by stable ID with bounded product and metafield previews.',
+        inputSchema: COLLECTION_GET_SCHEMA,
       },
     },
   },
