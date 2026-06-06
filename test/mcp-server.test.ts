@@ -51,7 +51,21 @@ function createDeps(): McpServerDependencies {
       customerAccounts: { status: 'documented_limitation', reason: 'customer_account_configuration_not_exposed_read_only_by_curated_admin_graphql' },
       branding: { status: 'documented_limitation', reason: 'branding_configuration_not_exposed_read_only_without_checkout_branding_write_surface' },
     }),
+    summarizeB2bCompanies: ({ shop }) => ({
+      shop,
+      limits: { companiesFirst: 25, locationsFirst: 10, catalogsFirst: 25, priceListsFirst: 25 },
+      companies: { status: 'ok', nodes: [{ id: 'gid://shopify/Company/1', name: 'Acme Wholesale', locationCount: 1, locations: [{ id: 'gid://shopify/CompanyLocation/10', name: 'HQ' }], locationsTruncated: false }], pageInfo: { hasNextPage: false }, truncated: false },
+      pii: { redactedFields: ['contacts', 'customers', 'emails', 'phones', 'addresses', 'notes', 'tags', 'paymentTerms'] },
+    }),
+    summarizeB2bCatalogs: ({ shop }) => ({
+      shop,
+      limits: { companiesFirst: 25, locationsFirst: 10, catalogsFirst: 25, priceListsFirst: 25 },
+      catalogs: { status: 'ok', nodes: [{ id: 'gid://shopify/Catalog/1', title: 'Wholesale', status: 'ACTIVE', type: 'COMPANY_LOCATION', companyLocationAssignmentCount: 3, priceList: { id: 'gid://shopify/PriceList/1', name: 'USD Wholesale', currency: 'USD', fixedPriceCount: 42 } }], pageInfo: { hasNextPage: false }, truncated: false },
+      priceLists: { status: 'ok', nodes: [{ id: 'gid://shopify/PriceList/1', name: 'USD Wholesale', currency: 'USD', fixedPriceCount: 42 }], pageInfo: { hasNextPage: false }, truncated: false },
+      pii: { redactedFields: ['contacts', 'customers', 'emails', 'phones', 'addresses', 'notes', 'tags', 'paymentTerms'] },
+    }),
     reportProducts: ({ shop, format }) => ({
+
       shop,
       format,
       report: { products: [{ id: '1', title: 'Tee' }] },
@@ -218,6 +232,8 @@ describe('curated MCP server', () => {
       'shopify.verify_shop',
       'shopify.store.diagnostics',
       'shopify.online_store.summary',
+      'shopify.b2b.companies.summary',
+      'shopify.b2b.catalogs.summary',
       'shopify.report_products',
       'shopify.report_orders',
       'shopify.report_inventory',
@@ -287,6 +303,15 @@ describe('curated MCP server', () => {
       onlineStore: { themes: { status: 'ok', nodes: [{ name: 'Dawn' }] } },
       checkout: { status: 'documented_limitation' },
       branding: { status: 'documented_limitation' },
+    });
+    await expect(callTool('shopify.b2b.companies.summary', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      companies: { status: 'ok', nodes: [{ id: 'gid://shopify/Company/1', name: 'Acme Wholesale' }] },
+    });
+    await expect(callTool('shopify.b2b.catalogs.summary', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      catalogs: { status: 'ok', nodes: [{ id: 'gid://shopify/Catalog/1', title: 'Wholesale' }] },
+      priceLists: { status: 'ok', nodes: [{ id: 'gid://shopify/PriceList/1', name: 'USD Wholesale' }] },
     });
     await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', format: 'json' }, deps)).resolves.toMatchObject({
       shop: 'alpha.myshopify.com',
@@ -473,6 +498,8 @@ describe('curated MCP server', () => {
     await expect(callTool('shopify.list_shops', {}, deps)).resolves.toMatchObject({ shops: [{ shop: 'alpha.myshopify.com' }] });
     await expect(callTool('shopify.verify_shop', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com' });
     await expect(callTool('shopify.online_store.summary', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', onlineStore: { themes: { status: 'ok' } } });
+    await expect(callTool('shopify.b2b.companies.summary', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', companies: { status: 'ok' } });
+    await expect(callTool('shopify.b2b.catalogs.summary', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', catalogs: { status: 'ok' } });
     await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', format: 'json' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', format: 'json' });
     await expect(callTool('shopify.report_orders', { shop: 'alpha.myshopify.com', since: '30d' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', format: 'markdown' });
     await expect(callTool('shopify.report_inventory', { shop: 'alpha.myshopify.com', lowStockThreshold: 7 }, deps)).resolves.toMatchObject({
@@ -549,6 +576,18 @@ describe('curated MCP server', () => {
         shop: 'alpha.myshopify.com',
         result: 'success',
         metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.online_store.summary' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.b2b.companies.summary' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.b2b.catalogs.summary' },
       },
       {
         action: 'mcp.tool',

@@ -14,6 +14,7 @@ import { getCollection, getProductDetail, listCollections } from './catalog/deta
 import { listDiscounts, getDiscount, listMarketingEvents } from './discounts-marketing/index.js';
 import { getMetafieldDefinition, getMetaobject, getMetaobjectDefinition, listMetafieldDefinitions, listMetaobjectDefinitions, listMetaobjects, listResourceMetafields } from './custom-data/index.js';
 import { listMarkets, listShopLocales } from './markets-localization/index.js';
+import { summarizeB2bCatalogs, summarizeB2bCompanies } from './b2b/summary.js';
 import { summarizeOnlineStore } from './online-store/summary.js';
 import { getFulfillmentOrder, listFulfillmentOrders } from './fulfillment/details.js';
 import { getInventoryItem, getLocation, listInventoryLevels, listLocations } from './inventory/details.js';
@@ -2131,6 +2132,14 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
     summarizeOnlineStore: async ({ shop }) => {
       const reportRuntime = await reportClientFor(shop);
       return summarizeOnlineStore({ shop: reportRuntime.shop, tokenStore: store, client: reportRuntime.client });
+    },
+    summarizeB2bCompanies: async ({ shop }) => {
+      const reportRuntime = await reportClientFor(shop);
+      return summarizeB2bCompanies({ shop: reportRuntime.shop, tokenStore: store, client: reportRuntime.client });
+    },
+    summarizeB2bCatalogs: async ({ shop }) => {
+      const reportRuntime = await reportClientFor(shop);
+      return summarizeB2bCatalogs({ shop: reportRuntime.shop, tokenStore: store, client: reportRuntime.client });
     },
     reportProducts: async ({ shop, format }) => {
       const reportRuntime = await reportClientFor(shop, ['read_products']);

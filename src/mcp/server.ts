@@ -12,6 +12,7 @@ import { redactSensitiveText } from '../shopify/admin-client.js';
 import { MissingShopifyScopesError } from '../shopify/scopes.js';
 import { type StoreDiagnosticsResult } from '../shops/diagnostics.js';
 import { type OnlineStoreSummaryResult } from '../online-store/summary.js';
+import { type B2bCatalogsSummaryResult, type B2bCompaniesSummaryResult } from '../b2b/summary.js';
 import { type VerifyShopResult } from '../shops/verify.js';
 import { summarizeShopMetadata, type AllowedShopMetadata } from '../shops/metadata.js';
 import { type StoredShopToken, type TokenStore } from '../tokens/local-token-store.js';
@@ -154,6 +155,10 @@ export interface OnlineStoreSummaryToolArgs {
   readonly shop: string;
 }
 
+export interface B2bSummaryToolArgs {
+  readonly shop: string;
+}
+
 export interface MetafieldDefinitionsListToolArgs { readonly shop: string; readonly ownerType: string; readonly namespace?: string; readonly key?: string; readonly first?: number; readonly after?: string }
 export interface MetafieldDefinitionGetToolArgs { readonly shop: string; readonly ownerType: string; readonly namespace: string; readonly key: string }
 export interface ResourceMetafieldsListToolArgs { readonly shop: string; readonly ownerId: string; readonly namespace?: string; readonly key?: string; readonly first?: number; readonly after?: string }
@@ -190,6 +195,8 @@ export interface McpServerDependencies {
   readonly verifyShop: (args: { readonly shop: string }) => Promise<VerifyShopResult> | VerifyShopResult;
   readonly storeDiagnostics: (args: { readonly shop: string }) => Promise<StoreDiagnosticsResult> | StoreDiagnosticsResult;
   readonly summarizeOnlineStore: (args: OnlineStoreSummaryToolArgs) => Promise<OnlineStoreSummaryResult> | OnlineStoreSummaryResult;
+  readonly summarizeB2bCompanies: (args: B2bSummaryToolArgs) => Promise<B2bCompaniesSummaryResult> | B2bCompaniesSummaryResult;
+  readonly summarizeB2bCatalogs: (args: B2bSummaryToolArgs) => Promise<B2bCatalogsSummaryResult> | B2bCatalogsSummaryResult;
   readonly reportProducts: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly reportOrders: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly reportInventory: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
@@ -325,6 +332,16 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
       case 'shopify.online_store.summary': {
         validateExactArgs(args, ['shop']);
         result = sanitizeToolOutput(await callDependency(() => deps.summarizeOnlineStore({ shop: readRequiredString(args, 'shop') })));
+        break;
+      }
+      case 'shopify.b2b.companies.summary': {
+        validateExactArgs(args, ['shop']);
+        result = sanitizeToolOutput(await callDependency(() => deps.summarizeB2bCompanies({ shop: readRequiredString(args, 'shop') })));
+        break;
+      }
+      case 'shopify.b2b.catalogs.summary': {
+        validateExactArgs(args, ['shop']);
+        result = sanitizeToolOutput(await callDependency(() => deps.summarizeB2bCatalogs({ shop: readRequiredString(args, 'shop') })));
         break;
       }
       case 'shopify.report_products': {
