@@ -2096,6 +2096,10 @@ describe('CLI hermes install', () => {
     expect(skill).toContain('shopify.report_products');
     expect(skill).toContain('shopify.report_orders');
     expect(skill).toContain('shopify.report_inventory');
+    expect(skill).toContain('shopify.fulfillment_orders.list');
+    expect(skill).toContain('shopify.fulfillment_orders.get');
+    expect(skill).toContain('read_merchant_managed_fulfillment_orders');
+    expect(skill).toContain('omits destination address, tracking numbers/URLs, customer contact, notes/tags, metafields, and transactions');
     expect(skill).toContain('shopify-hermes-oauth serve --host 127.0.0.1 --port 3456 --app-url <public-https-url>');
     expect(skill).toContain('/auth/start?shop=<shop>.myshopify.com');
     expect(skill).toContain('shopify-hermes-oauth report products <shop> --format markdown');

@@ -1,6 +1,6 @@
 export type CapabilityAccess = 'read' | 'write' | 'diagnostic';
 export type CapabilityRiskLevel = 'read_low' | 'read_pii' | 'read_financial' | 'write_medium' | 'write_high' | 'protected_data' | 'diagnostic_low';
-export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders';
+export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders' | 'fulfillment';
 export type CapabilityRequiredGate = 'dry_run' | 'explicit_confirmation' | 'audit_logging' | 'rollback_notes';
 
 export type McpToolName =
@@ -25,7 +25,9 @@ export type McpToolName =
   | 'shopify.locations.get'
   | 'shopify.inventory.items.get'
   | 'shopify.inventory.levels.list'
-  | 'shopify.orders.get';
+  | 'shopify.orders.get'
+  | 'shopify.fulfillment_orders.list'
+  | 'shopify.fulfillment_orders.get';
 
 export interface JsonSchema {
   readonly type: 'object';
@@ -233,6 +235,27 @@ const ORDER_GET_SCHEMA: JsonSchema = {
     name: { type: 'string', description: 'Shopify order name such as #1001. Provide exactly one of id or name.' },
   },
   required: ['shop'],
+  additionalProperties: false,
+};
+const FULFILLMENT_ORDERS_LIST_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    orderId: { type: 'string', description: 'Order GID, e.g. gid://shopify/Order/123. Provide exactly one of orderId or orderName.' },
+    orderName: { type: 'string', description: 'Shopify order name such as #1001. Provide exactly one of orderId or orderName.' },
+    first: { type: 'integer', minimum: 1, maximum: 50, description: 'Page size. Defaults to 25 and is capped at 50.' },
+    after: { type: 'string', description: 'Optional Shopify cursor for the next page.' },
+  },
+  required: ['shop'],
+  additionalProperties: false,
+};
+const FULFILLMENT_ORDER_GET_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    id: { type: 'string', description: 'FulfillmentOrder GID, e.g. gid://shopify/FulfillmentOrder/123.' },
+  },
+  required: ['shop', 'id'],
   additionalProperties: false,
 };
 
@@ -601,6 +624,42 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
         toolName: 'shopify.orders.get',
         description: 'Inspect one Shopify order by GID or order name with minimized PII and bounded line item, fulfillment, and refund summaries.',
         inputSchema: ORDER_GET_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'fulfillment.orders.list.read',
+    domain: 'fulfillment',
+    operationName: 'FulfillmentOrdersByOrder',
+    requiredScopes: ['read_orders', 'read_merchant_managed_fulfillment_orders', 'read_assigned_fulfillment_orders', 'read_third_party_fulfillment_orders'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Paginates fulfillmentOrders for exactly one order by orderId or safe orderName with page size 1..50 (default 25); line items are capped at 25.',
+    cost: 'Uses bounded curated order fulfillmentOrders visibility query; no raw GraphQL input or destination/tracking/customer fields.',
+    auditEvent: 'fulfillment.orders.list',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.fulfillment_orders.list',
+        description: 'List read-only Shopify fulfillment orders for one order with safe non-contact fulfillment status fields only.',
+        inputSchema: FULFILLMENT_ORDERS_LIST_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'fulfillment.orders.get.read',
+    domain: 'fulfillment',
+    operationName: 'FulfillmentOrderDetail',
+    requiredScopes: ['read_orders', 'read_merchant_managed_fulfillment_orders', 'read_assigned_fulfillment_orders', 'read_third_party_fulfillment_orders'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Single fulfillmentOrder lookup by stable FulfillmentOrder GID; line items are capped at 25.',
+    cost: 'Low-cost curated fulfillmentOrder visibility query with no raw GraphQL input or destination/tracking/customer fields.',
+    auditEvent: 'fulfillment.orders.get',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.fulfillment_orders.get',
+        description: 'Inspect one read-only Shopify fulfillment order by GID with destination, tracking, contact, notes/tags, and metafields omitted.',
+        inputSchema: FULFILLMENT_ORDER_GET_SCHEMA,
       },
     },
   },

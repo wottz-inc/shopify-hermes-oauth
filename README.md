@@ -31,7 +31,7 @@ If neither tunnel tool is installed, it does not start a misleading local-only O
 - Hermes-native: uses `HERMES_HOME`, `~/.hermes/.env`, `hermes mcp add`, and an optional Hermes skill.
 - Minimal human setup: automate everything except unavoidable Shopify app creation/callback approval/store install approval.
 - Read-only by default.
-- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, `read_locations`. Curated customer and webhook tools additionally require `read_customers` / `read_webhooks` on stores where those tools are enabled.
+- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, `read_locations`. Curated customer, webhook, and fulfillment-order visibility tools additionally require `read_customers` / `read_webhooks` / the relevant fulfillment-order read scopes on stores where those tools are enabled.
 - Required Admin API Scopes are the Shopify app scopes that grant Admin API access for OAuth installs. Optional scopes are not a substitute for required Admin API scopes; optional-only app configuration can fail the callback with Shopify's `At least one scope is required` validation.
 - Use the store's canonical Admin `*.myshopify.com` domain for `/auth/start?shop=...`. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.
 - No required private infrastructure, hosted forge, hosted service, or third-party secret manager.
@@ -165,6 +165,15 @@ Location list/get requires `read_locations`; inventory item get requires `read_i
 
 This tool requires `read_orders`; Shopify may require `read_all_orders` for older orders outside the normal API read window, but that scope is not part of the default v0.1 install. Returned order detail intentionally omits customer identity/contact fields, billing/shipping addresses, notes, tags, tracking numbers/URLs, and transactions. Audit metadata records only shop/tool and whether ID or name input was present, not the raw order ID/name.
 
+## Curated fulfillment order visibility tools
+
+The MCP allowlist includes focused read-only fulfillment order visibility tools:
+
+- `shopify.fulfillment_orders.list` — list fulfillment orders for exactly one order by `orderId` (`gid://shopify/Order/123`) or safe `orderName` such as `#1001`; `first` defaults to 25 and is capped at 50.
+- `shopify.fulfillment_orders.get` — inspect one fulfillment order by stable `gid://shopify/FulfillmentOrder/123` ID.
+
+These tools require `read_orders` plus `read_merchant_managed_fulfillment_orders`, `read_assigned_fulfillment_orders`, and `read_third_party_fulfillment_orders` when enabled. They return only safe fulfillment order visibility fields: `id`, `status`, `requestStatus`, optional delivery method type, optional assigned location ID/name, line item `id`/`totalQuantity`/`remainingQuantity` capped at 25, and pageInfo. Destination address, tracking numbers/URLs, customer contact, notes/tags, metafields, transactions, raw Admin GraphQL input, and all mutations are intentionally omitted.
+
 ## Curated customer tools
 
 The MCP allowlist includes read-only, privacy-aware customer tools:
@@ -187,7 +196,7 @@ These tools do not expose arbitrary raw GraphQL input. Result previews are bound
 
 ## Nested connection limits
 
-v0.1 report and lookup queries intentionally avoid unbounded nested pagination. The products report shows at most the first 100 variants per product, and the orders report shows at most the first 50 line items per order; both summaries explicitly say when additional nested records were omitted. The inventory report fails rather than silently truncating when a product has more than 100 variants or a variant has more than 50 inventory levels, and its error identifies the affected product/variant/inventory item GID where safe. Product detail lookup caps variants at 25, media at 10, and metafield metadata at 20; collection list caps page size at 50; collection detail caps products at 25 and metafield metadata at 20; inventory location and level lookups default to 25 and cap page size at 50; order detail caps line items at 25, fulfillments at 10, and refunds at 10. If a store hits these ceilings, narrow the report or lookup scope or use a custom paginated Shopify Admin GraphQL workflow outside the curated v0.1 reports or lookup surfaces.
+v0.1 report and lookup queries intentionally avoid unbounded nested pagination. The products report shows at most the first 100 variants per product, and the orders report shows at most the first 50 line items per order; both summaries explicitly say when additional nested records were omitted. The inventory report fails rather than silently truncating when a product has more than 100 variants or a variant has more than 50 inventory levels, and its error identifies the affected product/variant/inventory item GID where safe. Product detail lookup caps variants at 25, media at 10, and metafield metadata at 20; collection list caps page size at 50; collection detail caps products at 25 and metafield metadata at 20; inventory location and level lookups default to 25 and cap page size at 50; order detail caps line items at 25, fulfillments at 10, and refunds at 10; fulfillment order lists cap page size at 50 and fulfillment order line items at 25. If a store hits these ceilings, narrow the report or lookup scope or use a custom paginated Shopify Admin GraphQL workflow outside the curated v0.1 reports or lookup surfaces.
 
 ## Documentation test maintenance
 
