@@ -255,6 +255,33 @@ export type {
 } from './online-store/summary.js';
 
 export {
+  B2B_CATALOGS_FIRST,
+  B2B_CATALOGS_SUMMARY_QUERY,
+  B2B_COMPANIES_FIRST,
+  B2B_COMPANIES_SUMMARY_QUERY,
+  B2B_COMPANY_LOCATIONS_FIRST,
+  B2B_PRICE_LISTS_FIRST,
+  B2bSummaryError,
+  summarizeB2bCatalogs,
+  summarizeB2bCompanies,
+} from './b2b/summary.js';
+export type {
+  B2bCatalogsSection,
+  B2bCatalogsSummaryResult,
+  B2bCatalogSummary,
+  B2bCompaniesSection,
+  B2bCompaniesSummaryResult,
+  B2bCompanyLocationSummary,
+  B2bCompanySummary,
+  B2bLimits,
+  B2bPiiPolicy,
+  B2bPriceListsSection,
+  B2bPriceListSummary,
+  B2bSummaryGraphqlClient,
+  B2bSummaryOptions,
+} from './b2b/summary.js';
+
+export {
   LOCALES_API_LIMITATION,
   MARKETS_API_LIMITATION,
   MARKETS_QUERY,

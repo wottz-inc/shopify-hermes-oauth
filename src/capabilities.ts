@@ -1,6 +1,6 @@
 export type CapabilityAccess = 'read' | 'write' | 'diagnostic';
 export type CapabilityRiskLevel = 'read_low' | 'read_pii' | 'read_financial' | 'write_medium' | 'write_high' | 'protected_data' | 'diagnostic_low';
-export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders' | 'fulfillment' | 'discounts' | 'marketing' | 'custom_data' | 'localization' | 'online_store';
+export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders' | 'fulfillment' | 'discounts' | 'marketing' | 'custom_data' | 'localization' | 'online_store' | 'b2b';
 export type CapabilityRequiredGate = 'dry_run' | 'explicit_confirmation' | 'audit_logging' | 'rollback_notes';
 
 export type McpToolName =
@@ -9,6 +9,8 @@ export type McpToolName =
   | 'shopify.verify_shop'
   | 'shopify.store.diagnostics'
   | 'shopify.online_store.summary'
+  | 'shopify.b2b.companies.summary'
+  | 'shopify.b2b.catalogs.summary'
   | 'shopify.report_products'
   | 'shopify.report_orders'
   | 'shopify.report_inventory'
@@ -323,6 +325,7 @@ const MARKETS_LIST_SCHEMA: JsonSchema = {
   },
 };
 const SHOP_LOCALES_LIST_SCHEMA: JsonSchema = SHOP_SCHEMA;
+const B2B_SUMMARY_SCHEMA: JsonSchema = SHOP_SCHEMA;
 
 const METAFIELD_DEFINITIONS_LIST_SCHEMA: JsonSchema = {
   ...SHOP_SCHEMA,
@@ -431,6 +434,42 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
         toolName: 'shopify.online_store.summary',
         description: 'Return bounded read-only online store theme/page/blog summaries plus checkout/account/branding limitation statuses.',
         inputSchema: SHOP_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'b2b.companies.summary.read',
+    domain: 'b2b',
+    operationName: 'B2bCompaniesSummary',
+    requiredScopes: ['read_companies'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Single curated read-only B2B companies summary query with companies capped at 25 and locations capped at 10; no raw GraphQL input and no contacts, customers, emails, phones, addresses, notes/tags, payment terms, write operations, or unbounded nested connections.',
+    cost: 'Low-cost bounded company/location count summary; unsupported shops return structured missing_scope or b2b_unavailable statuses.',
+    auditEvent: 'b2b.companies.summary',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.b2b.companies.summary',
+        description: 'Return bounded read-only B2B company and company-location summary counts without contact/customer/address PII.',
+        inputSchema: B2B_SUMMARY_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'b2b.catalogs.summary.read',
+    domain: 'b2b',
+    operationName: 'B2bCatalogsSummary',
+    requiredScopes: ['read_products'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Single curated read-only B2B catalogs summary query with catalogs and price lists capped at 25; no raw GraphQL input and no product lists, variant price exports, quantity-rule dumps, catalog assignment writes, or price-list changes.',
+    cost: 'Low-cost bounded catalog/price-list count summary; unsupported or unauthorized shops return structured catalog_permission_required statuses.',
+    auditEvent: 'b2b.catalogs.summary',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.b2b.catalogs.summary',
+        description: 'Return bounded read-only B2B catalog and price-list summary counts without product or variant price dumps.',
+        inputSchema: B2B_SUMMARY_SCHEMA,
       },
     },
   },

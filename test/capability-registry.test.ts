@@ -26,6 +26,8 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'shops.verify.read',
       'shops.store_diagnostics.read',
       'online_store.summary.read',
+      'b2b.companies.summary.read',
+      'b2b.catalogs.summary.read',
       'reports.products.read',
       'reports.orders.read',
       'reports.inventory.read',
@@ -104,6 +106,34 @@ describe('Admin Graph capability registry and tool policy model', () => {
     expect(onlineStore.pagination).toContain('no raw GraphQL input');
     expect(onlineStore.pagination).toContain('no theme assets');
     expect(onlineStore.cost).toContain('documented limitations');
+
+    const b2bCompanies = expectCapability('b2b.companies.summary.read');
+    expect(b2bCompanies).toMatchObject({
+      domain: 'b2b',
+      operationName: 'B2bCompaniesSummary',
+      requiredScopes: ['read_companies'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'b2b.companies.summary',
+      surfaces: { mcp: { toolName: 'shopify.b2b.companies.summary' } },
+    });
+    expect(b2bCompanies.pagination).toContain('no raw GraphQL input');
+    expect(b2bCompanies.pagination).toContain('no contacts');
+    expect(b2bCompanies.cost).toContain('b2b_unavailable');
+
+    const b2bCatalogs = expectCapability('b2b.catalogs.summary.read');
+    expect(b2bCatalogs).toMatchObject({
+      domain: 'b2b',
+      operationName: 'B2bCatalogsSummary',
+      requiredScopes: ['read_products'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'b2b.catalogs.summary',
+      surfaces: { mcp: { toolName: 'shopify.b2b.catalogs.summary' } },
+    });
+    expect(b2bCatalogs.pagination).toContain('no raw GraphQL input');
+    expect(b2bCatalogs.pagination).toContain('no product lists');
+    expect(b2bCatalogs.cost).toContain('catalog_permission_required');
 
     const productsReport = expectCapability('reports.products.read');
     expect(productsReport).toMatchObject({
