@@ -41,6 +41,8 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'inventory.items.get.read',
       'inventory.levels.list.read',
       'orders.get.read',
+      'fulfillment.orders.list.read',
+      'fulfillment.orders.get.read',
       'customers.list.read',
       'customers.get.read',
     ]);
@@ -214,6 +216,26 @@ describe('Admin Graph capability registry and tool policy model', () => {
       riskLevel: 'read_pii',
       auditEvent: 'orders.get',
       surfaces: { mcp: { toolName: 'shopify.orders.get' } },
+    });
+
+    const fulfillmentScopes = ['read_orders', 'read_merchant_managed_fulfillment_orders', 'read_assigned_fulfillment_orders', 'read_third_party_fulfillment_orders'];
+    expect(expectCapability('fulfillment.orders.list.read')).toMatchObject({
+      domain: 'fulfillment',
+      operationName: 'FulfillmentOrdersByOrder',
+      requiredScopes: fulfillmentScopes,
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'fulfillment.orders.list',
+      surfaces: { mcp: { toolName: 'shopify.fulfillment_orders.list' } },
+    });
+    expect(expectCapability('fulfillment.orders.get.read')).toMatchObject({
+      domain: 'fulfillment',
+      operationName: 'FulfillmentOrderDetail',
+      requiredScopes: fulfillmentScopes,
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'fulfillment.orders.get',
+      surfaces: { mcp: { toolName: 'shopify.fulfillment_orders.get' } },
     });
 
     const customerList = expectCapability('customers.list.read');

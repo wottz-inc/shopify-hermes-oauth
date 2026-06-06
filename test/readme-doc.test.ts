@@ -170,6 +170,21 @@ describe('SAFETY-CRITICAL README documentation contracts', () => {
     ]);
   });
 
+  it('documents curated fulfillment order visibility tools with safe omissions', () => {
+    const markdown = readReadme();
+
+    expectAllPresent(markdown, [
+      '## Curated fulfillment order visibility tools',
+      '`shopify.fulfillment_orders.list`',
+      '`shopify.fulfillment_orders.get`',
+      'read_merchant_managed_fulfillment_orders',
+      'read_assigned_fulfillment_orders',
+      'read_third_party_fulfillment_orders',
+      'Destination address, tracking numbers/URLs, customer contact, notes/tags, metafields, transactions, raw Admin GraphQL input, and all mutations are intentionally omitted',
+      'fulfillment order lists cap page size at 50 and fulfillment order line items at 25',
+    ]);
+  });
+
   it('documents source installs and Hermes profile-local npm PATH expectations', () => {
     const markdown = readReadme();
 

@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { BulkOperationError, cancelBulkOperation, fetchBulkOperationResult, getBulkOperationTemplate, getCurrentBulkOperation, startBulkOperation } from './bulk/operations.js';
 import { getCollection, getProductDetail, listCollections } from './catalog/details.js';
+import { getFulfillmentOrder, listFulfillmentOrders } from './fulfillment/details.js';
 import { getInventoryItem, getLocation, listInventoryLevels, listLocations } from './inventory/details.js';
 import { getOrderDetail } from './orders/details.js';
 import { getCustomer, listCustomers } from './customers/index.js';
@@ -1291,6 +1292,18 @@ function localHermesSkillContent(): string {
     "- `shopify.report_products`",
     "- `shopify.report_orders`",
     "- `shopify.report_inventory`",
+    "- `shopify.products.get`",
+    "- `shopify.collections.list`",
+    "- `shopify.collections.get`",
+    "- `shopify.locations.list`",
+    "- `shopify.locations.get`",
+    "- `shopify.inventory.items.get`",
+    "- `shopify.inventory.levels.list`",
+    "- `shopify.orders.get`",
+    "- `shopify.fulfillment_orders.list` (requires `read_orders`, `read_merchant_managed_fulfillment_orders`, `read_assigned_fulfillment_orders`, and `read_third_party_fulfillment_orders`; page cap 50, line items 25)",
+    "- `shopify.fulfillment_orders.get` (same fulfillment-order scopes; omits destination address, tracking numbers/URLs, customer contact, notes/tags, metafields, and transactions)",
+    "- `shopify.webhooks.list` (requires `read_webhooks`; no create/update/delete until gated)",
+    "- `shopify.webhooks.get` (requires `read_webhooks`)",
     "- `shopify.customers.list` (requires `read_customers`; returns bounded pages with email domains only, phone presence only, and aggregate order/spend summaries)",
     "- `shopify.customers.get` (requires `read_customers`; returns one customer by GID with the same minimal PII policy)",
     "",
@@ -2110,6 +2123,16 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
     getOrder: async ({ shop, id, name }) => {
       const reportRuntime = await reportClientFor(shop, ['read_orders']);
       const report = await getOrderDetail({ client: reportRuntime.client, id, name });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listFulfillmentOrders: async ({ shop, orderId, orderName, first, after }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_orders', 'read_merchant_managed_fulfillment_orders', 'read_assigned_fulfillment_orders', 'read_third_party_fulfillment_orders']);
+      const report = await listFulfillmentOrders({ client: reportRuntime.client, orderId, orderName, first, after });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    getFulfillmentOrder: async ({ shop, id }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_orders', 'read_merchant_managed_fulfillment_orders', 'read_assigned_fulfillment_orders', 'read_third_party_fulfillment_orders']);
+      const report = await getFulfillmentOrder({ client: reportRuntime.client, id });
       return { shop: reportRuntime.shop, ...report };
     },
     listCustomers: async ({ shop, first, after, query }) => {

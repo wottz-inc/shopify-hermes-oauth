@@ -83,6 +83,19 @@ export interface OrderGetToolArgs {
   readonly name?: string;
 }
 
+export interface FulfillmentOrdersListToolArgs {
+  readonly shop: string;
+  readonly orderId?: string;
+  readonly orderName?: string;
+  readonly first?: number;
+  readonly after?: string;
+}
+
+export interface FulfillmentOrderGetToolArgs {
+  readonly shop: string;
+  readonly id: string;
+}
+
 export interface CustomerListToolArgs {
   readonly shop: string;
   readonly first?: number;
@@ -134,6 +147,8 @@ export interface McpServerDependencies {
   readonly getInventoryItem: (args: InventoryItemGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listInventoryLevels: (args: InventoryLevelsListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getOrder: (args: OrderGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listFulfillmentOrders: (args: FulfillmentOrdersListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getFulfillmentOrder: (args: FulfillmentOrderGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listCustomers: (args: CustomerListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getCustomer: (args: CustomerGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly startBulkOperation: (args: BulkStartToolArgs) => Promise<McpToolOutput> | McpToolOutput;
@@ -342,6 +357,19 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
         result = sanitizeToolOutput(await callDependency(() => deps.getOrder(readOrderGetArgs(args))));
         break;
       }
+      case 'shopify.fulfillment_orders.list': {
+        validateExactArgs(args, ['shop', 'orderId', 'orderName', 'first', 'after']);
+        result = sanitizeToolOutput(await callDependency(() => deps.listFulfillmentOrders(readFulfillmentOrdersListArgs(args))));
+        break;
+      }
+      case 'shopify.fulfillment_orders.get': {
+        validateExactArgs(args, ['shop', 'id']);
+        result = sanitizeToolOutput(await callDependency(() => deps.getFulfillmentOrder({
+          shop: readRequiredString(args, 'shop'),
+          id: readRequiredString(args, 'id'),
+        })));
+        break;
+      }
       case 'shopify.customers.list': {
         validateExactArgs(args, ['shop', 'first', 'after', 'query']);
         const customerArgs = readCustomerListArgs(args);
@@ -405,6 +433,7 @@ function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, err
     ...(name === 'shopify.customers.list' || name === 'shopify.collections.list' || name === 'shopify.locations.list' ? readAuditBoundedList(args) : {}),
     ...(name === 'shopify.inventory.levels.list' ? readAuditInventoryLevelsList(args) : {}),
     ...(name === 'shopify.orders.get' ? readAuditOrderGet(args) : {}),
+    ...(name === 'shopify.fulfillment_orders.list' ? readAuditFulfillmentOrdersList(args) : {}),
     ...(reason === undefined ? {} : { reason: sanitizeAuditString(reason) }),
     ...(errorCode === undefined ? {} : { errorCode }),
   };
@@ -500,6 +529,14 @@ function readAuditOrderGet(args: unknown): { readonly idPresent?: boolean; reado
   return {
     ...(isRecord(args) && typeof args.id === 'string' ? { idPresent: true } : {}),
     ...(isRecord(args) && typeof args.name === 'string' ? { namePresent: true } : {}),
+  };
+}
+
+function readAuditFulfillmentOrdersList(args: unknown): { readonly first?: number; readonly queryPresent?: boolean; readonly afterPresent?: boolean; readonly orderIdPresent?: boolean; readonly orderNamePresent?: boolean } {
+  return {
+    ...readAuditBoundedList(args),
+    ...(isRecord(args) && typeof args.orderId === 'string' ? { orderIdPresent: true } : {}),
+    ...(isRecord(args) && typeof args.orderName === 'string' ? { orderNamePresent: true } : {}),
   };
 }
 
@@ -768,6 +805,24 @@ function readOrderGetArgs(args: unknown): OrderGetToolArgs {
     throw new McpToolError('Invalid argument: name.');
   }
   return { shop: readRequiredString(args, 'shop'), ...(id === undefined ? {} : { id }), ...(name === undefined ? {} : { name }) };
+}
+
+function readFulfillmentOrdersListArgs(args: unknown): FulfillmentOrdersListToolArgs {
+  const orderId = readOptionalStringProperty(args, 'orderId').orderId;
+  const orderName = readOptionalStringProperty(args, 'orderName').orderName;
+  if ((orderId === undefined && orderName === undefined) || (orderId !== undefined && orderName !== undefined)) {
+    throw new McpToolError('Provide exactly one of orderId or orderName.');
+  }
+  if (orderName !== undefined && /[{}]|\b(?:mutation|query)\b/iu.test(orderName)) {
+    throw new McpToolError('Invalid argument: orderName.');
+  }
+  return {
+    shop: readRequiredString(args, 'shop'),
+    ...(orderId === undefined ? {} : { orderId }),
+    ...(orderName === undefined ? {} : { orderName }),
+    ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50),
+    ...readOptionalStringProperty(args, 'after'),
+  };
 }
 
 function readCustomerListArgs(args: unknown): CustomerListToolArgs {

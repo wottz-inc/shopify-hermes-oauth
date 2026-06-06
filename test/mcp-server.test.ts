@@ -101,6 +101,20 @@ function createDeps(): McpServerDependencies {
       order: { id: id ?? 'gid://shopify/Order/1', name: name ?? '#1001', lineItems: [], lineItemsTruncated: false, fulfillments: [], fulfillmentsTruncated: false, refunds: [], refundsTruncated: false },
       pii: { redactedFields: ['customer', 'email', 'phone', 'billingAddress', 'shippingAddress', 'note', 'tags', 'trackingNumber', 'trackingUrl', 'transactions'] },
     }),
+    listFulfillmentOrders: ({ shop, orderId, orderName, first }) => ({
+      shop,
+      orderId,
+      orderName,
+      fulfillmentOrders: [{ id: 'gid://shopify/FulfillmentOrder/10', status: 'OPEN', requestStatus: 'UNSUBMITTED', lineItems: [] }],
+      pageInfo: { hasNextPage: false },
+      first,
+      pii: { redactedFields: ['destinationAddress', 'customer', 'email', 'phone', 'trackingNumber', 'trackingUrl', 'label', 'note', 'tags', 'metafields', 'transactions'] },
+    }),
+    getFulfillmentOrder: ({ shop, id }) => ({
+      shop,
+      fulfillmentOrder: { id, status: 'OPEN', requestStatus: 'UNSUBMITTED', lineItems: [] },
+      pii: { redactedFields: ['destinationAddress', 'customer', 'email', 'phone', 'trackingNumber', 'trackingUrl', 'label', 'note', 'tags', 'metafields', 'transactions'] },
+    }),
     listCustomers: ({ shop, first, query }) => ({
       shop,
       customers: [{ id: 'gid://shopify/Customer/1', emailDomain: 'example.test', phonePresent: true, ordersCount: 2 }],
@@ -162,6 +176,8 @@ describe('curated MCP server', () => {
       'shopify.inventory.items.get',
       'shopify.inventory.levels.list',
       'shopify.orders.get',
+      'shopify.fulfillment_orders.list',
+      'shopify.fulfillment_orders.get',
       'shopify.customers.list',
       'shopify.customers.get',
     ]);
@@ -248,6 +264,15 @@ describe('curated MCP server', () => {
     await expect(callTool('shopify.orders.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Order/1' }, deps)).resolves.toMatchObject({
       shop: 'alpha.myshopify.com',
       order: { id: 'gid://shopify/Order/1', name: '#1001' },
+    });
+    await expect(callTool('shopify.fulfillment_orders.list', { shop: 'alpha.myshopify.com', orderId: 'gid://shopify/Order/1', first: 10 }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      fulfillmentOrders: [{ id: 'gid://shopify/FulfillmentOrder/10' }],
+      first: 10,
+    });
+    await expect(callTool('shopify.fulfillment_orders.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/FulfillmentOrder/10' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      fulfillmentOrder: { id: 'gid://shopify/FulfillmentOrder/10' },
     });
     await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', first: 10, query: 'created_at:>=2026-01-01' }, deps)).resolves.toEqual({
       shop: 'alpha.myshopify.com',
@@ -344,6 +369,8 @@ describe('curated MCP server', () => {
     await expect(callTool('shopify.inventory.items.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/InventoryItem/2' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com' });
     await expect(callTool('shopify.inventory.levels.list', { shop: 'alpha.myshopify.com', inventoryItemId: 'gid://shopify/InventoryItem/2', first: 10 }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com' });
     await expect(callTool('shopify.orders.get', { shop: 'alpha.myshopify.com', name: '#1001' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com' });
+    await expect(callTool('shopify.fulfillment_orders.list', { shop: 'alpha.myshopify.com', orderName: '#1001', first: 10 }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com' });
+    await expect(callTool('shopify.fulfillment_orders.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/FulfillmentOrder/10' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com' });
     await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', first: 10, query: 'email:ada@example.test' }, deps)).resolves.toMatchObject({
       shop: 'alpha.myshopify.com',
       customers: [{ id: 'gid://shopify/Customer/1' }],
@@ -447,6 +474,18 @@ describe('curated MCP server', () => {
         shop: 'alpha.myshopify.com',
         result: 'success',
         metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.orders.get', namePresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.fulfillment_orders.list', first: 10, orderNamePresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.fulfillment_orders.get' },
       },
       {
         action: 'mcp.tool',
@@ -785,6 +824,8 @@ describe('curated MCP server', () => {
       await expect(callTool('shopify.inventory.items.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/InventoryItem/2', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.inventory.levels.list', { shop: 'alpha.myshopify.com', inventoryItemId: 'gid://shopify/InventoryItem/2', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.orders.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Order/1', ...args }, createDeps())).rejects.toThrow(McpToolError);
+      await expect(callTool('shopify.fulfillment_orders.list', { shop: 'alpha.myshopify.com', orderId: 'gid://shopify/Order/1', ...args }, createDeps())).rejects.toThrow(McpToolError);
+      await expect(callTool('shopify.fulfillment_orders.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/FulfillmentOrder/10', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.customers.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Customer/1', ...args }, createDeps())).rejects.toThrow(McpToolError);
     }
@@ -800,6 +841,10 @@ describe('curated MCP server', () => {
     await expect(callTool('shopify.inventory.levels.list', { shop: 'alpha.myshopify.com', locationId: 'gid://shopify/Location/1', first: 51 }, createDeps())).rejects.toThrow(McpToolError);
     await expect(callTool('shopify.inventory.levels.list', { shop: 'alpha.myshopify.com' }, createDeps())).rejects.toThrow(McpToolError);
     await expect(callTool('shopify.inventory.levels.list', { shop: 'alpha.myshopify.com', inventoryItemId: 'gid://shopify/InventoryItem/2', locationId: 'gid://shopify/Location/1' }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.fulfillment_orders.list', { shop: 'alpha.myshopify.com' }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.fulfillment_orders.list', { shop: 'alpha.myshopify.com', orderId: 'gid://shopify/Order/1', orderName: '#1001' }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.fulfillment_orders.list', { shop: 'alpha.myshopify.com', orderId: 'gid://shopify/Order/1', first: 0 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.fulfillment_orders.list', { shop: 'alpha.myshopify.com', orderId: 'gid://shopify/Order/1', first: 51 }, createDeps())).rejects.toThrow(McpToolError);
     await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', first: 0 }, createDeps())).rejects.toThrow(McpToolError);
     await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', first: 51 }, createDeps())).rejects.toThrow(McpToolError);
   });
