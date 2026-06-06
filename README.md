@@ -31,7 +31,7 @@ If neither tunnel tool is installed, it does not start a misleading local-only O
 - Hermes-native: uses `HERMES_HOME`, `~/.hermes/.env`, `hermes mcp add`, and an optional Hermes skill.
 - Minimal human setup: automate everything except unavoidable Shopify app creation/callback approval/store install approval.
 - Read-only by default.
-- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, and `read_locations`. Curated customer, webhook, fulfillment-order, discount, marketing-event, markets, and locale tools additionally require `read_customers` / `read_webhooks` / fulfillment-order read scopes / `read_discounts` / `read_marketing_events` / `read_markets` / `read_locales` on stores where enabled.
+- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, and `read_locations`. Curated customer, webhook, fulfillment-order, discount, marketing-event, markets, locale, and privacy-policy diagnostics tools additionally require `read_customers` / `read_webhooks` / fulfillment-order read scopes / `read_discounts` / `read_marketing_events` / `read_markets` / `read_locales` / `read_content` on stores where enabled.
 - Required Admin API Scopes are the Shopify app scopes that grant Admin API access for OAuth installs. Optional scopes are not a substitute for required Admin API scopes; optional-only app configuration can fail the callback with Shopify's `At least one scope is required` validation.
 - Use the store's canonical Admin `*.myshopify.com` domain for `/auth/start?shop=...`. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.
 - No required private infrastructure, hosted forge, hosted service, or third-party secret manager.
@@ -100,6 +100,16 @@ Agent runs: shopify-hermes-oauth shops verify finbobaggins.myshopify.com
 ```
 
 The onboarding command never prints Shopify client secrets or token-store contents. Re-running it is safe and idempotent: it reports current state such as missing config, configured tunnel/app URL, MCP configured/not configured, no shops installed, or the target shop installed locally.
+
+## Safe shop diagnostics
+
+Use diagnostics when you need more than token verification without exposing secrets:
+
+```bash
+shopify-hermes-oauth shops diagnostics <shop>
+```
+
+The command and MCP tool `shopify.store.diagnostics` return curated store/app/access JSON: safe shop properties, current app install status/title/handle, access-scope handles, configured-vs-granted scope drift, and privacy policy presence/title/URL only when `read_content` is granted. Without `read_content`, privacy returns `missing_scope` and policy fields are not queried. Diagnostics never return token-store contents, OAuth callback data, raw GraphQL, owner/contact/billing/customer data, policy bodies, writes, or mutations.
 
 ## Local/source install and PATH diagnostics
 

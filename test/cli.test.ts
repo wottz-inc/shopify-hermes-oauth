@@ -2397,6 +2397,62 @@ describe('CLI shops', () => {
     expect(JSON.stringify(auditEvents)).not.toContain('shpat_never_print_me');
   });
 
+  it('prints safe shop diagnostics JSON without tokens or privacy bodies', async () => {
+    const auditEvents: unknown[] = [];
+    const seenOperations: string[] = [];
+    const harness = createHarness({
+      env: { HERMES_HOME: '/tmp/hermes', SHOPIFY_HERMES_SCOPES: 'read_products,read_content' },
+      appendAuditEvent: (_path, event) => { auditEvents.push(event); },
+      fetch: (_url, init) => {
+        const requestBody = typeof init?.body === 'string' ? init.body : '{}';
+        const body = JSON.parse(requestBody) as { readonly operationName?: string; readonly query?: string };
+        seenOperations.push(body.operationName ?? '');
+        expect(body.query ?? '').not.toMatch(/body|customerPrivacy|owner|email|phone|billing/iu);
+        if (body.operationName === 'StoreAppDiagnostics') {
+          return Promise.resolve(new Response(JSON.stringify({ data: { shop: { name: 'Example Shop', myshopifyDomain: 'example.myshopify.com', currencyCode: 'USD', plan: { displayName: 'Basic' }, primaryDomain: { host: 'example.com', url: 'https://example.com' }, ianaTimezone: 'America/New_York', enabledPresentmentCurrencies: ['USD'] }, currentAppInstallation: { app: { title: 'Hermes OAuth', handle: 'hermes-oauth' }, accessScopes: [{ handle: 'read_products' }, { handle: 'read_content' }] } } }), { status: 200 }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ data: { shop: { privacyPolicy: { title: 'Privacy', url: 'https://example.com/policies/privacy-policy' }, refundPolicy: null, termsOfService: null } } }), { status: 200 }));
+      },
+    });
+    harness.files.set('/tmp/hermes/shopify-hermes-oauth/tokens.json', JSON.stringify({
+      version: 1,
+      shops: {
+        'example.myshopify.com': {
+          shop: 'example.myshopify.com',
+          accessToken: 'shpat_never_print_me',
+          scopes: ['read_products', 'read_content'],
+          grantedScopes: ['read_products', 'read_content'],
+          storedAt: '2026-05-22T12:00:00.000Z',
+          updatedAt: '2026-05-22T12:05:00.000Z',
+        },
+      },
+    }));
+
+    const exitCode = await runShopifyHermesOauthCli(['shops', 'diagnostics', 'example'], harness.deps);
+    const output = harness.stdout.join('\n');
+
+    expect(exitCode).toBe(0);
+    expect(seenOperations).toEqual(['StoreAppDiagnostics', 'StorePrivacyDiagnostics']);
+    expect(JSON.parse(output)).toMatchObject({
+      shop: 'example.myshopify.com',
+      store: { name: 'Example Shop', myshopifyDomain: 'example.myshopify.com', currencyCode: 'USD', planName: 'Basic' },
+      app: { installationStatus: 'installed', title: 'Hermes OAuth', handle: 'hermes-oauth', accessScopes: ['read_products', 'read_content'] },
+      privacy: { status: 'ok', policies: [
+        { type: 'privacyPolicy', present: true, title: 'Privacy', url: 'https://example.com/policies/privacy-policy' },
+        { type: 'refundPolicy', present: false },
+        { type: 'termsOfService', present: false },
+      ] },
+    });
+    expect(output).not.toContain('shpat_never_print_me');
+    expect(output).not.toContain('body');
+    expect(auditEvents).toEqual([{
+      action: 'shops.diagnostics',
+      shop: 'example.myshopify.com',
+      result: 'success',
+      metadata: { source: 'cli', actor: 'cli', mode: 'read-only', privacyStatus: 'ok' },
+    }]);
+  });
+
   it('removes a normalized shop and never prints token values', async () => {
     const auditEvents: unknown[] = [];
     const harness = createHarness({ appendAuditEvent: (_path, event) => { auditEvents.push(event); } });
@@ -2733,8 +2789,8 @@ describe('CLI shops', () => {
     await expect(runShopifyHermesOauthCli(['shops'], missingHarness.deps)).resolves.toBe(2);
     await expect(runShopifyHermesOauthCli(['shops', 'wat'], unknownHarness.deps)).resolves.toBe(2);
 
-    expect(missingHarness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth shops <list|remove|verify>');
-    expect(unknownHarness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth shops <list|remove|verify>');
+    expect(missingHarness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth shops <list|remove|verify|diagnostics>');
+    expect(unknownHarness.stderr.join('\n')).toContain('Usage: shopify-hermes-oauth shops <list|remove|verify|diagnostics>');
   });
 });
 

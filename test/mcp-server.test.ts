@@ -30,6 +30,13 @@ function createDeps(): McpServerDependencies {
       shop,
       metadata: { name: 'Alpha', myshopifyDomain: shop, currencyCode: 'USD' },
     }),
+    storeDiagnostics: ({ shop }) => ({
+      shop,
+      store: { name: 'Alpha', myshopifyDomain: shop, currencyCode: 'USD' },
+      app: { installationStatus: 'installed', title: 'Hermes OAuth', accessScopes: ['read_products'] },
+      access: { storedScopes: ['read_products'], grantedScopes: ['read_products'], configuredScopes: ['read_products', 'read_content'], missingConfiguredScopes: ['read_content'], extraGrantedScopes: [] },
+      privacy: { status: 'missing_scope', requiredScope: 'read_content' },
+    }),
     reportProducts: ({ shop, format }) => ({
       shop,
       format,
@@ -189,6 +196,7 @@ describe('curated MCP server', () => {
       'shopify.health',
       'shopify.list_shops',
       'shopify.verify_shop',
+      'shopify.store.diagnostics',
       'shopify.report_products',
       'shopify.report_orders',
       'shopify.report_inventory',
@@ -244,6 +252,12 @@ describe('curated MCP server', () => {
     await expect(callTool('shopify.verify_shop', { shop: 'alpha.myshopify.com' }, deps)).resolves.toEqual({
       shop: 'alpha.myshopify.com',
       metadata: { name: 'Alpha', myshopifyDomain: 'alpha.myshopify.com', currencyCode: 'USD' },
+    });
+    await expect(callTool('shopify.store.diagnostics', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      store: { name: 'Alpha', myshopifyDomain: 'alpha.myshopify.com', currencyCode: 'USD' },
+      app: { installationStatus: 'installed', title: 'Hermes OAuth', accessScopes: ['read_products'] },
+      privacy: { status: 'missing_scope', requiredScope: 'read_content' },
     });
     await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', format: 'json' }, deps)).resolves.toMatchObject({
       shop: 'alpha.myshopify.com',

@@ -9,6 +9,7 @@ import { safeErrorCode, type SafeErrorCode } from '../safe-errors.js';
 import { type ProductsReportFormat } from '../reports/products.js';
 import { redactSensitiveText } from '../shopify/admin-client.js';
 import { MissingShopifyScopesError } from '../shopify/scopes.js';
+import { type StoreDiagnosticsResult } from '../shops/diagnostics.js';
 import { type VerifyShopResult } from '../shops/verify.js';
 import { summarizeShopMetadata, type AllowedShopMetadata } from '../shops/metadata.js';
 import { type StoredShopToken, type TokenStore } from '../tokens/local-token-store.js';
@@ -171,6 +172,7 @@ export type McpToolOutput = Record<string, unknown>;
 export interface McpServerDependencies {
   readonly tokenStore: Pick<TokenStore, 'listTokens'>;
   readonly verifyShop: (args: { readonly shop: string }) => Promise<VerifyShopResult> | VerifyShopResult;
+  readonly storeDiagnostics: (args: { readonly shop: string }) => Promise<StoreDiagnosticsResult> | StoreDiagnosticsResult;
   readonly reportProducts: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly reportOrders: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly reportInventory: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
@@ -295,6 +297,11 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
         validateExactArgs(args, ['shop']);
         const shop = readRequiredString(args, 'shop');
         result = sanitizeToolOutput(await callDependency(() => deps.verifyShop({ shop })));
+        break;
+      }
+      case 'shopify.store.diagnostics': {
+        validateExactArgs(args, ['shop']);
+        result = sanitizeToolOutput(await callDependency(() => deps.storeDiagnostics({ shop: readRequiredString(args, 'shop') })));
         break;
       }
       case 'shopify.report_products': {

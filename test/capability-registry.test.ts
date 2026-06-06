@@ -24,6 +24,7 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'mcp.health.read',
       'shops.list.read',
       'shops.verify.read',
+      'shops.store_diagnostics.read',
       'reports.products.read',
       'reports.orders.read',
       'reports.inventory.read',
@@ -71,6 +72,22 @@ describe('Admin Graph capability registry and tool policy model', () => {
         mcp: { toolName: 'shopify.verify_shop' },
       },
     });
+
+    const storeDiagnostics = expectCapability('shops.store_diagnostics.read');
+    expect(storeDiagnostics).toMatchObject({
+      domain: 'shops',
+      operationName: 'StoreAppDiagnostics',
+      requiredScopes: [],
+      access: 'diagnostic',
+      riskLevel: 'diagnostic_low',
+      auditEvent: 'shops.diagnostics',
+      surfaces: {
+        cli: { command: 'shopify-hermes-oauth shops diagnostics <shop>' },
+        mcp: { toolName: 'shopify.store.diagnostics' },
+      },
+    });
+    expect(storeDiagnostics.pagination).toContain('optional policy presence query');
+    expect(storeDiagnostics.pagination).toContain('no raw GraphQL input');
 
     const productsReport = expectCapability('reports.products.read');
     expect(productsReport).toMatchObject({

@@ -26,6 +26,7 @@ import { formatOrdersReport, generateOrdersReport, parseOrdersReportWindow, type
 import { formatProductsReport, generateProductsReport, type ProductsReportFormat } from './reports/products.js';
 import { createOAuthHttpServer } from './server.js';
 import { createShopifyAdminGraphqlClient, redactSensitiveErrorMessage } from './shopify/admin-client.js';
+import { generateStoreDiagnostics } from './shops/diagnostics.js';
 import { compareShopifyScopes, MissingShopifyScopesError, missingShopifyScopes, normalizeShopifyScopes } from './shopify/scopes.js';
 import { verifyShop, type VerifyShopResult } from './shops/verify.js';
 import { LocalJsonTokenStore, normalizeTokenStoreShopDomain, parseLocalJsonTokenStoreFile, type StoredShopToken } from './tokens/local-token-store.js';
@@ -246,6 +247,70 @@ async function runShops(args: readonly string[], context: CliContext): Promise<n
         metadata: auditMetadata({ mode: 'write', reason: 'token_store_remove_failed' }),
       });
       context.stderr('Could not update token store. Check local token storage and try again.');
+      return 1;
+    }
+  }
+
+  if (subcommand === 'diagnostics') {
+    const shop = args[1];
+
+    if (!isPresent(shop)) {
+      context.stderr(shopsUsage());
+      return 2;
+    }
+
+    let normalizedShop: string;
+
+    try {
+      normalizedShop = normalizeTokenStoreShopDomain(shop);
+    } catch {
+      context.stderr('Invalid Shopify shop domain.');
+      return 2;
+    }
+
+    const runtime = await resolveRuntimeConfiguration(context);
+
+    try {
+      const store = createTokenStoreForPath(runtime.paths.tokenStore, context);
+      const adminClient = createShopifyAdminGraphqlClient({
+        apiVersion: runtime.mergedEnv.SHOPIFY_HERMES_API_VERSION ?? DEFAULT_SHOPIFY_HERMES_API_VERSION,
+        fetch: context.fetch,
+      });
+      const token = await store.getToken(normalizedShop);
+      if (token === undefined) {
+        throw new Error(`No stored OAuth token found for ${normalizedShop}.`);
+      }
+      const result = await generateStoreDiagnostics({
+        shop: normalizedShop,
+        tokenStore: store,
+        configuredScopes: parseScopeList(runtime.mergedEnv.SHOPIFY_HERMES_SCOPES ?? DEFAULT_SHOPIFY_HERMES_SCOPES),
+        client: {
+          query: (query, variables, options) => adminClient.query({
+            shop: normalizedShop,
+            accessToken: token.accessToken,
+            query,
+            variables,
+            operationName: options?.operationName,
+          }),
+        },
+      });
+
+      await appendAuditEventBestEffort(context, runtime.paths.auditLog, {
+        action: 'shops.diagnostics',
+        shop: normalizedShop,
+        result: 'success',
+        metadata: auditMetadata({ mode: 'read-only', privacyStatus: result.privacy.status }),
+      });
+      context.stdout(JSON.stringify(result, null, 2));
+      return 0;
+    } catch (error) {
+      await appendAuditEventBestEffort(context, runtime.paths.auditLog, {
+        action: 'shops.diagnostics',
+        shop: normalizedShop,
+        result: 'failure',
+        metadata: auditMetadata({ mode: 'read-only', reason: 'diagnostics_failed' }),
+      });
+      context.stderr(error instanceof Error ? redactSensitiveErrorMessage(error.message) : 'Could not read shop diagnostics.');
       return 1;
     }
   }
@@ -1259,9 +1324,10 @@ function localHermesSkillContent(): string {
     "```bash",
     "shopify-hermes-oauth shops list",
     "shopify-hermes-oauth shops verify <shop>",
+    "shopify-hermes-oauth shops diagnostics <shop>",
     "```",
     "",
-    "If verification fails, stop and report the connector error. Do not ask for raw tokens as a workaround.",
+    "If verification fails, stop and report the connector error. Do not ask for raw tokens as a workaround. `shops diagnostics <shop>` prints safe store/app/access/privacy JSON; privacy policy presence/title/URL requires `read_content`, otherwise privacy returns `missing_scope` without querying policy fields.",
     "",
     "## Read-only reports",
     "",
@@ -1292,6 +1358,7 @@ function localHermesSkillContent(): string {
     "- `shopify.health`",
     "- `shopify.list_shops`",
     "- `shopify.verify_shop`",
+    "- `shopify.store.diagnostics` (safe store/app install status/access/privacy JSON; no tokens, raw GraphQL, owner/contact/billing/customer data, or policy bodies)",
     "- `shopify.report_products`",
     "- `shopify.report_orders`",
     "- `shopify.report_inventory`",
@@ -1955,12 +2022,13 @@ function parseReportArgs(subcommand: ReportSubcommand, args: readonly string[]):
 
 function shopsUsage(): string {
   return [
-    'Usage: shopify-hermes-oauth shops <list|remove|verify>',
+    'Usage: shopify-hermes-oauth shops <list|remove|verify|diagnostics>',
     '',
     'Commands:',
-    '  shops list           List installed shop domains and non-secret metadata.',
-    '  shops remove <shop>  Delete the local OAuth token for a shop.',
-    '  shops verify <shop>  Verify a stored shop token with safe Admin GraphQL metadata.',
+    '  shops list                List installed shop domains and non-secret metadata.',
+    '  shops remove <shop>       Delete the local OAuth token for a shop.',
+    '  shops verify <shop>       Verify a stored shop token with safe Admin GraphQL metadata.',
+    '  shops diagnostics <shop>  Print safe store/app/access/privacy diagnostics as JSON.',
   ].join('\n');
 }
 
@@ -2048,6 +2116,15 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
       adminClient,
       appendAuditEvent: async (event) => appendAuditEventBestEffort(context, runtime.paths.auditLog, enrichAuditEvent(event, 'mcp', 'read-only')),
     }),
+    storeDiagnostics: async ({ shop }) => {
+      const reportRuntime = await reportClientFor(shop);
+      return generateStoreDiagnostics({
+        shop: reportRuntime.shop,
+        tokenStore: store,
+        configuredScopes: parseScopeList(runtime.mergedEnv.SHOPIFY_HERMES_SCOPES ?? DEFAULT_SHOPIFY_HERMES_SCOPES),
+        client: reportRuntime.client,
+      });
+    },
     reportProducts: async ({ shop, format }) => {
       const reportRuntime = await reportClientFor(shop, ['read_products']);
       const report = await generateProductsReport({ client: reportRuntime.client });
