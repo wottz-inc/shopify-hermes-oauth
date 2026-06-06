@@ -10,6 +10,7 @@ import { type ProductsReportFormat } from '../reports/products.js';
 import { redactSensitiveText } from '../shopify/admin-client.js';
 import { MissingShopifyScopesError } from '../shopify/scopes.js';
 import { type StoreDiagnosticsResult } from '../shops/diagnostics.js';
+import { type OnlineStoreSummaryResult } from '../online-store/summary.js';
 import { type VerifyShopResult } from '../shops/verify.js';
 import { summarizeShopMetadata, type AllowedShopMetadata } from '../shops/metadata.js';
 import { type StoredShopToken, type TokenStore } from '../tokens/local-token-store.js';
@@ -138,6 +139,10 @@ export interface ShopLocalesListToolArgs {
   readonly shop: string;
 }
 
+export interface OnlineStoreSummaryToolArgs {
+  readonly shop: string;
+}
+
 export interface MetafieldDefinitionsListToolArgs { readonly shop: string; readonly ownerType: string; readonly namespace?: string; readonly key?: string; readonly first?: number; readonly after?: string }
 export interface MetafieldDefinitionGetToolArgs { readonly shop: string; readonly ownerType: string; readonly namespace: string; readonly key: string }
 export interface ResourceMetafieldsListToolArgs { readonly shop: string; readonly ownerId: string; readonly namespace?: string; readonly key?: string; readonly first?: number; readonly after?: string }
@@ -173,6 +178,7 @@ export interface McpServerDependencies {
   readonly tokenStore: Pick<TokenStore, 'listTokens'>;
   readonly verifyShop: (args: { readonly shop: string }) => Promise<VerifyShopResult> | VerifyShopResult;
   readonly storeDiagnostics: (args: { readonly shop: string }) => Promise<StoreDiagnosticsResult> | StoreDiagnosticsResult;
+  readonly summarizeOnlineStore: (args: OnlineStoreSummaryToolArgs) => Promise<OnlineStoreSummaryResult> | OnlineStoreSummaryResult;
   readonly reportProducts: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly reportOrders: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly reportInventory: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
@@ -302,6 +308,11 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
       case 'shopify.store.diagnostics': {
         validateExactArgs(args, ['shop']);
         result = sanitizeToolOutput(await callDependency(() => deps.storeDiagnostics({ shop: readRequiredString(args, 'shop') })));
+        break;
+      }
+      case 'shopify.online_store.summary': {
+        validateExactArgs(args, ['shop']);
+        result = sanitizeToolOutput(await callDependency(() => deps.summarizeOnlineStore({ shop: readRequiredString(args, 'shop') })));
         break;
       }
       case 'shopify.report_products': {

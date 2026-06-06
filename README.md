@@ -111,6 +111,12 @@ shopify-hermes-oauth shops diagnostics <shop>
 
 The command and MCP tool `shopify.store.diagnostics` return curated store/app/access JSON: safe shop properties, current app install status/title/handle, access-scope handles, configured-vs-granted scope drift, and privacy policy presence/title/URL only when `read_content` is granted. Without `read_content`, privacy returns `missing_scope` and policy fields are not queried. Diagnostics never return token-store contents, OAuth callback data, raw GraphQL, owner/contact/billing/customer data, policy bodies, writes, or mutations.
 
+## Curated online store, checkout, and branding visibility
+
+The MCP allowlist includes `shopify.online_store.summary` for bounded read-only storefront configuration visibility. It validates stored OAuth scopes before scoped calls: themes require `read_themes`, while pages/blogs require `read_content`; missing scopes return structured `missing_scope` statuses instead of probing unavailable fields.
+
+The tool returns at most 5 theme summaries (`id`, `name`, `role`, timestamps) and at most 10 page/blog summaries (`id`, `title`, `handle`, visibility/timestamps where available), with `truncated`/`pageInfo` when more records exist. It intentionally omits theme assets, templates, liquid/HTML/body content, scripts, raw Admin GraphQL input, checkout writes, and branding writes. Checkout, customer account, and checkout branding configuration are reported as structured documented limitations when they are not safely available through the curated read-only Admin GraphQL surface.
+
 ## Local/source install and PATH diagnostics
 
 For a source checkout, prefer packaging the same artifact shape that npm publishes instead of relying on `npm link` behavior:

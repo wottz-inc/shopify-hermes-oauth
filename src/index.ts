@@ -216,6 +216,24 @@ export type {
 } from './custom-data/index.js';
 
 export {
+  ONLINE_STORE_CONTENT_FIRST,
+  ONLINE_STORE_SUMMARY_QUERY,
+  ONLINE_STORE_THEMES_FIRST,
+  OnlineStoreSummaryError,
+  summarizeOnlineStore,
+} from './online-store/summary.js';
+export type {
+  BlogSummary,
+  OnlineStoreLimitation,
+  OnlineStoreSection,
+  OnlineStoreSummaryGraphqlClient,
+  OnlineStoreSummaryOptions,
+  OnlineStoreSummaryResult,
+  PageSummary,
+  ThemeSummary,
+} from './online-store/summary.js';
+
+export {
   LOCALES_API_LIMITATION,
   MARKETS_API_LIMITATION,
   MARKETS_QUERY,

@@ -37,6 +37,18 @@ function createDeps(): McpServerDependencies {
       access: { storedScopes: ['read_products'], grantedScopes: ['read_products'], configuredScopes: ['read_products', 'read_content'], missingConfiguredScopes: ['read_content'], extraGrantedScopes: [] },
       privacy: { status: 'missing_scope', requiredScope: 'read_content' },
     }),
+    summarizeOnlineStore: ({ shop }) => ({
+      shop,
+      limits: { themesFirst: 5, contentFirst: 10 },
+      onlineStore: {
+        themes: { status: 'ok', nodes: [{ id: 'gid://shopify/Theme/1', name: 'Dawn', role: 'MAIN' }], pageInfo: { hasNextPage: false }, truncated: false },
+        pages: { status: 'missing_scope', requiredScope: 'read_content' },
+        blogs: { status: 'missing_scope', requiredScope: 'read_content' },
+      },
+      checkout: { status: 'documented_limitation', reason: 'checkout_configuration_not_exposed_read_only_by_curated_admin_graphql' },
+      customerAccounts: { status: 'documented_limitation', reason: 'customer_account_configuration_not_exposed_read_only_by_curated_admin_graphql' },
+      branding: { status: 'documented_limitation', reason: 'branding_configuration_not_exposed_read_only_without_checkout_branding_write_surface' },
+    }),
     reportProducts: ({ shop, format }) => ({
       shop,
       format,
@@ -197,6 +209,7 @@ describe('curated MCP server', () => {
       'shopify.list_shops',
       'shopify.verify_shop',
       'shopify.store.diagnostics',
+      'shopify.online_store.summary',
       'shopify.report_products',
       'shopify.report_orders',
       'shopify.report_inventory',
@@ -258,6 +271,13 @@ describe('curated MCP server', () => {
       store: { name: 'Alpha', myshopifyDomain: 'alpha.myshopify.com', currencyCode: 'USD' },
       app: { installationStatus: 'installed', title: 'Hermes OAuth', accessScopes: ['read_products'] },
       privacy: { status: 'missing_scope', requiredScope: 'read_content' },
+    });
+    await expect(callTool('shopify.online_store.summary', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      limits: { themesFirst: 5, contentFirst: 10 },
+      onlineStore: { themes: { status: 'ok', nodes: [{ name: 'Dawn' }] } },
+      checkout: { status: 'documented_limitation' },
+      branding: { status: 'documented_limitation' },
     });
     await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', format: 'json' }, deps)).resolves.toMatchObject({
       shop: 'alpha.myshopify.com',
@@ -438,6 +458,7 @@ describe('curated MCP server', () => {
     await expect(callTool('shopify.health', {}, deps)).resolves.toMatchObject({ status: 'ok' });
     await expect(callTool('shopify.list_shops', {}, deps)).resolves.toMatchObject({ shops: [{ shop: 'alpha.myshopify.com' }] });
     await expect(callTool('shopify.verify_shop', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com' });
+    await expect(callTool('shopify.online_store.summary', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', onlineStore: { themes: { status: 'ok' } } });
     await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', format: 'json' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', format: 'json' });
     await expect(callTool('shopify.report_orders', { shop: 'alpha.myshopify.com', since: '30d' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', format: 'markdown' });
     await expect(callTool('shopify.report_inventory', { shop: 'alpha.myshopify.com', lowStockThreshold: 7 }, deps)).resolves.toMatchObject({
@@ -508,6 +529,12 @@ describe('curated MCP server', () => {
         shop: 'alpha.myshopify.com',
         result: 'success',
         metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.verify_shop' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.online_store.summary' },
       },
       {
         action: 'mcp.tool',

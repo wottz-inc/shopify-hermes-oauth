@@ -48,7 +48,7 @@ Use Hermes Bitwarden Secrets Manager: `BWS_PROJECT_ID`, `--server-url`, `hermes 
 
 `npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz`. Hermes profile-local npm bin directories such as `$HERMES_HOME/node/bin` or `~/.hermes/node/bin` may be visible to Hermes but not to an ordinary SSH shell; use `export PATH="$HERMES_HOME/node/bin:$PATH"`. `Connector CLI: installed but not on PATH`.
 
-App Automation Token CI/CD: `SHOPIFY_APP_AUTOMATION_TOKEN`; see `docs/shopify-app-automation-token-ci-cd.md`.
+App Automation Token CI/CD: `SHOPIFY_APP_AUTOMATION_TOKEN`; `docs/shopify-app-automation-token-ci-cd.md`.
 
 OAuth callback:
 
@@ -78,15 +78,13 @@ shopify-hermes-oauth report orders <shop> --since 30d --format markdown
 shopify-hermes-oauth report inventory <shop> --format markdown
 ```
 
-Prefer Markdown; JSON for tooling; avoid customer data.
-
 ## Limits
 
 Products report: shows at most the first 100 variants per product. Orders report: shows at most the first 50 line items per order. Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels.
 
-Use `shopify.products.get`, `shopify.collections.list`, `shopify.collections.get`, `shopify.locations.list`, `shopify.locations.get`, `shopify.inventory.items.get`, `shopify.inventory.levels.list`, `shopify.orders.get`, `shopify.fulfillment_orders.list/get`, `shopify.markets.list`, `shopify.localization.locales.list`, and custom data tools. Lookup caps: product variants 25, media 10, metafield metadata 20; collection page 50/detail products 25/metafields 20; inventory locations/levels page 50; inventory levels require exactly one of inventoryItemId or locationId; order line items 25, fulfillments 10, refunds 10; markets page 50/regions 10; custom data page 50. Metafields expose namespace/key/type plus value presence/length, not raw values. `shopify.orders.get` omits customer contact/address, notes/tags, tracking numbers/URLs, and transactions. If limits hit, narrow the scope or use a custom paginated Shopify Admin GraphQL workflow.
+Use `shopify.products.get`, `shopify.collections.list/get`, `shopify.locations.list/get`, `shopify.inventory.items.get`, `shopify.inventory.levels.list`, `shopify.orders.get`, `shopify.fulfillment_orders.list/get`, `shopify.online_store.summary`, `shopify.markets.list`, `shopify.localization.locales.list`, and custom data tools. Lookup caps: product variants 25, media 10, metafield metadata 20; collection page 50/detail products 25/metafields 20; inventory locations/levels page 50; inventory levels require exactly one of inventoryItemId or locationId; order line items 25, fulfillments 10, refunds 10; online store themes 5/pages+blogs 10; markets page 50/regions 10; custom data page 50. Metafields expose namespace/key/type plus value presence/length, not raw values. `shopify.orders.get` omits customer contact/address, notes/tags, tracking numbers/URLs, and transactions. If limits hit, narrow the scope or use a custom paginated Shopify Admin GraphQL workflow.
 
 ## MCP
-MCP: `shopify.health`, `shopify.list_shops`, `shopify.verify_shop`, `shopify.store.diagnostics`, `shopify.report_products`, `shopify.report_orders`, `shopify.report_inventory`, `shopify.products.get`, `shopify.collections.list`, `shopify.collections.get`, `shopify.locations.list`, `shopify.locations.get`, `shopify.inventory.items.get`, `shopify.inventory.levels.list`, `shopify.orders.get`, `shopify.fulfillment_orders.list/get`, `shopify.webhooks.list/get`, `shopify.customers.list/get`, `shopify.discounts.list/get`, `shopify.marketing_events.list`, `shopify.markets.list`, `shopify.localization.locales.list`, `shopify.metafield_definitions.list/get`, `shopify.resource_metafields.list`, `shopify.metaobject_definitions.list/get`, `shopify.metaobjects.list/get`.
+MCP: `shopify.health`, `shopify.list_shops`, `shopify.verify_shop`, `shopify.store.diagnostics`, `shopify.online_store.summary`, `shopify.report_products`, `shopify.report_orders`, `shopify.report_inventory`, `shopify.products.get`, `shopify.collections.list`, `shopify.collections.get`, `shopify.locations.list`, `shopify.locations.get`, `shopify.inventory.items.get`, `shopify.inventory.levels.list`, `shopify.orders.get`, `shopify.fulfillment_orders.list/get`, `shopify.webhooks.list/get`, `shopify.customers.list/get`, `shopify.discounts.list/get`, `shopify.marketing_events.list`, `shopify.markets.list`, `shopify.localization.locales.list`, `shopify.metafield_definitions.list/get`, `shopify.resource_metafields.list`, `shopify.metaobject_definitions.list/get`, `shopify.metaobjects.list/get`.
 
 `shopify.health` returns memory diagnostics. `shopify.store.diagnostics` is safe store/app install status/access/privacy JSON; policy URL/title needs `read_content`; no tokens, raw GraphQL, owner/contact/billing/customer data, policy bodies, writes, or mutations. `mcp serve` emits lifecycle JSON to stderr. Webhooks need `read_webhooks`; customers `read_customers`; discounts `read_discounts`; marketing events `read_marketing_events`; markets/locales `read_markets` / `read_locales`; metaobjects `read_metaobject_definitions` / `read_metaobjects`. Custom data asks bounded metafield/metaobject schema questions. No raw GraphQL MCP or write/mutation custom data tool is exposed.

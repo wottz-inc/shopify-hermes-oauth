@@ -25,6 +25,7 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'shops.list.read',
       'shops.verify.read',
       'shops.store_diagnostics.read',
+      'online_store.summary.read',
       'reports.products.read',
       'reports.orders.read',
       'reports.inventory.read',
@@ -88,6 +89,20 @@ describe('Admin Graph capability registry and tool policy model', () => {
     });
     expect(storeDiagnostics.pagination).toContain('optional policy presence query');
     expect(storeDiagnostics.pagination).toContain('no raw GraphQL input');
+
+    const onlineStore = expectCapability('online_store.summary.read');
+    expect(onlineStore).toMatchObject({
+      domain: 'online_store',
+      operationName: 'OnlineStoreSummary',
+      requiredScopes: ['read_themes', 'read_content'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'online_store.summary',
+      surfaces: { mcp: { toolName: 'shopify.online_store.summary' } },
+    });
+    expect(onlineStore.pagination).toContain('no raw GraphQL input');
+    expect(onlineStore.pagination).toContain('no theme assets');
+    expect(onlineStore.cost).toContain('documented limitations');
 
     const productsReport = expectCapability('reports.products.read');
     expect(productsReport).toMatchObject({

@@ -1,6 +1,6 @@
 export type CapabilityAccess = 'read' | 'write' | 'diagnostic';
 export type CapabilityRiskLevel = 'read_low' | 'read_pii' | 'read_financial' | 'write_medium' | 'write_high' | 'protected_data' | 'diagnostic_low';
-export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders' | 'fulfillment' | 'discounts' | 'marketing' | 'custom_data' | 'localization';
+export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders' | 'fulfillment' | 'discounts' | 'marketing' | 'custom_data' | 'localization' | 'online_store';
 export type CapabilityRequiredGate = 'dry_run' | 'explicit_confirmation' | 'audit_logging' | 'rollback_notes';
 
 export type McpToolName =
@@ -8,6 +8,7 @@ export type McpToolName =
   | 'shopify.list_shops'
   | 'shopify.verify_shop'
   | 'shopify.store.diagnostics'
+  | 'shopify.online_store.summary'
   | 'shopify.report_products'
   | 'shopify.report_orders'
   | 'shopify.report_inventory'
@@ -396,6 +397,24 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
       mcp: {
         toolName: 'shopify.store.diagnostics',
         description: 'Return safe Shopify store, app access, scope drift, and policy-presence diagnostics.',
+        inputSchema: SHOP_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'online_store.summary.read',
+    domain: 'online_store',
+    operationName: 'OnlineStoreSummary',
+    requiredScopes: ['read_themes', 'read_content'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Single curated read-only online store summary query with themes capped at 5 and pages/blogs capped at 10; no raw GraphQL input and no theme assets, template bodies, HTML, scripts, checkout write operations, or branding writes.',
+    cost: 'Low-cost bounded theme/page/blog summary query; checkout, customer-account, and branding configuration gaps are returned as structured documented limitations when unavailable through the safe read-only surface.',
+    auditEvent: 'online_store.summary',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.online_store.summary',
+        description: 'Return bounded read-only online store theme/page/blog summaries plus checkout/account/branding limitation statuses.',
         inputSchema: SHOP_SCHEMA,
       },
     },
