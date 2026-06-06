@@ -53,6 +53,30 @@ export interface CollectionGetToolArgs {
   readonly id: string;
 }
 
+export interface LocationListToolArgs {
+  readonly shop: string;
+  readonly first?: number;
+  readonly after?: string;
+}
+
+export interface LocationGetToolArgs {
+  readonly shop: string;
+  readonly id: string;
+}
+
+export interface InventoryItemGetToolArgs {
+  readonly shop: string;
+  readonly id: string;
+}
+
+export interface InventoryLevelsListToolArgs {
+  readonly shop: string;
+  readonly inventoryItemId?: string;
+  readonly locationId?: string;
+  readonly first?: number;
+  readonly after?: string;
+}
+
 export interface OrderGetToolArgs {
   readonly shop: string;
   readonly id?: string;
@@ -105,6 +129,10 @@ export interface McpServerDependencies {
   readonly getProductDetail: (args: ProductGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listCollections: (args: CollectionListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getCollection: (args: CollectionGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listLocations: (args: LocationListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getLocation: (args: LocationGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getInventoryItem: (args: InventoryItemGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listInventoryLevels: (args: InventoryLevelsListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getOrder: (args: OrderGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listCustomers: (args: CustomerListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getCustomer: (args: CustomerGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
@@ -283,6 +311,32 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
         })));
         break;
       }
+      case 'shopify.locations.list': {
+        validateExactArgs(args, ['shop', 'first', 'after']);
+        result = sanitizeToolOutput(await callDependency(() => deps.listLocations(readLocationListArgs(args))));
+        break;
+      }
+      case 'shopify.locations.get': {
+        validateExactArgs(args, ['shop', 'id']);
+        result = sanitizeToolOutput(await callDependency(() => deps.getLocation({
+          shop: readRequiredString(args, 'shop'),
+          id: readRequiredString(args, 'id'),
+        })));
+        break;
+      }
+      case 'shopify.inventory.items.get': {
+        validateExactArgs(args, ['shop', 'id']);
+        result = sanitizeToolOutput(await callDependency(() => deps.getInventoryItem({
+          shop: readRequiredString(args, 'shop'),
+          id: readRequiredString(args, 'id'),
+        })));
+        break;
+      }
+      case 'shopify.inventory.levels.list': {
+        validateExactArgs(args, ['shop', 'inventoryItemId', 'locationId', 'first', 'after']);
+        result = sanitizeToolOutput(await callDependency(() => deps.listInventoryLevels(readInventoryLevelsListArgs(args))));
+        break;
+      }
       case 'shopify.orders.get': {
         validateExactArgs(args, ['shop', 'id', 'name']);
         result = sanitizeToolOutput(await callDependency(() => deps.getOrder(readOrderGetArgs(args))));
@@ -348,7 +402,8 @@ function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, err
     ...(name === 'shopify.bulk.start' ? readAuditTemplate(args) : {}),
     ...(name === 'shopify.bulk.result' ? readAuditResultLimits(args) : {}),
     ...(name === 'shopify.report_inventory' ? readAuditThreshold(args) : {}),
-    ...(name === 'shopify.customers.list' || name === 'shopify.collections.list' ? readAuditBoundedList(args) : {}),
+    ...(name === 'shopify.customers.list' || name === 'shopify.collections.list' || name === 'shopify.locations.list' ? readAuditBoundedList(args) : {}),
+    ...(name === 'shopify.inventory.levels.list' ? readAuditInventoryLevelsList(args) : {}),
     ...(name === 'shopify.orders.get' ? readAuditOrderGet(args) : {}),
     ...(reason === undefined ? {} : { reason: sanitizeAuditString(reason) }),
     ...(errorCode === undefined ? {} : { errorCode }),
@@ -453,6 +508,15 @@ function readAuditBoundedList(args: unknown): { readonly first?: number; readonl
     ...(isRecord(args) && Number.isInteger(args.first) ? { first: args.first as number } : {}),
     ...(isRecord(args) && typeof args.query === 'string' ? { queryPresent: true } : {}),
     ...(isRecord(args) && typeof args.after === 'string' ? { afterPresent: true } : {}),
+  };
+}
+
+function readAuditInventoryLevelsList(args: unknown): { readonly first?: number; readonly afterPresent?: boolean; readonly itemIdPresent?: boolean; readonly locationIdPresent?: boolean } {
+  return {
+    ...(isRecord(args) && Number.isInteger(args.first) ? { first: args.first as number } : {}),
+    ...(isRecord(args) && typeof args.after === 'string' ? { afterPresent: true } : {}),
+    ...(isRecord(args) && typeof args.inventoryItemId === 'string' ? { itemIdPresent: true } : {}),
+    ...(isRecord(args) && typeof args.locationId === 'string' ? { locationIdPresent: true } : {}),
   };
 }
 
@@ -669,6 +733,29 @@ function readOptionalCollectionSearchQuery(args: unknown): Record<string, string
     throw new McpToolError('Invalid argument: query.');
   }
   return query;
+}
+
+function readLocationListArgs(args: unknown): LocationListToolArgs {
+  return {
+    shop: readRequiredString(args, 'shop'),
+    ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50),
+    ...readOptionalStringProperty(args, 'after'),
+  };
+}
+
+function readInventoryLevelsListArgs(args: unknown): InventoryLevelsListToolArgs {
+  const inventoryItemId = readOptionalStringProperty(args, 'inventoryItemId').inventoryItemId;
+  const locationId = readOptionalStringProperty(args, 'locationId').locationId;
+  if ((inventoryItemId === undefined && locationId === undefined) || (inventoryItemId !== undefined && locationId !== undefined)) {
+    throw new McpToolError('Provide exactly one of inventoryItemId or locationId.');
+  }
+  return {
+    shop: readRequiredString(args, 'shop'),
+    ...(inventoryItemId === undefined ? {} : { inventoryItemId }),
+    ...(locationId === undefined ? {} : { locationId }),
+    ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50),
+    ...readOptionalStringProperty(args, 'after'),
+  };
 }
 
 function readOrderGetArgs(args: unknown): OrderGetToolArgs {

@@ -12,9 +12,7 @@ metadata:
 
 # OAuth
 
-Use for Shopify OAuth app installs, multi-store access, reports, MCP, or safer long-running workflows.
-
-Prefer direct-token `shopify` for one-off Admin GraphQL/curl; use this for durable access, multiple stores, scheduled reports, or avoiding pasted per-store tokens.
+Use for Shopify OAuth app installs, multi-store access, reports, MCP, or durable workflows. Prefer direct-token `shopify` for one-off Admin GraphQL/curl.
 
 ## Safety rules
 
@@ -48,11 +46,11 @@ shopify-hermes-oauth hermes install
 
 For non-Bitwarden setup, use `shopify-hermes-oauth credentials set`: the agent sends the exact command, the user runs it locally or over SSH/Termius, then replies `done` without sharing secrets. It hides the client secret while typing and updates only `SHOPIFY_HERMES_CLIENT_ID` and `SHOPIFY_HERMES_CLIENT_SECRET` in `$HERMES_HOME/.env`.
 
-For VPS/chat-first use, recommend Hermes Bitwarden Secrets Manager. Store vars in Bitwarden (`BWS_PROJECT_ID`); include `--server-url` when self-hosting. Run `hermes secrets bitwarden status`, `hermes secrets bitwarden sync`, then `doctor`. Do not write secrets back to `.env`.
+For VPS/chat-first use, recommend Hermes Bitwarden Secrets Manager: set `BWS_PROJECT_ID` (and `--server-url` if self-hosting), run `hermes secrets bitwarden status`, `hermes secrets bitwarden sync`, then `doctor`. Do not write secrets back to `.env`.
 
-For source installs, prefer `npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz`. Hermes profile-local npm bin directories such as `$HERMES_HOME/node/bin` or `~/.hermes/node/bin` may be visible to Hermes but not to an ordinary SSH shell; use `export PATH="$HERMES_HOME/node/bin:$PATH"`. If `doctor` prints `Connector CLI: installed but not on PATH`, use its PATH fix.
+Source installs: `npm pack && npm install -g ./wottz-shopify-hermes-oauth-*.tgz`. Hermes profile-local npm bin directories such as `$HERMES_HOME/node/bin` or `~/.hermes/node/bin` may be visible to Hermes but not to an ordinary SSH shell; use `export PATH="$HERMES_HOME/node/bin:$PATH"`. If `doctor` prints `Connector CLI: installed but not on PATH`, use its PATH fix.
 
-For OAuth callback setup, start tunnel + callback server:
+OAuth callback setup:
 
 ```bash
 shopify-hermes-oauth dev --tunnel
@@ -97,7 +95,7 @@ v0.1 ceilings:
 - Orders report: shows at most the first 50 line items per order and marks omitted line items.
 - Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels, including safe affected GIDs.
 
-Use `shopify.report_products`/`shopify.report_orders` for aggregate reports; `shopify.products.get`, `shopify.collections.list/get`, and `shopify.orders.get` for targeted lookups. Lookup caps: product variants 25, media 10, metafield metadata 20; collection page 50/detail products 25/metafields 20; order line items 25, fulfillments 10, refunds 10. Metafields expose namespace/key/type plus value presence/length, not raw values. `shopify.orders.get` omits customer contact/address, notes/tags, tracking numbers/URLs, and transactions. If limits hit, narrow the scope or use a custom paginated Shopify Admin GraphQL workflow.
+Use aggregate report tools for reports; use `shopify.products.get`, `shopify.collections.list/get`, `shopify.locations.list/get`, `shopify.inventory.items.get`, `shopify.inventory.levels.list`, and `shopify.orders.get` for targeted lookups. Lookup caps: product variants 25, media 10, metafield metadata 20; collection page 50/detail products 25/metafields 20; inventory locations/levels page 50; inventory levels require exactly one of inventoryItemId or locationId; order line items 25, fulfillments 10, refunds 10. Metafields expose namespace/key/type plus value presence/length, not raw values. Inventory lookups omit location address/contact fields, metafields, and adjustment history. `shopify.orders.get` omits customer contact/address, notes/tags, tracking numbers/URLs, and transactions. If limits hit, narrow the scope or use a custom paginated Shopify Admin GraphQL workflow.
 
 ## MCP tools
 
@@ -112,6 +110,10 @@ After `shopify-hermes-oauth hermes install`, MCP tools:
 - `shopify.products.get`
 - `shopify.collections.list`
 - `shopify.collections.get`
+- `shopify.locations.list`
+- `shopify.locations.get`
+- `shopify.inventory.items.get`
+- `shopify.inventory.levels.list`
 - `shopify.orders.get`
 - `shopify.webhooks.list`
 - `shopify.webhooks.get`

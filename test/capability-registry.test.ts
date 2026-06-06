@@ -36,6 +36,10 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'products.get.read',
       'collections.list.read',
       'collections.get.read',
+      'locations.list.read',
+      'locations.get.read',
+      'inventory.items.get.read',
+      'inventory.levels.list.read',
       'orders.get.read',
       'customers.list.read',
       'customers.get.read',
@@ -155,6 +159,52 @@ describe('Admin Graph capability registry and tool policy model', () => {
       auditEvent: 'collections.get',
       surfaces: { mcp: { toolName: 'shopify.collections.get' } },
     });
+
+    const locationsList = expectCapability('locations.list.read');
+    expect(locationsList).toMatchObject({
+      domain: 'locations',
+      operationName: 'Locations',
+      requiredScopes: ['read_locations'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'locations.list',
+      surfaces: { mcp: { toolName: 'shopify.locations.list' } },
+    });
+    expect(locationsList.pagination).toContain('1..50');
+    expect(locationsList.cost).toContain('bounded');
+
+    expect(expectCapability('locations.get.read')).toMatchObject({
+      domain: 'locations',
+      operationName: 'LocationDetail',
+      requiredScopes: ['read_locations'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'locations.get',
+      surfaces: { mcp: { toolName: 'shopify.locations.get' } },
+    });
+
+    expect(expectCapability('inventory.items.get.read')).toMatchObject({
+      domain: 'inventory',
+      operationName: 'InventoryItemDetail',
+      requiredScopes: ['read_inventory'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'inventory.items.get',
+      surfaces: { mcp: { toolName: 'shopify.inventory.items.get' } },
+    });
+
+    const inventoryLevelsList = expectCapability('inventory.levels.list.read');
+    expect(inventoryLevelsList).toMatchObject({
+      domain: 'inventory',
+      operationName: 'InventoryLevels',
+      requiredScopes: ['read_inventory', 'read_locations'],
+      access: 'read',
+      riskLevel: 'read_low',
+      auditEvent: 'inventory.levels.list',
+      surfaces: { mcp: { toolName: 'shopify.inventory.levels.list' } },
+    });
+    expect(inventoryLevelsList.pagination).toContain('exactly one');
+    expect(inventoryLevelsList.cost).toContain('single dimension');
 
     expect(expectCapability('orders.get.read')).toMatchObject({
       domain: 'orders',
