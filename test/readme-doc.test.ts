@@ -119,6 +119,22 @@ describe('SAFETY-CRITICAL README documentation contracts', () => {
     ]);
   });
 
+  it('documents curated online store, checkout, and branding visibility with safe omissions', () => {
+    const markdown = readReadme();
+
+    expectAllPresent(markdown, [
+      '## Curated online store, checkout, and branding visibility',
+      '`shopify.online_store.summary`',
+      '`read_themes`',
+      '`read_content`',
+      '`missing_scope`',
+      'at most 5 theme summaries',
+      'at most 10 page/blog summaries',
+      'theme assets, templates, liquid/HTML/body content, scripts, raw Admin GraphQL input, checkout writes, and branding writes',
+      'Checkout, customer account, and checkout branding configuration are reported as structured documented limitations',
+    ]);
+  });
+
   it('documents curated order detail lookup separately from order reports', () => {
     const markdown = readReadme();
 
