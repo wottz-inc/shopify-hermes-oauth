@@ -118,6 +118,31 @@ export type {
   InventoryReportVariables,
 } from './reports/inventory.js';
 
+export {
+  INVENTORY_ITEM_DETAIL_QUERY,
+  INVENTORY_LEVELS_BY_ITEM_QUERY,
+  INVENTORY_LEVELS_BY_LOCATION_QUERY,
+  LOCATION_DETAIL_QUERY,
+  LOCATIONS_QUERY,
+  InventoryDetailsError,
+  getInventoryItem,
+  getLocation,
+  listInventoryLevels,
+  listLocations,
+} from './inventory/details.js';
+export type {
+  InventoryDetailsGraphqlClient,
+  InventoryItemDetail,
+  InventoryItemGetOptions,
+  InventoryLevelSummary,
+  InventoryLevelsListOptions,
+  InventoryLevelsListResult,
+  LocationGetOptions,
+  LocationListOptions,
+  LocationSummary,
+  LocationsListResult,
+} from './inventory/details.js';
+
 export { OrdersReportError } from './reports/orders.js';
 
 export { ShopVerificationError, verifyShop } from './shops/verify.js';

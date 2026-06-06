@@ -1,6 +1,6 @@
 export type CapabilityAccess = 'read' | 'write' | 'diagnostic';
 export type CapabilityRiskLevel = 'read_low' | 'read_pii' | 'read_financial' | 'write_medium' | 'write_high' | 'protected_data' | 'diagnostic_low';
-export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'orders';
+export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders';
 export type CapabilityRequiredGate = 'dry_run' | 'explicit_confirmation' | 'audit_logging' | 'rollback_notes';
 
 export type McpToolName =
@@ -21,6 +21,10 @@ export type McpToolName =
   | 'shopify.products.get'
   | 'shopify.collections.list'
   | 'shopify.collections.get'
+  | 'shopify.locations.list'
+  | 'shopify.locations.get'
+  | 'shopify.inventory.items.get'
+  | 'shopify.inventory.levels.list'
   | 'shopify.orders.get';
 
 export interface JsonSchema {
@@ -184,6 +188,42 @@ const COLLECTION_GET_SCHEMA: JsonSchema = {
   },
   required: ['shop', 'id'],
   additionalProperties: false,
+};
+const LOCATION_LIST_SCHEMA: JsonSchema = {
+  ...SHOP_SCHEMA,
+  properties: {
+    ...SHOP_SCHEMA.properties,
+    first: { type: 'integer', minimum: 1, maximum: 50, description: 'Page size. Defaults to 25 and is capped at 50.' },
+    after: { type: 'string', description: 'Optional Shopify cursor for the next page.' },
+  },
+};
+const LOCATION_GET_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    id: { type: 'string', description: 'Location GID, e.g. gid://shopify/Location/123.' },
+  },
+  required: ['shop', 'id'],
+  additionalProperties: false,
+};
+const INVENTORY_ITEM_GET_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    id: { type: 'string', description: 'InventoryItem GID, e.g. gid://shopify/InventoryItem/123.' },
+  },
+  required: ['shop', 'id'],
+  additionalProperties: false,
+};
+const INVENTORY_LEVEL_LIST_SCHEMA: JsonSchema = {
+  ...SHOP_SCHEMA,
+  properties: {
+    ...SHOP_SCHEMA.properties,
+    inventoryItemId: { type: 'string', description: 'InventoryItem GID. Provide exactly one of inventoryItemId or locationId.' },
+    locationId: { type: 'string', description: 'Location GID. Provide exactly one of inventoryItemId or locationId.' },
+    first: { type: 'integer', minimum: 1, maximum: 50, description: 'Page size. Defaults to 25 and is capped at 50.' },
+    after: { type: 'string', description: 'Optional Shopify cursor for the next page.' },
+  },
 };
 const ORDER_GET_SCHEMA: JsonSchema = {
   type: 'object',
@@ -470,6 +510,78 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
         toolName: 'shopify.collections.get',
         description: 'Inspect one Shopify collection by stable ID with bounded product and metafield previews.',
         inputSchema: COLLECTION_GET_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'locations.list.read',
+    domain: 'locations',
+    operationName: 'Locations',
+    requiredScopes: ['read_locations'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Paginates locations with explicit cursor and page size 1..50 (default 25); address/contact fields omitted.',
+    cost: 'Uses a bounded curated locations query with no raw GraphQL input.',
+    auditEvent: 'locations.list',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.locations.list',
+        description: 'List Shopify locations with bounded pagination and no address/contact fields.',
+        inputSchema: LOCATION_LIST_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'locations.get.read',
+    domain: 'locations',
+    operationName: 'LocationDetail',
+    requiredScopes: ['read_locations'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Single location lookup by stable Location GID; no nested connections, address, phone, or contact fields.',
+    cost: 'Low-cost single location detail query.',
+    auditEvent: 'locations.get',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.locations.get',
+        description: 'Inspect one Shopify location by stable ID without address/contact fields.',
+        inputSchema: LOCATION_GET_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'inventory.items.get.read',
+    domain: 'inventory',
+    operationName: 'InventoryItemDetail',
+    requiredScopes: ['read_inventory'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Single inventory item lookup by stable InventoryItem GID; no nested inventory levels, metafields, or adjustment history.',
+    cost: 'Low-cost single inventory item detail query.',
+    auditEvent: 'inventory.items.get',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.inventory.items.get',
+        description: 'Inspect one Shopify inventory item by stable ID with minimal product variant context.',
+        inputSchema: INVENTORY_ITEM_GET_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'inventory.levels.list.read',
+    domain: 'inventory',
+    operationName: 'InventoryLevels',
+    requiredScopes: ['read_inventory', 'read_locations'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Lists inventory levels for exactly one of inventoryItemId or locationId with page size 1..50 (default 25).',
+    cost: 'Keeps inventory level lookup cost safe by querying a single dimension and bounded page size with variables for IDs/cursors.',
+    auditEvent: 'inventory.levels.list',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.inventory.levels.list',
+        description: 'List Shopify inventory levels by exactly one inventory item or location with bounded pagination.',
+        inputSchema: INVENTORY_LEVEL_LIST_SCHEMA,
       },
     },
   },

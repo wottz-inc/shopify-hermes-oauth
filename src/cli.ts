@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { BulkOperationError, cancelBulkOperation, fetchBulkOperationResult, getBulkOperationTemplate, getCurrentBulkOperation, startBulkOperation } from './bulk/operations.js';
 import { getCollection, getProductDetail, listCollections } from './catalog/details.js';
+import { getInventoryItem, getLocation, listInventoryLevels, listLocations } from './inventory/details.js';
 import { getOrderDetail } from './orders/details.js';
 import { getCustomer, listCustomers } from './customers/index.js';
 import { resolveShopifyHermesPaths } from './hermes-home.js';
@@ -2084,6 +2085,26 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
     getCollection: async ({ shop, id }) => {
       const reportRuntime = await reportClientFor(shop, ['read_products']);
       const report = await getCollection({ client: reportRuntime.client, id });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listLocations: async ({ shop, first, after }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_locations']);
+      const report = await listLocations({ client: reportRuntime.client, first, after });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    getLocation: async ({ shop, id }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_locations']);
+      const report = await getLocation({ client: reportRuntime.client, id });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    getInventoryItem: async ({ shop, id }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_inventory']);
+      const report = await getInventoryItem({ client: reportRuntime.client, id });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listInventoryLevels: async ({ shop, inventoryItemId, locationId, first, after }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_inventory', 'read_locations']);
+      const report = await listInventoryLevels({ client: reportRuntime.client, inventoryItemId, locationId, first, after });
       return { shop: reportRuntime.shop, ...report };
     },
     getOrder: async ({ shop, id, name }) => {

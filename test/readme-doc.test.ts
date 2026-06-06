@@ -150,6 +150,26 @@ describe('SAFETY-CRITICAL README documentation contracts', () => {
     ]);
   });
 
+  it('documents curated location and inventory lookup tools separately from inventory reports', () => {
+    const markdown = readReadme();
+
+    expectAllPresent(markdown, [
+      '## Curated location and inventory lookup tools',
+      '`shopify.report_inventory` remains the aggregate inventory report surface',
+      '`shopify.locations.list`',
+      '`shopify.locations.get`',
+      '`shopify.inventory.items.get`',
+      '`shopify.inventory.levels.list`',
+      'Location list/get requires `read_locations`',
+      'inventory item get requires `read_inventory`',
+      'inventory level list requires `read_inventory` and `read_locations`',
+      'requires exactly one of `inventoryItemId` or `locationId`',
+      'defaults to 25 and is capped at 50',
+      'stable IDs such as `gid://shopify/Location/123` and `gid://shopify/InventoryItem/123`',
+      'omit location addresses, phone/contact fields, metafields, and inventory adjustment history',
+    ]);
+  });
+
   it('documents source installs and Hermes profile-local npm PATH expectations', () => {
     const markdown = readReadme();
 
