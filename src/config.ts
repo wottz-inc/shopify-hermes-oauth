@@ -20,6 +20,7 @@ export interface ShopifyHermesConfig {
   readonly oldClientSecret?: string;
   readonly appUrl: string;
   readonly scopes: readonly string[];
+  readonly enableAnalyticsReports: boolean;
   readonly paths: ShopifyHermesPaths;
 }
 
@@ -59,8 +60,13 @@ export function loadShopifyHermesConfig(
     oldClientSecret: getOptionalValue(values, 'SHOPIFY_HERMES_OLD_CLIENT_SECRET'),
     appUrl: getRequiredValue(values, 'SHOPIFY_HERMES_APP_URL'),
     scopes: parseScopes(values.SHOPIFY_HERMES_SCOPES),
+    enableAnalyticsReports: parseBooleanGate(values.SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS),
     paths,
   };
+}
+
+export function parseBooleanGate(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === 'true';
 }
 
 export function redactValue(value: unknown): unknown {

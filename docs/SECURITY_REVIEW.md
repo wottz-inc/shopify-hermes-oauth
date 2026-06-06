@@ -39,13 +39,14 @@ Reviewed `src/mcp/server.ts`, `test/mcp-server.test.ts`, the skill, and PRD.
 
 Findings:
 
-- The v0.1 MCP allowlist is exactly:
+- The v0.1 MCP allowlist is curated read-only and includes:
   - `shopify.list_shops`
   - `shopify.verify_shop`
   - `shopify.report_products`
   - `shopify.report_orders`
   - `shopify.report_inventory`
-- No raw Admin GraphQL MCP tool is exposed.
+  - `shopify.analytics.shopifyql.summary` only when `read_reports`, protected customer data / analytics approval, and `SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS=true` are in place
+- No raw Admin GraphQL, REST, or ShopifyQL MCP tool is exposed.
 - No mutation/write MCP tools are exposed for refunds, deletes, fulfilment, product updates, or arbitrary GraphQL.
 - Unknown/write-like tools such as `shopify.raw_graphql`, mutation-like names, refund/delete examples, and unknown tools fail closed with `Tool is not allowed.`
 - Tool argument validation rejects extra/raw GraphQL/mutation-looking arguments per tool.

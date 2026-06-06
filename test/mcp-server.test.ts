@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 import { callTool, listTools, McpToolError, startStdioMcpServer, type McpHealthResult, type McpLifecycleEvent, type McpServerDependencies } from '../src/mcp/server.js';
 import { InventoryReportError } from '../src/reports/inventory.js';
+import { ShopifyqlAnalyticsError } from '../src/reports/shopifyql-analytics.js';
+import { MissingShopifyScopesError } from '../src/shopify/scopes.js';
 import { ALLOWED_SHOP_METADATA } from '../src/shops/metadata.js';
 
 function createDeps(): McpServerDependencies {
@@ -70,6 +72,12 @@ function createDeps(): McpServerDependencies {
       lowStockThreshold,
       report: { rows: [{ sku: 'SKU', available: 3 }] },
       formatted: '# inventory',
+    }),
+    analyticsShopifyqlSummary: ({ shop, report, format, from, to, granularity, limit }) => ({
+      shop,
+      format,
+      report: { report, status: 'ok', from, to, granularity, limit: limit ?? 25, rows: [{ total_sales: '100.00' }] },
+      formatted: '# analytics',
     }),
     listWebhookSubscriptions: ({ shop }) => ({
       shop,
@@ -213,6 +221,7 @@ describe('curated MCP server', () => {
       'shopify.report_products',
       'shopify.report_orders',
       'shopify.report_inventory',
+      'shopify.analytics.shopifyql.summary',
       'shopify.bulk.start',
       'shopify.bulk.status',
       'shopify.bulk.result',
@@ -295,6 +304,11 @@ describe('curated MCP server', () => {
       format: 'markdown',
       lowStockThreshold: 7,
       report: { rows: [{ sku: 'SKU', available: 3 }] },
+    });
+    await expect(callTool('shopify.analytics.shopifyql.summary', { shop: 'alpha.myshopify.com', report: 'sales_summary_by_period', from: '2026-01-01', to: '2026-01-31', granularity: 'week', limit: 10 }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      format: 'markdown',
+      report: { report: 'sales_summary_by_period', status: 'ok', from: '2026-01-01', to: '2026-01-31', granularity: 'week', limit: 10 },
     });
     await expect(callTool('shopify.webhooks.list', { shop: 'alpha.myshopify.com' }, deps)).resolves.toEqual({
       shop: 'alpha.myshopify.com',
@@ -817,6 +831,30 @@ describe('curated MCP server', () => {
 
     await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', access_token: 'shpat_secret' }, deps)).rejects.toThrow('Unknown argument: access_token.');
     await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com' }, deps)).rejects.toThrow('Tool call failed.');
+  });
+
+  it('rejects arbitrary ShopifyQL and surfaces analytics opt-in gate guidance safely', async () => {
+    const deps = {
+      ...createDeps(),
+      analyticsShopifyqlSummary: () => {
+        throw new ShopifyqlAnalyticsError('Curated ShopifyQL analytics reports are disabled. Set SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS=true after read_reports/protected customer data approval; do not paste tokens or secrets into chat.');
+      },
+    };
+
+    await expect(callTool('shopify.analytics.shopifyql.summary', { shop: 'alpha.myshopify.com', report: 'FROM sales SHOW total_sales', from: '2026-01-01', to: '2026-01-31' }, createDeps())).rejects.toThrow('Raw ShopifyQL is not accepted');
+    await expect(callTool('shopify.analytics.shopifyql.summary', { shop: 'alpha.myshopify.com', report: 'sales_summary_by_period', from: '2026-01-01', to: '2026-01-31', query: 'FROM sales SHOW total_sales' }, createDeps())).rejects.toThrow('Unknown argument: query.');
+    await expect(callTool('shopify.analytics.shopifyql.summary', { shop: 'alpha.myshopify.com', report: 'sales_summary_by_period', from: '2026-01-01', to: '2026-01-31' }, deps)).rejects.toThrow('SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS=true');
+  });
+
+  it('surfaces missing read_reports scope guidance for analytics reports', async () => {
+    const deps = {
+      ...createDeps(),
+      analyticsShopifyqlSummary: () => {
+        throw new MissingShopifyScopesError('alpha.myshopify.com', ['read_reports']);
+      },
+    };
+
+    await expect(callTool('shopify.analytics.shopifyql.summary', { shop: 'alpha.myshopify.com', report: 'top_products_by_sales', from: '2026-01-01', to: '2026-01-31' }, deps)).rejects.toThrow('missing required Shopify Admin API scope: read_reports');
   });
 
   it('audits unknown and write-like MCP tool calls best-effort with safe metadata', async () => {

@@ -12,6 +12,7 @@ export type McpToolName =
   | 'shopify.report_products'
   | 'shopify.report_orders'
   | 'shopify.report_inventory'
+  | 'shopify.analytics.shopifyql.summary'
   | 'shopify.bulk.start'
   | 'shopify.bulk.status'
   | 'shopify.bulk.result'
@@ -112,6 +113,20 @@ const INVENTORY_REPORT_SCHEMA: JsonSchema = {
     ...REPORT_SCHEMA.properties,
     lowStockThreshold: { type: 'integer', minimum: 0, description: 'Low-stock threshold. Defaults to 5.' },
   },
+};
+const SHOPIFYQL_ANALYTICS_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    report: { type: 'string', enum: ['sales_summary_by_period', 'top_products_by_sales'], description: 'Curated ShopifyQL analytics report template. Raw ShopifyQL is not accepted.' },
+    format: { type: 'string', enum: ['markdown', 'json', 'csv'], default: 'markdown' },
+    from: { type: 'string', description: 'Inclusive YYYY-MM-DD start date.' },
+    to: { type: 'string', description: 'Inclusive YYYY-MM-DD end date.' },
+    granularity: { type: 'string', enum: ['day', 'week', 'month'], default: 'day', description: 'Only used by sales_summary_by_period.' },
+    limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Maximum rows to return. Defaults to 25 and is capped at 100.' },
+  },
+  required: ['shop', 'report', 'from', 'to'],
+  additionalProperties: false,
 };
 const BULK_START_SCHEMA: JsonSchema = {
   type: 'object',
@@ -473,6 +488,25 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
         toolName: 'shopify.report_inventory',
         description: 'Generate a read-only Shopify inventory report.',
         inputSchema: INVENTORY_REPORT_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'analytics.shopifyql.summary.read',
+    domain: 'reports',
+    operationName: 'CuratedShopifyqlAnalytics',
+    requiredScopes: ['read_reports'],
+    access: 'read',
+    riskLevel: 'protected_data',
+    pagination: 'Single curated ShopifyQL analytics query from an allowlisted template; no raw ShopifyQL or arbitrary analytics query input is exposed. Limit is capped at 100 rows.',
+    cost: 'Uses ShopifyQL through Admin GraphQL only when SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS=true and read_reports/protected customer data analytics approval are in place.',
+    auditEvent: 'analytics.shopifyql.summary',
+    requiredGates: ['explicit_confirmation', 'audit_logging'],
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.analytics.shopifyql.summary',
+        description: 'Generate an opt-in curated ShopifyQL analytics report (sales summary by period or top products by sales). Requires read_reports and protected customer data/analytics approval.',
+        inputSchema: SHOPIFYQL_ANALYTICS_SCHEMA,
       },
     },
   },
