@@ -9,6 +9,7 @@ import {
 import {
   ConfigError,
   loadShopifyHermesConfig,
+  parseBooleanGate,
   redactConfig,
   redactValue,
 } from '../src/config.js';
@@ -124,6 +125,7 @@ describe('Shopify Hermes config loading', () => {
       oldClientSecret: 'env-old-client-secret',
       appUrl: 'https://example.test',
       scopes: ['read_products', 'write_products'],
+      enableAnalyticsReports: false,
       paths: {
         hermesHome: '/tmp/hermes',
         appHome: '/tmp/hermes/shopify-hermes-oauth',
@@ -134,6 +136,28 @@ describe('Shopify Hermes config loading', () => {
         auditLog: '/tmp/hermes/shopify-hermes-oauth/audit.jsonl',
       },
     });
+  });
+
+  it('parses analytics reports as an explicit opt-in gate only', () => {
+    expect(parseBooleanGate(undefined)).toBe(false);
+    expect(parseBooleanGate('')).toBe(false);
+    expect(parseBooleanGate('1')).toBe(false);
+    expect(parseBooleanGate('yes')).toBe(false);
+    expect(parseBooleanGate(' TRUE ')).toBe(true);
+
+    const config = loadShopifyHermesConfig({
+      env: { SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS: 'true' },
+      homeDir: '/home/alice',
+      readFile: () =>
+        [
+          'SHOPIFY_HERMES_CLIENT_ID=file-client-id',
+          'SHOPIFY_HERMES_CLIENT_SECRET=file-client-secret',
+          'SHOPIFY_HERMES_APP_URL=https://example.test',
+        ].join('\n'),
+    });
+
+    expect(config.enableAnalyticsReports).toBe(true);
+    expect(config.scopes).not.toContain('read_reports');
   });
 
   it('uses SHOPIFY_HERMES_DATA_DIR from .env when resolving data paths', () => {

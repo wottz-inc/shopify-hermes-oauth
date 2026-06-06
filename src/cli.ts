@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { BulkOperationError, cancelBulkOperation, fetchBulkOperationResult, getBulkOperationTemplate, getCurrentBulkOperation, startBulkOperation } from './bulk/operations.js';
+import { parseBooleanGate } from './config.js';
 import { getCollection, getProductDetail, listCollections } from './catalog/details.js';
 import { listDiscounts, getDiscount, listMarketingEvents } from './discounts-marketing/index.js';
 import { getMetafieldDefinition, getMetaobject, getMetaobjectDefinition, listMetafieldDefinitions, listMetaobjectDefinitions, listMetaobjects, listResourceMetafields } from './custom-data/index.js';
@@ -25,8 +26,9 @@ import { InMemoryOAuthStateStore } from './oauth/state-store.js';
 import { formatInventoryReport, generateInventoryReport, InventoryReportError } from './reports/inventory.js';
 import { formatOrdersReport, generateOrdersReport, parseOrdersReportWindow, type OrdersReportWindowInput } from './reports/orders.js';
 import { formatProductsReport, generateProductsReport, type ProductsReportFormat } from './reports/products.js';
+import { analyticsReportsDisabledMessage, formatShopifyqlAnalyticsReport, generateShopifyqlAnalyticsReport, ShopifyqlAnalyticsError } from './reports/shopifyql-analytics.js';
 import { createOAuthHttpServer } from './server.js';
-import { createShopifyAdminGraphqlClient, redactSensitiveErrorMessage } from './shopify/admin-client.js';
+import { createShopifyAdminGraphqlClient, redactSensitiveErrorMessage, ShopifyAdminGraphqlError } from './shopify/admin-client.js';
 import { generateStoreDiagnostics } from './shops/diagnostics.js';
 import { compareShopifyScopes, MissingShopifyScopesError, missingShopifyScopes, normalizeShopifyScopes } from './shopify/scopes.js';
 import { verifyShop, type VerifyShopResult } from './shops/verify.js';
@@ -2145,6 +2147,21 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
       const reportRuntime = await reportClientFor(shop, ['read_inventory', 'read_products', 'read_locations']);
       const report = await generateInventoryReport({ client: reportRuntime.client, lowStockThreshold: threshold });
       return { shop: reportRuntime.shop, format, lowStockThreshold: threshold, report, formatted: formatInventoryReport(report, format) };
+    },
+    analyticsShopifyqlSummary: async ({ shop, report: reportId, format, from, to, granularity, limit }) => {
+      if (!parseBooleanGate(runtime.mergedEnv.SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS)) {
+        throw new ShopifyqlAnalyticsError(analyticsReportsDisabledMessage());
+      }
+      const reportRuntime = await reportClientFor(shop, ['read_reports']);
+      try {
+        const report = await generateShopifyqlAnalyticsReport({ client: reportRuntime.client, report: reportId, from, to, granularity, limit });
+        return { shop: reportRuntime.shop, format, report, formatted: formatShopifyqlAnalyticsReport(report, format) };
+      } catch (error) {
+        if (error instanceof ShopifyAdminGraphqlError) {
+          throw new ShopifyqlAnalyticsError(analyticsReportsDisabledMessage());
+        }
+        throw error;
+      }
     },
     startBulkOperation: async ({ shop, templateId }) => {
       const template = getBulkOperationTemplate(templateId);

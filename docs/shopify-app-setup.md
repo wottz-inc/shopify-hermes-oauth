@@ -38,7 +38,7 @@ Shopify requires these steps in the Shopify Partner/Admin dashboard; the CLI can
    - `SHOPIFY_HERMES_CLIENT_SECRET`
 3. Set the app URL to the `Application URL` printed by `shopify-hermes-oauth dev --tunnel`.
 4. Add the `Allowed redirection URL` printed by the command.
-5. Under Required Admin API Scopes, confirm the app scopes match the read-only `SHOPIFY_HERMES_SCOPES` value unless you intentionally changed them. The default v0.1 required Admin API scope set is `read_products,read_orders,read_inventory,read_locations`; add `read_customers` only when enabling curated customer tools, and do not add discounts, reports, or write scopes unless a later feature explicitly documents why. Optional Shopify scopes alone are insufficient for Admin API OAuth installs and are not a substitute for Required Admin API Scopes.
+5. Under Required Admin API Scopes, confirm the app scopes match the read-only `SHOPIFY_HERMES_SCOPES` value unless you intentionally changed them. The default v0.1 required Admin API scope set is `read_products,read_orders,read_inventory,read_locations`; add `read_customers` only when enabling curated customer tools, add `read_reports` only when enabling curated ShopifyQL analytics with `SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS=true` plus protected customer data / analytics approval, and do not add discounts, reports, or write scopes unless a later feature explicitly documents why. Optional Shopify scopes alone are insufficient for Admin API OAuth installs and are not a substitute for Required Admin API Scopes.
 6. Save the app settings.
 
 ## Unavoidable store approval steps

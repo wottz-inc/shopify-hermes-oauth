@@ -29,6 +29,7 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'reports.products.read',
       'reports.orders.read',
       'reports.inventory.read',
+      'analytics.shopifyql.summary.read',
       'bulk.operations.read.start',
       'bulk.operations.read.status',
       'bulk.operations.read.result',
@@ -127,6 +128,21 @@ describe('Admin Graph capability registry and tool policy model', () => {
     });
     expect(inventoryReport.pagination).toContain('inventory levels');
     expect(inventoryReport.cost).toContain('MAX_COST_EXCEEDED');
+
+    const analyticsReport = expectCapability('analytics.shopifyql.summary.read');
+    expect(analyticsReport).toMatchObject({
+      domain: 'reports',
+      operationName: 'CuratedShopifyqlAnalytics',
+      requiredScopes: ['read_reports'],
+      access: 'read',
+      riskLevel: 'protected_data',
+      auditEvent: 'analytics.shopifyql.summary',
+      requiredGates: ['explicit_confirmation', 'audit_logging'],
+      surfaces: { mcp: { toolName: 'shopify.analytics.shopifyql.summary' } },
+    });
+    expect(analyticsReport.pagination).toContain('allowlisted template');
+    expect(analyticsReport.pagination).toContain('no raw ShopifyQL');
+    expect(analyticsReport.cost).toContain('SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS=true');
 
     const bulkStart = expectCapability('bulk.operations.read.start');
     expect(bulkStart).toMatchObject({

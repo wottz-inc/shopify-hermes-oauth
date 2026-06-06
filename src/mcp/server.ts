@@ -5,6 +5,7 @@ import { type Readable, type Writable } from 'node:stream';
 import { type AuditEventInput } from '../audit.js';
 import { CAPABILITY_MCP_TOOL_DEFINITIONS, type McpToolDefinition } from '../capabilities.js';
 import { InventoryReportError, INVENTORY_MAX_COST_REMEDIATION_MESSAGE } from '../reports/inventory.js';
+import { type ShopifyqlAnalyticsFormat, ShopifyqlAnalyticsError, type ShopifyqlAnalyticsGranularity, type ShopifyqlAnalyticsReportId } from '../reports/shopifyql-analytics.js';
 import { safeErrorCode, type SafeErrorCode } from '../safe-errors.js';
 import { type ProductsReportFormat } from '../reports/products.js';
 import { redactSensitiveText } from '../shopify/admin-client.js';
@@ -25,6 +26,16 @@ export interface ReportToolArgs {
   readonly from?: string;
   readonly to?: string;
   readonly lowStockThreshold?: number;
+}
+
+export interface ShopifyqlAnalyticsToolArgs {
+  readonly shop: string;
+  readonly report: ShopifyqlAnalyticsReportId;
+  readonly format: ShopifyqlAnalyticsFormat;
+  readonly from: string;
+  readonly to: string;
+  readonly granularity?: ShopifyqlAnalyticsGranularity;
+  readonly limit?: number;
 }
 
 export interface WebhookListToolArgs {
@@ -182,6 +193,7 @@ export interface McpServerDependencies {
   readonly reportProducts: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly reportOrders: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly reportInventory: (args: ReportToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly analyticsShopifyqlSummary: (args: ShopifyqlAnalyticsToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listWebhookSubscriptions: (args: WebhookListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getWebhookSubscription: (args: WebhookGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getProductDetail: (args: ProductGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
@@ -331,6 +343,12 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
         validateExactArgs(args, ['shop', 'format', 'lowStockThreshold']);
         const reportArgs = readReportArgs(args);
         result = sanitizeToolOutput(await callDependency(() => deps.reportInventory(reportArgs)));
+        break;
+      }
+      case 'shopify.analytics.shopifyql.summary': {
+        validateExactArgs(args, ['shop', 'report', 'format', 'from', 'to', 'granularity', 'limit']);
+        const analyticsArgs = readShopifyqlAnalyticsArgs(args);
+        result = sanitizeToolOutput(await callDependency(() => deps.analyticsShopifyqlSummary(analyticsArgs)));
         break;
       }
       case 'shopify.bulk.start': {
@@ -536,6 +554,9 @@ async function callDependency<T>(operation: () => Promise<T> | T): Promise<T> {
     if (error instanceof MissingShopifyScopesError) {
       throw new McpToolError(error.message, 'MCP_TOOL_CALL_FAILED');
     }
+    if (error instanceof ShopifyqlAnalyticsError) {
+      throw new McpToolError(error.message, 'MCP_TOOL_CALL_FAILED');
+    }
     throw new McpToolError('Tool call failed.', safeErrorCode(error, 'MCP_TOOL_CALL_FAILED'));
   }
 }
@@ -654,7 +675,7 @@ function logMcpLifecycle(
 }
 
 function isReportToolName(name: string): boolean {
-  return name === 'shopify.report_products' || name === 'shopify.report_orders' || name === 'shopify.report_inventory';
+  return name === 'shopify.report_products' || name === 'shopify.report_orders' || name === 'shopify.report_inventory' || name === 'shopify.analytics.shopifyql.summary';
 }
 
 function readAuditShop(args: unknown): { readonly shop?: string } {
@@ -945,6 +966,36 @@ function readWebhookListArgs(args: unknown): WebhookListToolArgs {
     ...readOptionalIntegerProperty(args, 'first'),
     ...readOptionalStringProperty(args, 'after'),
   };
+}
+
+function readShopifyqlAnalyticsArgs(args: unknown): ShopifyqlAnalyticsToolArgs {
+  return {
+    shop: readRequiredString(args, 'shop'),
+    report: readShopifyqlAnalyticsReport(args),
+    format: readFormat(args),
+    from: readRequiredString(args, 'from'),
+    to: readRequiredString(args, 'to'),
+    ...readOptionalGranularity(args),
+    ...readOptionalBoundedPositiveIntegerProperty(args, 'limit', 100),
+  };
+}
+
+function readShopifyqlAnalyticsReport(args: unknown): ShopifyqlAnalyticsReportId {
+  const report = readRequiredString(args, 'report');
+  if (report === 'sales_summary_by_period' || report === 'top_products_by_sales') {
+    return report;
+  }
+  throw new McpToolError('Invalid argument: report. Raw ShopifyQL is not accepted.');
+}
+
+function readOptionalGranularity(args: unknown): Record<string, ShopifyqlAnalyticsGranularity> {
+  if (!isRecord(args) || args.granularity === undefined) {
+    return {};
+  }
+  if (args.granularity === 'day' || args.granularity === 'week' || args.granularity === 'month') {
+    return { granularity: args.granularity };
+  }
+  throw new McpToolError('Invalid argument: granularity.');
 }
 
 function readWebhookGetArgs(args: unknown): WebhookGetToolArgs {

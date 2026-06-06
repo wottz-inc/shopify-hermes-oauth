@@ -6,6 +6,7 @@ export {
   loadShopifyHermesConfig,
   redactConfig,
   redactValue,
+  parseBooleanGate,
 } from './config.js';
 export type { LoadShopifyHermesConfigOptions, ShopifyHermesConfig } from './config.js';
 
@@ -161,6 +162,26 @@ export type {
 } from './shops/diagnostics.js';
 
 export { OrdersReportError } from './reports/orders.js';
+
+export {
+  SHOPIFYQL_ANALYTICS_GATE_ENV,
+  SHOPIFYQL_ANALYTICS_QUERY,
+  SHOPIFYQL_ANALYTICS_REQUIRED_SCOPE,
+  ShopifyqlAnalyticsError,
+  analyticsReportsDisabledMessage,
+  formatShopifyqlAnalyticsReport,
+  generateShopifyqlAnalyticsReport,
+} from './reports/shopifyql-analytics.js';
+export type {
+  ShopifyqlAnalyticsFormat,
+  ShopifyqlAnalyticsGranularity,
+  ShopifyqlAnalyticsGraphqlClient,
+  ShopifyqlAnalyticsOptions,
+  ShopifyqlAnalyticsReport,
+  ShopifyqlAnalyticsReportId,
+  ShopifyqlAnalyticsStatus,
+  ShopifyqlAnalyticsVariables,
+} from './reports/shopifyql-analytics.js';
 
 export {
   DISCOUNT_NODE_QUERY,
