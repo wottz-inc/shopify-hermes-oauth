@@ -31,7 +31,7 @@ If neither tunnel tool is installed, it does not start a misleading local-only O
 - Hermes-native: uses `HERMES_HOME`, `~/.hermes/.env`, `hermes mcp add`, and an optional Hermes skill.
 - Minimal human setup: automate everything except unavoidable Shopify app creation/callback approval/store install approval.
 - Read-only by default.
-- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, `read_locations`. Curated customer, webhook, fulfillment-order, discount, and marketing-event tools additionally require `read_customers` / `read_webhooks` / fulfillment-order read scopes / `read_discounts` / `read_marketing_events` on stores where enabled.
+- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, and `read_locations`. Curated customer, webhook, fulfillment-order, discount, marketing-event, markets, and locale tools additionally require `read_customers` / `read_webhooks` / fulfillment-order read scopes / `read_discounts` / `read_marketing_events` / `read_markets` / `read_locales` on stores where enabled.
 - Required Admin API Scopes are the Shopify app scopes that grant Admin API access for OAuth installs. Optional scopes are not a substitute for required Admin API scopes; optional-only app configuration can fail the callback with Shopify's `At least one scope is required` validation.
 - Use the store's canonical Admin `*.myshopify.com` domain for `/auth/start?shop=...`. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.
 - No required private infrastructure, hosted forge, hosted service, or third-party secret manager.
@@ -192,6 +192,15 @@ The MCP allowlist includes read-only discounts/marketing visibility:
 - `shopify.marketing_events.list` — list/search marketing events with shallow fields and bounded pagination (`first` defaults to 25 and is capped at 50).
 
 Discount tools require `read_discounts`; marketing event tools require `read_marketing_events`. Individual discount codes, customer/order data, usage attribution, customerSelection details, customer/order/conversion attribution, raw Admin GraphQL input, and all mutations are intentionally omitted. Marketing event `manageUrl`/`previewUrl` query strings are redacted before output. Audit metadata records only shop/tool, `first`, and whether query/cursor or discount ID inputs were present, not raw IDs, cursors, titles, codes, or URLs.
+
+## Curated markets and localization tools
+
+The MCP allowlist includes read-only market/localization summary tools:
+
+- `shopify.markets.list` — list Shopify Markets with bounded pagination (`first` defaults to 25 and is capped at 50), shallow market fields, base currency summary, and up to 10 region summaries per market with `regionsTruncated` when more regions exist.
+- `shopify.localization.locales.list` — list shop locales with locale/name/primary/published status only; no translations, market-localized content, or raw Admin GraphQL input.
+
+Markets require `read_markets`; locales require `read_locales`. Shopify may gate these Admin APIs by plan, Markets feature availability, API version, and app-scope approval. If Shopify returns an unsupported/permission/schema response, the helper returns `supported: false` with a documented `limitation` object instead of raw GraphQL errors. Empty stores return `supported: true` with empty arrays and zero counts. Audit metadata records only shop/tool, support status, counts, caps, and bounded pagination flags, not raw cursors or region/currency details.
 
 ## Curated custom data tools
 

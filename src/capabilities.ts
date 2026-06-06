@@ -1,6 +1,6 @@
 export type CapabilityAccess = 'read' | 'write' | 'diagnostic';
 export type CapabilityRiskLevel = 'read_low' | 'read_pii' | 'read_financial' | 'write_medium' | 'write_high' | 'protected_data' | 'diagnostic_low';
-export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders' | 'fulfillment' | 'discounts' | 'marketing' | 'custom_data';
+export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders' | 'fulfillment' | 'discounts' | 'marketing' | 'custom_data' | 'localization';
 export type CapabilityRequiredGate = 'dry_run' | 'explicit_confirmation' | 'audit_logging' | 'rollback_notes';
 
 export type McpToolName =
@@ -31,6 +31,8 @@ export type McpToolName =
   | 'shopify.discounts.list'
   | 'shopify.discounts.get'
   | 'shopify.marketing_events.list'
+  | 'shopify.markets.list'
+  | 'shopify.localization.locales.list'
   | 'shopify.metafield_definitions.list'
   | 'shopify.metafield_definitions.get'
   | 'shopify.resource_metafields.list'
@@ -295,6 +297,15 @@ const MARKETING_EVENTS_LIST_SCHEMA: JsonSchema = {
     query: { type: 'string', description: 'Explicit Shopify marketing event search string; omitted means Shopify default event ordering.' },
   },
 };
+const MARKETS_LIST_SCHEMA: JsonSchema = {
+  ...SHOP_SCHEMA,
+  properties: {
+    ...SHOP_SCHEMA.properties,
+    first: { type: 'integer', minimum: 1, maximum: 50, description: 'Page size. Defaults to 25 and is capped at 50.' },
+    after: { type: 'string', description: 'Optional Shopify cursor for the next page.' },
+  },
+};
+const SHOP_LOCALES_LIST_SCHEMA: JsonSchema = SHOP_SCHEMA;
 
 const METAFIELD_DEFINITIONS_LIST_SCHEMA: JsonSchema = {
   ...SHOP_SCHEMA,
@@ -803,6 +814,42 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
         toolName: 'shopify.marketing_events.list',
         description: 'List Shopify marketing events with shallow fields and redacted URL query strings.',
         inputSchema: MARKETING_EVENTS_LIST_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'localization.markets.list.read',
+    domain: 'localization',
+    operationName: 'Markets',
+    requiredScopes: ['read_markets'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Paginates markets with explicit cursor and page size 1..50 (default 25); nested regions are capped at 10 and marked when truncated.',
+    cost: 'Uses a bounded curated Markets query. Shopify may gate Markets APIs by plan, API version, feature availability, or approved app scopes; unsupported responses are normalized without raw GraphQL errors.',
+    auditEvent: 'localization.markets.list',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.markets.list',
+        description: 'Summarize Shopify Markets with bounded pagination and safe region/currency metadata when the shop supports Markets APIs.',
+        inputSchema: MARKETS_LIST_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'localization.locales.list.read',
+    domain: 'localization',
+    operationName: 'ShopLocales',
+    requiredScopes: ['read_locales'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Reads shopLocales as a bounded top-level array returned by Shopify; no nested connections or raw translations.',
+    cost: 'Low-cost curated shopLocales query. Shopify may gate localization APIs by plan, API version, feature availability, or approved app scopes; unsupported responses are normalized without raw GraphQL errors.',
+    auditEvent: 'localization.locales.list',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.localization.locales.list',
+        description: 'List published and primary Shopify shop locales without translations or market-localized content.',
+        inputSchema: SHOP_LOCALES_LIST_SCHEMA,
       },
     },
   },

@@ -127,6 +127,16 @@ export interface MarketingEventsListToolArgs {
   readonly query?: string;
 }
 
+export interface MarketsListToolArgs {
+  readonly shop: string;
+  readonly first?: number;
+  readonly after?: string;
+}
+
+export interface ShopLocalesListToolArgs {
+  readonly shop: string;
+}
+
 export interface MetafieldDefinitionsListToolArgs { readonly shop: string; readonly ownerType: string; readonly namespace?: string; readonly key?: string; readonly first?: number; readonly after?: string }
 export interface MetafieldDefinitionGetToolArgs { readonly shop: string; readonly ownerType: string; readonly namespace: string; readonly key: string }
 export interface ResourceMetafieldsListToolArgs { readonly shop: string; readonly ownerId: string; readonly namespace?: string; readonly key?: string; readonly first?: number; readonly after?: string }
@@ -181,6 +191,8 @@ export interface McpServerDependencies {
   readonly listDiscounts: (args: DiscountListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getDiscount: (args: DiscountGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listMarketingEvents: (args: MarketingEventsListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listMarkets: (args: MarketsListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listShopLocales: (args: ShopLocalesListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listMetafieldDefinitions: (args: MetafieldDefinitionsListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getMetafieldDefinition: (args: MetafieldDefinitionGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listResourceMetafields: (args: ResourceMetafieldsListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
@@ -255,11 +267,11 @@ export function listTools(): readonly McpToolDefinition[] {
 }
 
 export async function callTool(name: string, args: unknown, deps: McpServerDependencies): Promise<unknown> {
-  const auditEvent = (result: 'success' | 'failure', reason?: string, errorCode?: SafeErrorCode): AuditEventInput => ({
+  const auditEvent = (result: 'success' | 'failure', reason?: string, errorCode?: SafeErrorCode, toolResult?: unknown): AuditEventInput => ({
     action: 'mcp.tool',
     ...readAuditShop(args),
     result,
-    metadata: buildMcpAuditMetadata(name, args, reason, errorCode),
+    metadata: buildMcpAuditMetadata(name, args, reason, errorCode, toolResult),
   });
 
   if (!ALLOWED_TOOL_NAMES.has(name)) {
@@ -434,6 +446,17 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
         result = sanitizeToolOutput(await callDependency(() => deps.listMarketingEvents(readMarketingEventsListArgs(args))));
         break;
       }
+      case 'shopify.markets.list': {
+        validateExactArgs(args, ['shop', 'first', 'after']);
+        const marketArgs = readMarketsListArgs(args);
+        result = sanitizeToolOutput(await callDependency(() => deps.listMarkets(marketArgs)));
+        break;
+      }
+      case 'shopify.localization.locales.list': {
+        validateExactArgs(args, ['shop']);
+        result = sanitizeToolOutput(await callDependency(() => deps.listShopLocales({ shop: readRequiredString(args, 'shop') })));
+        break;
+      }
       case 'shopify.metafield_definitions.list': {
         validateExactArgs(args, ['shop', 'ownerType', 'namespace', 'key', 'first', 'after']);
         result = sanitizeToolOutput(await callDependency(() => deps.listMetafieldDefinitions(readMetafieldDefinitionsListArgs(args))));
@@ -472,7 +495,7 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
       default:
         throw new McpToolError();
     }
-    await appendMcpAuditEventBestEffort(deps, auditEvent('success'));
+    await appendMcpAuditEventBestEffort(deps, auditEvent('success', undefined, undefined, result));
     return result;
   } catch (error) {
     if (error instanceof McpToolError) {
@@ -507,7 +530,7 @@ async function appendMcpAuditEventBestEffort(deps: McpServerDependencies, event:
   }
 }
 
-function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, errorCode?: SafeErrorCode): Record<string, unknown> {
+function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, errorCode?: SafeErrorCode, result?: unknown): Record<string, unknown> {
   return {
     source: 'mcp',
     actor: 'mcp',
@@ -517,7 +540,7 @@ function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, err
     ...(name === 'shopify.bulk.start' ? readAuditTemplate(args) : {}),
     ...(name === 'shopify.bulk.result' ? readAuditResultLimits(args) : {}),
     ...(name === 'shopify.report_inventory' ? readAuditThreshold(args) : {}),
-    ...(name === 'shopify.customers.list' || name === 'shopify.collections.list' || name === 'shopify.locations.list' || name === 'shopify.discounts.list' || name === 'shopify.marketing_events.list' || name === 'shopify.metafield_definitions.list' || name === 'shopify.resource_metafields.list' || name === 'shopify.metaobject_definitions.list' || name === 'shopify.metaobjects.list' ? readAuditBoundedList(args) : {}),
+    ...(name === 'shopify.customers.list' || name === 'shopify.collections.list' || name === 'shopify.locations.list' || name === 'shopify.discounts.list' || name === 'shopify.marketing_events.list' || name === 'shopify.markets.list' || name === 'shopify.metafield_definitions.list' || name === 'shopify.resource_metafields.list' || name === 'shopify.metaobject_definitions.list' || name === 'shopify.metaobjects.list' ? readAuditBoundedList(args) : {}),
     ...(name === 'shopify.metafield_definitions.list' || name === 'shopify.resource_metafields.list' ? readAuditMetafieldFilters(args) : {}),
     ...(name === 'shopify.metafield_definitions.get' ? readAuditMetafieldGet(args) : {}),
     ...(name === 'shopify.metaobject_definitions.list' || name === 'shopify.metaobjects.list' ? readAuditMetaobjectList(args) : {}),
@@ -527,9 +550,41 @@ function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, err
     ...(name === 'shopify.inventory.levels.list' ? readAuditInventoryLevelsList(args) : {}),
     ...(name === 'shopify.orders.get' ? readAuditOrderGet(args) : {}),
     ...(name === 'shopify.fulfillment_orders.list' ? readAuditFulfillmentOrdersList(args) : {}),
+    ...(reason === undefined ? readMarketsLocalizationAuditResult(name, result) : {}),
     ...(reason === undefined ? {} : { reason: sanitizeAuditString(reason) }),
     ...(errorCode === undefined ? {} : { errorCode }),
   };
+}
+
+function readMarketsLocalizationAuditResult(name: string, result: unknown): Record<string, unknown> {
+  if (!isRecord(result)) {
+    return {};
+  }
+
+  if (name === 'shopify.markets.list') {
+    const summary = isRecord(result.summary) ? result.summary : {};
+    return {
+      ...(typeof result.supported === 'boolean' ? { supported: result.supported } : {}),
+      ...(Number.isInteger(summary.marketCount) ? { marketCount: summary.marketCount } : {}),
+      ...(Number.isInteger(summary.activeCount) ? { activeCount: summary.activeCount } : {}),
+      ...(Number.isInteger(summary.regionCount) ? { regionCount: summary.regionCount } : {}),
+      ...(Number.isInteger(summary.regionsTruncatedCount) ? { regionsTruncatedCount: summary.regionsTruncatedCount } : {}),
+      pageSizeCap: 50,
+      regionCap: 10,
+    };
+  }
+
+  if (name === 'shopify.localization.locales.list') {
+    const summary = isRecord(result.summary) ? result.summary : {};
+    return {
+      ...(typeof result.supported === 'boolean' ? { supported: result.supported } : {}),
+      ...(Number.isInteger(summary.localeCount) ? { localeCount: summary.localeCount } : {}),
+      ...(Number.isInteger(summary.publishedCount) ? { publishedCount: summary.publishedCount } : {}),
+      ...(typeof summary.primaryLocale === 'string' ? { primaryLocalePresent: true } : {}),
+    };
+  }
+
+  return {};
 }
 
 function readMcpHealth(): McpHealthResult {
@@ -999,6 +1054,22 @@ function readMarketingEventsListArgs(args: unknown): MarketingEventsListToolArgs
     ...readOptionalStringProperty(args, 'after'),
     ...readOptionalSafeSearchQuery(args),
   };
+}
+
+function readMarketsListArgs(args: unknown): MarketsListToolArgs {
+  return {
+    shop: readRequiredString(args, 'shop'),
+    ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50),
+    ...readOptionalSafeCursor(args, 'after'),
+  };
+}
+
+function readOptionalSafeCursor(args: unknown, key: string): Record<string, string> {
+  const cursor = readOptionalStringProperty(args, key);
+  if (cursor[key] !== undefined && /[{}]|\b(?:mutation|query)\b/iu.test(cursor[key])) {
+    throw new McpToolError(`Invalid argument: ${key}.`);
+  }
+  return cursor;
 }
 
 function readOptionalSafeSearchQuery(args: unknown): Record<string, string> {

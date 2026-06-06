@@ -150,6 +150,8 @@ function createDeps(): McpServerDependencies {
       query,
       pii: { redactedFields: ['customer', 'orders', 'conversions', 'utm/query parameters'], urls: 'query_redacted' },
     }),
+    listMarkets: ({ shop, first }) => ({ shop, supported: true, markets: [{ id: 'gid://shopify/Market/1', name: 'North America', status: 'ACTIVE', regions: [], regionsTruncated: false }], summary: { marketCount: 1, activeCount: 1, regionCount: 0, regionsTruncatedCount: 0 }, pageInfo: { hasNextPage: false }, first }),
+    listShopLocales: ({ shop }) => ({ shop, supported: true, locales: [{ locale: 'en', name: 'English', primary: true, published: true }], summary: { localeCount: 1, publishedCount: 1, primaryLocale: 'en' } }),
     listMetafieldDefinitions: ({ shop, ownerType, namespace, key, first }) => ({ shop, metafieldDefinitions: [{ namespace: namespace ?? 'custom', key: key ?? 'care', ownerType, name: 'Care', type: { name: 'single_line_text_field' }, validations: [] }], pageInfo: { hasNextPage: false }, schema: { ownerType, namespace, key }, first }),
     getMetafieldDefinition: ({ shop, ownerType, namespace, key }) => ({ shop, metafieldDefinition: { namespace, key, ownerType, name: 'Care', type: { name: 'single_line_text_field' }, validations: [] }, schema: { ownerType, namespace, key } }),
     listResourceMetafields: ({ shop, ownerId, namespace, key, first }) => ({ shop, owner: { id: ownerId, type: 'Product' }, metafields: [{ id: 'gid://shopify/Metafield/1', namespace: namespace ?? 'custom', key: key ?? 'care', type: 'single_line_text_field', valuePresent: true, valueLength: 9 }], pageInfo: { hasNextPage: false }, schema: { namespace, key }, first }),
@@ -211,6 +213,8 @@ describe('curated MCP server', () => {
       'shopify.discounts.list',
       'shopify.discounts.get',
       'shopify.marketing_events.list',
+      'shopify.markets.list',
+      'shopify.localization.locales.list',
       'shopify.metafield_definitions.list',
       'shopify.metafield_definitions.get',
       'shopify.resource_metafields.list',
@@ -342,6 +346,18 @@ describe('curated MCP server', () => {
       first: 10,
       query: 'event_type:ad',
     });
+    await expect(callTool('shopify.markets.list', { shop: 'alpha.myshopify.com', first: 10 }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      supported: true,
+      markets: [{ id: 'gid://shopify/Market/1', name: 'North America' }],
+      first: 10,
+    });
+    await expect(callTool('shopify.localization.locales.list', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      supported: true,
+      locales: [{ locale: 'en', primary: true, published: true }],
+    });
+    await expect(callTool('shopify.markets.list', { shop: 'alpha.myshopify.com', after: 'query { shop { name } }' }, deps)).rejects.toThrow('Invalid argument: after.');
     await expect(callTool('shopify.metafield_definitions.list', { shop: 'alpha.myshopify.com', ownerType: 'PRODUCT', namespace: 'custom', key: 'care', first: 10 }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metafieldDefinitions: [{ key: 'care' }] });
     await expect(callTool('shopify.metafield_definitions.get', { shop: 'alpha.myshopify.com', ownerType: 'PRODUCT', namespace: 'custom', key: 'care' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metafieldDefinition: { key: 'care' } });
     await expect(callTool('shopify.resource_metafields.list', { shop: 'alpha.myshopify.com', ownerId: 'gid://shopify/Product/1', first: 10 }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', owner: { id: 'gid://shopify/Product/1' } });
@@ -452,6 +468,8 @@ describe('curated MCP server', () => {
       shop: 'alpha.myshopify.com',
       marketingEvents: [{ id: 'gid://shopify/MarketingEvent/1' }],
     });
+    await expect(callTool('shopify.markets.list', { shop: 'alpha.myshopify.com', first: 10, after: 'market-cursor' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', markets: [{ id: 'gid://shopify/Market/1' }] });
+    await expect(callTool('shopify.localization.locales.list', { shop: 'alpha.myshopify.com' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', locales: [{ locale: 'en' }] });
     await expect(callTool('shopify.metafield_definitions.list', { shop: 'alpha.myshopify.com', ownerType: 'PRODUCT', namespace: 'custom', key: 'care', first: 10, after: 'metafield-definition-cursor' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metafieldDefinitions: [{ key: 'care' }] });
     await expect(callTool('shopify.metafield_definitions.get', { shop: 'alpha.myshopify.com', ownerType: 'PRODUCT', namespace: 'custom', key: 'care' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metafieldDefinition: { key: 'care' } });
     await expect(callTool('shopify.resource_metafields.list', { shop: 'alpha.myshopify.com', ownerId: 'gid://shopify/Product/1', namespace: 'custom', key: 'care', first: 10, after: 'resource-metafield-cursor' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', owner: { id: 'gid://shopify/Product/1' } });
@@ -596,6 +614,18 @@ describe('curated MCP server', () => {
         shop: 'alpha.myshopify.com',
         result: 'success',
         metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.marketing_events.list', first: 10, queryPresent: true, afterPresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.markets.list', first: 10, afterPresent: true, supported: true, marketCount: 1, activeCount: 1, regionCount: 0, regionsTruncatedCount: 0, pageSizeCap: 50, regionCap: 10 },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.localization.locales.list', supported: true, localeCount: 1, publishedCount: 1, primaryLocalePresent: true },
       },
       {
         action: 'mcp.tool',
@@ -971,6 +1001,8 @@ describe('curated MCP server', () => {
       await expect(callTool('shopify.discounts.list', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.discounts.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/DiscountNode/1', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.marketing_events.list', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
+      await expect(callTool('shopify.markets.list', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
+      await expect(callTool('shopify.localization.locales.list', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
     }
   });
 
@@ -997,6 +1029,8 @@ describe('curated MCP server', () => {
     await expect(callTool('shopify.marketing_events.list', { shop: 'alpha.myshopify.com', first: 0 }, createDeps())).rejects.toThrow(McpToolError);
     await expect(callTool('shopify.marketing_events.list', { shop: 'alpha.myshopify.com', first: 51 }, createDeps())).rejects.toThrow(McpToolError);
     await expect(callTool('shopify.marketing_events.list', { shop: 'alpha.myshopify.com', query: 'mutation { shop { name } }' }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.markets.list', { shop: 'alpha.myshopify.com', first: 0 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.markets.list', { shop: 'alpha.myshopify.com', first: 51 }, createDeps())).rejects.toThrow(McpToolError);
   });
 
   it('rejects non-positive bulk result preview limits before dispatch', async () => {

@@ -48,6 +48,8 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'discounts.list.read',
       'discounts.get.read',
       'marketing.events.list.read',
+      'localization.markets.list.read',
+      'localization.locales.list.read',
       'custom_data.metafield_definitions.list.read',
       'custom_data.metafield_definitions.get.read',
       'custom_data.resource_metafields.list.read',
