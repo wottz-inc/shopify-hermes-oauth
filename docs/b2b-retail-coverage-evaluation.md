@@ -38,9 +38,9 @@ Create follow-up implementation issue #122 only for optional, scoped, read-only 
 
 1. `shopify.b2b.companies.summary`
    - Purpose: show whether B2B is available and summarize companies/locations.
-   - Safe fields: company ID/name/external ID, company/location counts, location ID/name, catalog assignment count, payment-terms presence if separately scoped.
+   - Safe fields: company ID/name, company/location counts, location ID/name.
    - Omit: contact names/emails/phones, addresses, notes, tags, customer profiles, raw contact/customer records.
-   - Scopes: `read_companies`; optionally `read_products` for catalog assignment summaries.
+   - Scopes: `read_companies`; catalog assignment summaries stay in the separate catalog tool because they can require catalog/product permissions.
 
 2. `shopify.b2b.catalogs.summary`
    - Purpose: summarize B2B company-location catalogs and price lists.

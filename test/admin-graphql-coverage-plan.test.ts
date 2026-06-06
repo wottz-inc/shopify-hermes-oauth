@@ -61,7 +61,7 @@ describe('Admin GraphQL coverage plan', () => {
       'shopify.inventory.levels',
       'shopify.metafields.list',
       'shopify.markets.list',
-      'shopify.analytics.sales_summary',
+      'shopify.analytics.shopifyql.summary',
       'read_customers',
       'read_reports',
       'protected-data gate',
