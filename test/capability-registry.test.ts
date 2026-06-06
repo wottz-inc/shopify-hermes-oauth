@@ -48,6 +48,13 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'discounts.list.read',
       'discounts.get.read',
       'marketing.events.list.read',
+      'custom_data.metafield_definitions.list.read',
+      'custom_data.metafield_definitions.get.read',
+      'custom_data.resource_metafields.list.read',
+      'custom_data.metaobject_definitions.list.read',
+      'custom_data.metaobject_definitions.get.read',
+      'custom_data.metaobjects.list.read',
+      'custom_data.metaobjects.get.read',
     ]);
 
     expect(expectCapability('shops.verify.read')).toMatchObject({
@@ -304,6 +311,19 @@ describe('Admin Graph capability registry and tool policy model', () => {
     });
     expect(marketingEvents.pagination).toContain('1..50');
     expect(marketingEvents.cost).toContain('redacts URL query strings');
+
+    const metafieldDefinitions = expectCapability('custom_data.metafield_definitions.list.read');
+    expect(metafieldDefinitions).toMatchObject({ domain: 'custom_data', operationName: 'MetafieldDefinitions', requiredScopes: ['read_products'], access: 'read', riskLevel: 'read_low', surfaces: { mcp: { toolName: 'shopify.metafield_definitions.list' } } });
+    expect(metafieldDefinitions.pagination).toContain('ownerType');
+    expect(metafieldDefinitions.pagination).toContain('namespace/key');
+    expect(metafieldDefinitions.surfaces.mcp?.inputSchema.properties).not.toHaveProperty('graphql');
+    expect(expectCapability('custom_data.metafield_definitions.get.read')).toMatchObject({ surfaces: { mcp: { toolName: 'shopify.metafield_definitions.get' } } });
+    expect(expectCapability('custom_data.resource_metafields.list.read')).toMatchObject({ operationName: 'ResourceMetafields', surfaces: { mcp: { toolName: 'shopify.resource_metafields.list' } } });
+    expect(expectCapability('custom_data.resource_metafields.list.read').cost).toContain('omits jsonValue');
+    expect(expectCapability('custom_data.metaobject_definitions.list.read')).toMatchObject({ requiredScopes: ['read_metaobject_definitions'], surfaces: { mcp: { toolName: 'shopify.metaobject_definitions.list' } } });
+    expect(expectCapability('custom_data.metaobject_definitions.get.read')).toMatchObject({ surfaces: { mcp: { toolName: 'shopify.metaobject_definitions.get' } } });
+    expect(expectCapability('custom_data.metaobjects.list.read')).toMatchObject({ requiredScopes: ['read_metaobjects'], surfaces: { mcp: { toolName: 'shopify.metaobjects.list' } } });
+    expect(expectCapability('custom_data.metaobjects.get.read')).toMatchObject({ surfaces: { mcp: { toolName: 'shopify.metaobjects.get' } } });
   });
 
   it('keeps MCP tool registration backed by the registry allowlist', () => {

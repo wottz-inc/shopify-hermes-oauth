@@ -167,6 +167,37 @@ export type {
   MarketingEventsListResult,
 } from './discounts-marketing/index.js';
 
+export {
+  METAFIELD_DEFINITION_QUERY,
+  METAFIELD_DEFINITIONS_QUERY,
+  METAOBJECT_DEFINITION_QUERY,
+  METAOBJECT_DEFINITIONS_QUERY,
+  METAOBJECT_QUERY,
+  METAOBJECTS_QUERY,
+  RESOURCE_METAFIELDS_QUERY,
+  CustomDataSurfaceError,
+  getMetafieldDefinition,
+  getMetaobject,
+  getMetaobjectDefinition,
+  listMetafieldDefinitions,
+  listMetaobjectDefinitions,
+  listMetaobjects,
+  listResourceMetafields,
+} from './custom-data/index.js';
+export type {
+  CustomDataGraphqlClient,
+  GetMetafieldDefinitionOptions,
+  GetMetaobjectDefinitionOptions,
+  GetMetaobjectOptions,
+  ListMetafieldDefinitionsOptions,
+  ListMetaobjectDefinitionsOptions,
+  ListMetaobjectsOptions,
+  ListResourceMetafieldsOptions,
+  MetafieldSchema,
+  MetaobjectSchema,
+  PageInfo,
+} from './custom-data/index.js';
+
 export { ShopVerificationError, verifyShop } from './shops/verify.js';
 export type { VerifyShopOptions, VerifyShopResult } from './shops/verify.js';
 

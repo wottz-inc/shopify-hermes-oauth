@@ -1,6 +1,6 @@
 export type CapabilityAccess = 'read' | 'write' | 'diagnostic';
 export type CapabilityRiskLevel = 'read_low' | 'read_pii' | 'read_financial' | 'write_medium' | 'write_high' | 'protected_data' | 'diagnostic_low';
-export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders' | 'fulfillment' | 'discounts' | 'marketing';
+export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders' | 'fulfillment' | 'discounts' | 'marketing' | 'custom_data';
 export type CapabilityRequiredGate = 'dry_run' | 'explicit_confirmation' | 'audit_logging' | 'rollback_notes';
 
 export type McpToolName =
@@ -30,7 +30,14 @@ export type McpToolName =
   | 'shopify.fulfillment_orders.get'
   | 'shopify.discounts.list'
   | 'shopify.discounts.get'
-  | 'shopify.marketing_events.list';
+  | 'shopify.marketing_events.list'
+  | 'shopify.metafield_definitions.list'
+  | 'shopify.metafield_definitions.get'
+  | 'shopify.resource_metafields.list'
+  | 'shopify.metaobject_definitions.list'
+  | 'shopify.metaobject_definitions.get'
+  | 'shopify.metaobjects.list'
+  | 'shopify.metaobjects.get';
 
 export interface JsonSchema {
   readonly type: 'object';
@@ -288,6 +295,22 @@ const MARKETING_EVENTS_LIST_SCHEMA: JsonSchema = {
     query: { type: 'string', description: 'Explicit Shopify marketing event search string; omitted means Shopify default event ordering.' },
   },
 };
+
+const METAFIELD_DEFINITIONS_LIST_SCHEMA: JsonSchema = {
+  ...SHOP_SCHEMA,
+  properties: { ...SHOP_SCHEMA.properties, ownerType: { type: 'string', description: 'Metafield owner type enum, e.g. PRODUCT.' }, namespace: { type: 'string', description: 'Optional metafield namespace filter.' }, key: { type: 'string', description: 'Optional metafield key filter.' }, first: { type: 'integer', minimum: 1, maximum: 50, description: 'Page size. Defaults to 25 and is capped at 50.' }, after: { type: 'string', description: 'Optional Shopify cursor for the next page.' } },
+  required: ['shop', 'ownerType'],
+};
+const METAFIELD_DEFINITIONS_GET_SCHEMA: JsonSchema = { type: 'object', properties: { shop: { type: 'string', description: 'Shopify myshopify.com domain.' }, ownerType: { type: 'string', description: 'Metafield owner type enum, e.g. PRODUCT.' }, namespace: { type: 'string', description: 'Metafield namespace.' }, key: { type: 'string', description: 'Metafield key.' } }, required: ['shop', 'ownerType', 'namespace', 'key'], additionalProperties: false };
+const RESOURCE_METAFIELDS_LIST_SCHEMA: JsonSchema = {
+  ...SHOP_SCHEMA,
+  properties: { ...SHOP_SCHEMA.properties, ownerId: { type: 'string', description: 'Supported resource GID, e.g. gid://shopify/Product/123.' }, namespace: { type: 'string', description: 'Optional metafield namespace filter.' }, key: { type: 'string', description: 'Optional metafield key filter.' }, first: { type: 'integer', minimum: 1, maximum: 50, description: 'Page size. Defaults to 25 and is capped at 50.' }, after: { type: 'string', description: 'Optional Shopify cursor for the next page.' } },
+  required: ['shop', 'ownerId'],
+};
+const METAOBJECT_DEFINITIONS_LIST_SCHEMA: JsonSchema = { ...SHOP_SCHEMA, properties: { ...SHOP_SCHEMA.properties, type: { type: 'string', description: 'Optional metaobject type filter.' }, first: { type: 'integer', minimum: 1, maximum: 50, description: 'Page size. Defaults to 25 and is capped at 50.' }, after: { type: 'string', description: 'Optional Shopify cursor for the next page.' } } };
+const METAOBJECT_DEFINITIONS_GET_SCHEMA: JsonSchema = { type: 'object', properties: { shop: { type: 'string', description: 'Shopify myshopify.com domain.' }, type: { type: 'string', description: 'Metaobject type.' } }, required: ['shop', 'type'], additionalProperties: false };
+const METAOBJECTS_LIST_SCHEMA: JsonSchema = { ...SHOP_SCHEMA, properties: { ...SHOP_SCHEMA.properties, type: { type: 'string', description: 'Metaobject type.' }, first: { type: 'integer', minimum: 1, maximum: 50, description: 'Page size. Defaults to 25 and is capped at 50.' }, after: { type: 'string', description: 'Optional Shopify cursor for the next page.' } }, required: ['shop', 'type'] };
+const METAOBJECTS_GET_SCHEMA: JsonSchema = { type: 'object', properties: { shop: { type: 'string', description: 'Shopify myshopify.com domain.' }, id: { type: 'string', description: 'Metaobject GID, e.g. gid://shopify/Metaobject/123.' } }, required: ['shop', 'id'], additionalProperties: false };
 
 export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
   {
@@ -782,6 +805,91 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
         inputSchema: MARKETING_EVENTS_LIST_SCHEMA,
       },
     },
+  },
+
+  {
+    id: 'custom_data.metafield_definitions.list.read',
+    domain: 'custom_data',
+    operationName: 'MetafieldDefinitions',
+    requiredScopes: ['read_products'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Paginates metafieldDefinitions by required ownerType and optional namespace/key with page size 1..50 (default 25).',
+    cost: 'Uses bounded curated schema-aware metafield definition query; no raw GraphQL input or writes.',
+    auditEvent: 'custom_data.metafield_definitions.list',
+    surfaces: { mcp: { toolName: 'shopify.metafield_definitions.list', description: 'List metafield definitions by owner type with optional namespace/key filters.', inputSchema: METAFIELD_DEFINITIONS_LIST_SCHEMA } },
+  },
+  {
+    id: 'custom_data.metafield_definitions.get.read',
+    domain: 'custom_data',
+    operationName: 'MetafieldDefinition',
+    requiredScopes: ['read_products'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Single metafield definition lookup by ownerType, namespace, and key.',
+    cost: 'Low-cost curated schema lookup; no raw GraphQL input or writes.',
+    auditEvent: 'custom_data.metafield_definitions.get',
+    surfaces: { mcp: { toolName: 'shopify.metafield_definitions.get', description: 'Get one metafield definition by owner type, namespace, and key.', inputSchema: METAFIELD_DEFINITIONS_GET_SCHEMA } },
+  },
+  {
+    id: 'custom_data.resource_metafields.list.read',
+    domain: 'custom_data',
+    operationName: 'ResourceMetafields',
+    requiredScopes: ['read_products'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Paginates metafields for one supported owner GID with optional namespace/key and page size 1..50.',
+    cost: 'Uses schema-aware value presence/length summaries only and omits jsonValue; no raw GraphQL input or writes.',
+    auditEvent: 'custom_data.resource_metafields.list',
+    surfaces: { mcp: { toolName: 'shopify.resource_metafields.list', description: 'List metafields for one supported product/catalog resource without raw values.', inputSchema: RESOURCE_METAFIELDS_LIST_SCHEMA } },
+  },
+  {
+    id: 'custom_data.metaobject_definitions.list.read',
+    domain: 'custom_data',
+    operationName: 'MetaobjectDefinitions',
+    requiredScopes: ['read_metaobject_definitions'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Paginates metaobjectDefinitions with optional type and page size 1..50.',
+    cost: 'Bounded curated schema query; no raw GraphQL input or writes.',
+    auditEvent: 'custom_data.metaobject_definitions.list',
+    surfaces: { mcp: { toolName: 'shopify.metaobject_definitions.list', description: 'List metaobject definitions with bounded field definition summaries.', inputSchema: METAOBJECT_DEFINITIONS_LIST_SCHEMA } },
+  },
+  {
+    id: 'custom_data.metaobject_definitions.get.read',
+    domain: 'custom_data',
+    operationName: 'MetaobjectDefinition',
+    requiredScopes: ['read_metaobject_definitions'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Single metaobject definition lookup by type.',
+    cost: 'Low-cost curated schema query; no raw GraphQL input or writes.',
+    auditEvent: 'custom_data.metaobject_definitions.get',
+    surfaces: { mcp: { toolName: 'shopify.metaobject_definitions.get', description: 'Get one metaobject definition by type.', inputSchema: METAOBJECT_DEFINITIONS_GET_SCHEMA } },
+  },
+  {
+    id: 'custom_data.metaobjects.list.read',
+    domain: 'custom_data',
+    operationName: 'Metaobjects',
+    requiredScopes: ['read_metaobjects'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Paginates metaobjects for one type with page size 1..50 and field value presence/length only.',
+    cost: 'Bounded curated metaobject query; omits jsonValue and exposes no raw GraphQL input or writes.',
+    auditEvent: 'custom_data.metaobjects.list',
+    surfaces: { mcp: { toolName: 'shopify.metaobjects.list', description: 'List metaobjects of one type with schema-aware field summaries and no raw values.', inputSchema: METAOBJECTS_LIST_SCHEMA } },
+  },
+  {
+    id: 'custom_data.metaobjects.get.read',
+    domain: 'custom_data',
+    operationName: 'Metaobject',
+    requiredScopes: ['read_metaobjects'],
+    access: 'read',
+    riskLevel: 'read_low',
+    pagination: 'Single metaobject lookup by stable Metaobject GID with field value presence/length only.',
+    cost: 'Low-cost curated metaobject query; omits jsonValue and exposes no raw GraphQL input or writes.',
+    auditEvent: 'custom_data.metaobjects.get',
+    surfaces: { mcp: { toolName: 'shopify.metaobjects.get', description: 'Get one metaobject by GID with schema-aware field summaries and no raw values.', inputSchema: METAOBJECTS_GET_SCHEMA } },
   },
 ];
 

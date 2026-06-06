@@ -11,6 +11,7 @@ import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { BulkOperationError, cancelBulkOperation, fetchBulkOperationResult, getBulkOperationTemplate, getCurrentBulkOperation, startBulkOperation } from './bulk/operations.js';
 import { getCollection, getProductDetail, listCollections } from './catalog/details.js';
 import { listDiscounts, getDiscount, listMarketingEvents } from './discounts-marketing/index.js';
+import { getMetafieldDefinition, getMetaobject, getMetaobjectDefinition, listMetafieldDefinitions, listMetaobjectDefinitions, listMetaobjects, listResourceMetafields } from './custom-data/index.js';
 import { getFulfillmentOrder, listFulfillmentOrders } from './fulfillment/details.js';
 import { getInventoryItem, getLocation, listInventoryLevels, listLocations } from './inventory/details.js';
 import { getOrderDetail } from './orders/details.js';
@@ -1307,6 +1308,10 @@ function localHermesSkillContent(): string {
     "- `shopify.webhooks.get` (requires `read_webhooks`)",
     "- `shopify.customers.list` (requires `read_customers`; returns bounded pages with email domains only, phone presence only, and aggregate order/spend summaries)",
     "- `shopify.customers.get` (requires `read_customers`; returns one customer by GID with the same minimal PII policy)",
+    "- `shopify.discounts.list/get` (requires `read_discounts`; omits individual codes/customer/order/attribution/customerSelection details)",
+    "- `shopify.marketing_events.list` (requires `read_marketing_events`; redacts manage/preview URL query strings)",
+    "- `shopify.metafield_definitions.list/get` and `shopify.resource_metafields.list` (require `read_products`; validate owner type/namespace/key and return no raw values)",
+    "- `shopify.metaobject_definitions.list/get` (requires `read_metaobject_definitions`) and `shopify.metaobjects.list/get` (requires `read_metaobjects`; value presence/length only)",
     "",
     "`shopify.health` returns lightweight process memory diagnostics for reconnect/OOM triage without token-store contents. `mcp serve` also emits start/stop lifecycle JSON to stderr, keeping JSON-RPC stdout clean.",
     "",
@@ -2159,6 +2164,41 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
     listMarketingEvents: async ({ shop, first, after, query }) => {
       const reportRuntime = await reportClientFor(shop, ['read_marketing_events']);
       const report = await listMarketingEvents({ client: reportRuntime.client, first, after, query });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listMetafieldDefinitions: async ({ shop, ownerType, namespace, key, first, after }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_products']);
+      const report = await listMetafieldDefinitions({ client: reportRuntime.client, ownerType, namespace, key, first, after });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    getMetafieldDefinition: async ({ shop, ownerType, namespace, key }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_products']);
+      const report = await getMetafieldDefinition({ client: reportRuntime.client, ownerType, namespace, key });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listResourceMetafields: async ({ shop, ownerId, namespace, key, first, after }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_products']);
+      const report = await listResourceMetafields({ client: reportRuntime.client, ownerId, namespace, key, first, after });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listMetaobjectDefinitions: async ({ shop, type, first, after }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_metaobject_definitions']);
+      const report = await listMetaobjectDefinitions({ client: reportRuntime.client, type, first, after });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    getMetaobjectDefinition: async ({ shop, type }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_metaobject_definitions']);
+      const report = await getMetaobjectDefinition({ client: reportRuntime.client, type });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listMetaobjects: async ({ shop, type, first, after }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_metaobjects']);
+      const report = await listMetaobjects({ client: reportRuntime.client, type, first, after });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    getMetaobject: async ({ shop, id }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_metaobjects']);
+      const report = await getMetaobject({ client: reportRuntime.client, id });
       return { shop: reportRuntime.shop, ...report };
     },
   };

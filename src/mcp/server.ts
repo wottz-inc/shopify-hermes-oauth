@@ -127,6 +127,14 @@ export interface MarketingEventsListToolArgs {
   readonly query?: string;
 }
 
+export interface MetafieldDefinitionsListToolArgs { readonly shop: string; readonly ownerType: string; readonly namespace?: string; readonly key?: string; readonly first?: number; readonly after?: string }
+export interface MetafieldDefinitionGetToolArgs { readonly shop: string; readonly ownerType: string; readonly namespace: string; readonly key: string }
+export interface ResourceMetafieldsListToolArgs { readonly shop: string; readonly ownerId: string; readonly namespace?: string; readonly key?: string; readonly first?: number; readonly after?: string }
+export interface MetaobjectDefinitionsListToolArgs { readonly shop: string; readonly type?: string; readonly first?: number; readonly after?: string }
+export interface MetaobjectDefinitionGetToolArgs { readonly shop: string; readonly type: string }
+export interface MetaobjectsListToolArgs { readonly shop: string; readonly type: string; readonly first?: number; readonly after?: string }
+export interface MetaobjectGetToolArgs { readonly shop: string; readonly id: string }
+
 export interface BulkStartToolArgs {
   readonly shop: string;
   readonly templateId: string;
@@ -173,6 +181,13 @@ export interface McpServerDependencies {
   readonly listDiscounts: (args: DiscountListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getDiscount: (args: DiscountGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listMarketingEvents: (args: MarketingEventsListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listMetafieldDefinitions: (args: MetafieldDefinitionsListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getMetafieldDefinition: (args: MetafieldDefinitionGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listResourceMetafields: (args: ResourceMetafieldsListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listMetaobjectDefinitions: (args: MetaobjectDefinitionsListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getMetaobjectDefinition: (args: MetaobjectDefinitionGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listMetaobjects: (args: MetaobjectsListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getMetaobject: (args: MetaobjectGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly startBulkOperation: (args: BulkStartToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getCurrentBulkOperation: (args: BulkStatusToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly fetchBulkOperationResult: (args: BulkResultToolArgs) => Promise<McpToolOutput> | McpToolOutput;
@@ -419,6 +434,41 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
         result = sanitizeToolOutput(await callDependency(() => deps.listMarketingEvents(readMarketingEventsListArgs(args))));
         break;
       }
+      case 'shopify.metafield_definitions.list': {
+        validateExactArgs(args, ['shop', 'ownerType', 'namespace', 'key', 'first', 'after']);
+        result = sanitizeToolOutput(await callDependency(() => deps.listMetafieldDefinitions(readMetafieldDefinitionsListArgs(args))));
+        break;
+      }
+      case 'shopify.metafield_definitions.get': {
+        validateExactArgs(args, ['shop', 'ownerType', 'namespace', 'key']);
+        result = sanitizeToolOutput(await callDependency(() => deps.getMetafieldDefinition(readMetafieldDefinitionGetArgs(args))));
+        break;
+      }
+      case 'shopify.resource_metafields.list': {
+        validateExactArgs(args, ['shop', 'ownerId', 'namespace', 'key', 'first', 'after']);
+        result = sanitizeToolOutput(await callDependency(() => deps.listResourceMetafields(readResourceMetafieldsListArgs(args))));
+        break;
+      }
+      case 'shopify.metaobject_definitions.list': {
+        validateExactArgs(args, ['shop', 'type', 'first', 'after']);
+        result = sanitizeToolOutput(await callDependency(() => deps.listMetaobjectDefinitions(readMetaobjectDefinitionsListArgs(args))));
+        break;
+      }
+      case 'shopify.metaobject_definitions.get': {
+        validateExactArgs(args, ['shop', 'type']);
+        result = sanitizeToolOutput(await callDependency(() => deps.getMetaobjectDefinition({ shop: readRequiredString(args, 'shop'), type: readRequiredString(args, 'type') })));
+        break;
+      }
+      case 'shopify.metaobjects.list': {
+        validateExactArgs(args, ['shop', 'type', 'first', 'after']);
+        result = sanitizeToolOutput(await callDependency(() => deps.listMetaobjects(readMetaobjectsListArgs(args))));
+        break;
+      }
+      case 'shopify.metaobjects.get': {
+        validateExactArgs(args, ['shop', 'id']);
+        result = sanitizeToolOutput(await callDependency(() => deps.getMetaobject({ shop: readRequiredString(args, 'shop'), id: readRequiredString(args, 'id') })));
+        break;
+      }
       default:
         throw new McpToolError();
     }
@@ -467,7 +517,12 @@ function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, err
     ...(name === 'shopify.bulk.start' ? readAuditTemplate(args) : {}),
     ...(name === 'shopify.bulk.result' ? readAuditResultLimits(args) : {}),
     ...(name === 'shopify.report_inventory' ? readAuditThreshold(args) : {}),
-    ...(name === 'shopify.customers.list' || name === 'shopify.collections.list' || name === 'shopify.locations.list' || name === 'shopify.discounts.list' || name === 'shopify.marketing_events.list' ? readAuditBoundedList(args) : {}),
+    ...(name === 'shopify.customers.list' || name === 'shopify.collections.list' || name === 'shopify.locations.list' || name === 'shopify.discounts.list' || name === 'shopify.marketing_events.list' || name === 'shopify.metafield_definitions.list' || name === 'shopify.resource_metafields.list' || name === 'shopify.metaobject_definitions.list' || name === 'shopify.metaobjects.list' ? readAuditBoundedList(args) : {}),
+    ...(name === 'shopify.metafield_definitions.list' || name === 'shopify.resource_metafields.list' ? readAuditMetafieldFilters(args) : {}),
+    ...(name === 'shopify.metafield_definitions.get' ? readAuditMetafieldGet(args) : {}),
+    ...(name === 'shopify.metaobject_definitions.list' || name === 'shopify.metaobjects.list' ? readAuditMetaobjectList(args) : {}),
+    ...(name === 'shopify.metaobject_definitions.get' ? readAuditMetaobjectDefinitionGet(args) : {}),
+    ...(name === 'shopify.metaobjects.get' ? readAuditMetaobjectGet(args) : {}),
     ...(name === 'shopify.discounts.get' ? readAuditDiscountGet(args) : {}),
     ...(name === 'shopify.inventory.levels.list' ? readAuditInventoryLevelsList(args) : {}),
     ...(name === 'shopify.orders.get' ? readAuditOrderGet(args) : {}),
@@ -588,6 +643,35 @@ function readAuditBoundedList(args: unknown): { readonly first?: number; readonl
     ...(isRecord(args) && typeof args.query === 'string' ? { queryPresent: true } : {}),
     ...(isRecord(args) && typeof args.after === 'string' ? { afterPresent: true } : {}),
   };
+}
+
+function readAuditMetafieldFilters(args: unknown): { readonly ownerType?: string; readonly ownerIdPresent?: boolean; readonly namespacePresent?: boolean; readonly keyPresent?: boolean } {
+  return {
+    ...(isRecord(args) && typeof args.ownerType === 'string' ? { ownerType: sanitizeAuditString(args.ownerType) } : {}),
+    ...(isRecord(args) && typeof args.ownerId === 'string' ? { ownerIdPresent: true } : {}),
+    ...(isRecord(args) && typeof args.namespace === 'string' ? { namespacePresent: true } : {}),
+    ...(isRecord(args) && typeof args.key === 'string' ? { keyPresent: true } : {}),
+  };
+}
+
+function readAuditMetafieldGet(args: unknown): { readonly ownerType?: string; readonly namespacePresent?: boolean; readonly keyPresent?: boolean } {
+  return {
+    ...(isRecord(args) && typeof args.ownerType === 'string' ? { ownerType: sanitizeAuditString(args.ownerType) } : {}),
+    ...(isRecord(args) && typeof args.namespace === 'string' ? { namespacePresent: true } : {}),
+    ...(isRecord(args) && typeof args.key === 'string' ? { keyPresent: true } : {}),
+  };
+}
+
+function readAuditMetaobjectList(args: unknown): { readonly typePresent?: boolean } {
+  return isRecord(args) && typeof args.type === 'string' ? { typePresent: true } : {};
+}
+
+function readAuditMetaobjectDefinitionGet(args: unknown): { readonly typePresent?: boolean } {
+  return readAuditMetaobjectList(args);
+}
+
+function readAuditMetaobjectGet(args: unknown): { readonly idPresent?: boolean } {
+  return isRecord(args) && typeof args.id === 'string' ? { idPresent: true } : {};
 }
 
 function readAuditInventoryLevelsList(args: unknown): { readonly first?: number; readonly afterPresent?: boolean; readonly itemIdPresent?: boolean; readonly locationIdPresent?: boolean } {
@@ -925,6 +1009,22 @@ function readOptionalSafeSearchQuery(args: unknown): Record<string, string> {
   return query;
 }
 
+
+function readMetafieldDefinitionsListArgs(args: unknown): MetafieldDefinitionsListToolArgs {
+  return { shop: readRequiredString(args, 'shop'), ownerType: readRequiredString(args, 'ownerType'), ...readOptionalStringProperty(args, 'namespace'), ...readOptionalStringProperty(args, 'key'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalStringProperty(args, 'after') };
+}
+function readMetafieldDefinitionGetArgs(args: unknown): MetafieldDefinitionGetToolArgs {
+  return { shop: readRequiredString(args, 'shop'), ownerType: readRequiredString(args, 'ownerType'), namespace: readRequiredString(args, 'namespace'), key: readRequiredString(args, 'key') };
+}
+function readResourceMetafieldsListArgs(args: unknown): ResourceMetafieldsListToolArgs {
+  return { shop: readRequiredString(args, 'shop'), ownerId: readRequiredString(args, 'ownerId'), ...readOptionalStringProperty(args, 'namespace'), ...readOptionalStringProperty(args, 'key'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalStringProperty(args, 'after') };
+}
+function readMetaobjectDefinitionsListArgs(args: unknown): MetaobjectDefinitionsListToolArgs {
+  return { shop: readRequiredString(args, 'shop'), ...readOptionalStringProperty(args, 'type'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalStringProperty(args, 'after') };
+}
+function readMetaobjectsListArgs(args: unknown): MetaobjectsListToolArgs {
+  return { shop: readRequiredString(args, 'shop'), type: readRequiredString(args, 'type'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalStringProperty(args, 'after') };
+}
 function readBulkResultArgs(args: unknown): BulkResultToolArgs {
   return {
     shop: readRequiredString(args, 'shop'),

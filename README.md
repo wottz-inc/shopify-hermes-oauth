@@ -193,6 +193,17 @@ The MCP allowlist includes read-only discounts/marketing visibility:
 
 Discount tools require `read_discounts`; marketing event tools require `read_marketing_events`. Individual discount codes, customer/order data, usage attribution, customerSelection details, customer/order/conversion attribution, raw Admin GraphQL input, and all mutations are intentionally omitted. Marketing event `manageUrl`/`previewUrl` query strings are redacted before output. Audit metadata records only shop/tool, `first`, and whether query/cursor or discount ID inputs were present, not raw IDs, cursors, titles, codes, or URLs.
 
+## Curated custom data tools
+
+The MCP allowlist includes read-only custom data schema/value summary tools. These differ from standard reports: reports summarize common Shopify objects for broad operational answers, while custom data tools expose store-specific metafield/metaobject schemas plus bounded value presence/length for targeted questions about merchant-defined data.
+
+- `shopify.metafield_definitions.list` / `shopify.metafield_definitions.get` — inspect metafield definitions by required `ownerType` and optional/required `namespace` and `key`.
+- `shopify.resource_metafields.list` — list metafields for one supported resource GID with optional `namespace`/`key` filters.
+- `shopify.metaobject_definitions.list` / `shopify.metaobject_definitions.get` — inspect metaobject definitions by type with bounded field definition summaries.
+- `shopify.metaobjects.list` / `shopify.metaobjects.get` — inspect metaobjects of one type or one Metaobject GID with schema-aware field value presence/length only.
+
+Metafield namespace/key, owner type, metaobject type, and GID inputs are strictly validated. List tools default to 25 and cap `first` at 50. The tools use curated queries only: no unrestricted raw Admin GraphQL MCP tool, no writes/mutations, no `jsonValue`, no unbounded nested pagination, and safe non-secret errors/audit metadata. Metafield definition/resource metafield tools currently require `read_products`; metaobject definition tools require `read_metaobject_definitions`; metaobject value tools require `read_metaobjects`.
+
 ## Curated bulk export tools
 
 The MCP allowlist includes template-only read-oriented Shopify Admin GraphQL bulk operation helpers for large exports:

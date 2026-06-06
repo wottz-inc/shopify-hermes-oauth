@@ -150,6 +150,13 @@ function createDeps(): McpServerDependencies {
       query,
       pii: { redactedFields: ['customer', 'orders', 'conversions', 'utm/query parameters'], urls: 'query_redacted' },
     }),
+    listMetafieldDefinitions: ({ shop, ownerType, namespace, key, first }) => ({ shop, metafieldDefinitions: [{ namespace: namespace ?? 'custom', key: key ?? 'care', ownerType, name: 'Care', type: { name: 'single_line_text_field' }, validations: [] }], pageInfo: { hasNextPage: false }, schema: { ownerType, namespace, key }, first }),
+    getMetafieldDefinition: ({ shop, ownerType, namespace, key }) => ({ shop, metafieldDefinition: { namespace, key, ownerType, name: 'Care', type: { name: 'single_line_text_field' }, validations: [] }, schema: { ownerType, namespace, key } }),
+    listResourceMetafields: ({ shop, ownerId, namespace, key, first }) => ({ shop, owner: { id: ownerId, type: 'Product' }, metafields: [{ id: 'gid://shopify/Metafield/1', namespace: namespace ?? 'custom', key: key ?? 'care', type: 'single_line_text_field', valuePresent: true, valueLength: 9 }], pageInfo: { hasNextPage: false }, schema: { namespace, key }, first }),
+    listMetaobjectDefinitions: ({ shop, type, first }) => ({ shop, metaobjectDefinitions: [{ id: 'gid://shopify/MetaobjectDefinition/1', type: type ?? 'designer_profile', name: 'Designer profile', fieldDefinitions: [] }], pageInfo: { hasNextPage: false }, schema: type === undefined ? undefined : { type }, first }),
+    getMetaobjectDefinition: ({ shop, type }) => ({ shop, metaobjectDefinition: { id: 'gid://shopify/MetaobjectDefinition/1', type, name: 'Designer profile', fieldDefinitions: [] }, schema: { type } }),
+    listMetaobjects: ({ shop, type, first }) => ({ shop, metaobjects: [{ id: 'gid://shopify/Metaobject/1', handle: 'ada', type, fields: [{ key: 'bio', type: 'multi_line_text_field', valuePresent: true, valueLength: 3 }] }], pageInfo: { hasNextPage: false }, schema: { type }, first }),
+    getMetaobject: ({ shop, id }) => ({ shop, metaobject: { id, handle: 'ada', type: 'designer_profile', fields: [{ key: 'bio', type: 'multi_line_text_field', valuePresent: true, valueLength: 3 }] } }),
     startBulkOperation: ({ shop, templateId }) => ({
       shop,
       templateId,
@@ -204,6 +211,13 @@ describe('curated MCP server', () => {
       'shopify.discounts.list',
       'shopify.discounts.get',
       'shopify.marketing_events.list',
+      'shopify.metafield_definitions.list',
+      'shopify.metafield_definitions.get',
+      'shopify.resource_metafields.list',
+      'shopify.metaobject_definitions.list',
+      'shopify.metaobject_definitions.get',
+      'shopify.metaobjects.list',
+      'shopify.metaobjects.get',
     ]);
   });
 
@@ -328,6 +342,13 @@ describe('curated MCP server', () => {
       first: 10,
       query: 'event_type:ad',
     });
+    await expect(callTool('shopify.metafield_definitions.list', { shop: 'alpha.myshopify.com', ownerType: 'PRODUCT', namespace: 'custom', key: 'care', first: 10 }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metafieldDefinitions: [{ key: 'care' }] });
+    await expect(callTool('shopify.metafield_definitions.get', { shop: 'alpha.myshopify.com', ownerType: 'PRODUCT', namespace: 'custom', key: 'care' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metafieldDefinition: { key: 'care' } });
+    await expect(callTool('shopify.resource_metafields.list', { shop: 'alpha.myshopify.com', ownerId: 'gid://shopify/Product/1', first: 10 }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', owner: { id: 'gid://shopify/Product/1' } });
+    await expect(callTool('shopify.metaobject_definitions.list', { shop: 'alpha.myshopify.com', type: 'designer_profile', first: 10 }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metaobjectDefinitions: [{ type: 'designer_profile' }] });
+    await expect(callTool('shopify.metaobject_definitions.get', { shop: 'alpha.myshopify.com', type: 'designer_profile' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metaobjectDefinition: { type: 'designer_profile' } });
+    await expect(callTool('shopify.metaobjects.list', { shop: 'alpha.myshopify.com', type: 'designer_profile', first: 10 }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metaobjects: [{ id: 'gid://shopify/Metaobject/1' }] });
+    await expect(callTool('shopify.metaobjects.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Metaobject/1' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metaobject: { id: 'gid://shopify/Metaobject/1' } });
     await expect(callTool('shopify.bulk.start', { shop: 'alpha.myshopify.com', templateId: 'products-basic' }, deps)).resolves.toMatchObject({
       shop: 'alpha.myshopify.com',
       templateId: 'products-basic',
@@ -431,6 +452,13 @@ describe('curated MCP server', () => {
       shop: 'alpha.myshopify.com',
       marketingEvents: [{ id: 'gid://shopify/MarketingEvent/1' }],
     });
+    await expect(callTool('shopify.metafield_definitions.list', { shop: 'alpha.myshopify.com', ownerType: 'PRODUCT', namespace: 'custom', key: 'care', first: 10, after: 'metafield-definition-cursor' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metafieldDefinitions: [{ key: 'care' }] });
+    await expect(callTool('shopify.metafield_definitions.get', { shop: 'alpha.myshopify.com', ownerType: 'PRODUCT', namespace: 'custom', key: 'care' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metafieldDefinition: { key: 'care' } });
+    await expect(callTool('shopify.resource_metafields.list', { shop: 'alpha.myshopify.com', ownerId: 'gid://shopify/Product/1', namespace: 'custom', key: 'care', first: 10, after: 'resource-metafield-cursor' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', owner: { id: 'gid://shopify/Product/1' } });
+    await expect(callTool('shopify.metaobject_definitions.list', { shop: 'alpha.myshopify.com', type: 'designer_profile', first: 10, after: 'definition-cursor' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metaobjectDefinitions: [{ type: 'designer_profile' }] });
+    await expect(callTool('shopify.metaobject_definitions.get', { shop: 'alpha.myshopify.com', type: 'designer_profile' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metaobjectDefinition: { type: 'designer_profile' } });
+    await expect(callTool('shopify.metaobjects.list', { shop: 'alpha.myshopify.com', type: 'designer_profile', first: 10, after: 'metaobject-cursor' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metaobjects: [{ id: 'gid://shopify/Metaobject/1' }] });
+    await expect(callTool('shopify.metaobjects.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Metaobject/1' }, deps)).resolves.toMatchObject({ shop: 'alpha.myshopify.com', metaobject: { id: 'gid://shopify/Metaobject/1' } });
 
     expect(auditEvents).toEqual([
       {
@@ -568,6 +596,48 @@ describe('curated MCP server', () => {
         shop: 'alpha.myshopify.com',
         result: 'success',
         metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.marketing_events.list', first: 10, queryPresent: true, afterPresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.metafield_definitions.list', first: 10, afterPresent: true, ownerType: 'PRODUCT', namespacePresent: true, keyPresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.metafield_definitions.get', ownerType: 'PRODUCT', namespacePresent: true, keyPresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.resource_metafields.list', first: 10, afterPresent: true, ownerIdPresent: true, namespacePresent: true, keyPresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.metaobject_definitions.list', first: 10, afterPresent: true, typePresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.metaobject_definitions.get', typePresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.metaobjects.list', first: 10, afterPresent: true, typePresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.metaobjects.get', idPresent: true },
       },
     ]);
     expect(JSON.stringify(auditEvents)).not.toContain('SKU');
