@@ -7,6 +7,7 @@ export type McpToolName =
   | 'shopify.health'
   | 'shopify.list_shops'
   | 'shopify.verify_shop'
+  | 'shopify.store.diagnostics'
   | 'shopify.report_products'
   | 'shopify.report_orders'
   | 'shopify.report_inventory'
@@ -376,6 +377,25 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
       mcp: {
         toolName: 'shopify.verify_shop',
         description: 'Verify a stored Shopify shop token and return safe shop metadata.',
+        inputSchema: SHOP_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'shops.store_diagnostics.read',
+    domain: 'shops',
+    operationName: 'StoreAppDiagnostics',
+    requiredScopes: [],
+    access: 'diagnostic',
+    riskLevel: 'diagnostic_low',
+    pagination: 'Single curated store/app diagnostics query plus optional policy presence query when read_content is granted; no raw GraphQL input.',
+    cost: 'Low-cost shop/currentAppInstallation query; optional low-cost policy URL/title presence query only.',
+    auditEvent: 'shops.diagnostics',
+    surfaces: {
+      cli: { command: 'shopify-hermes-oauth shops diagnostics <shop>' },
+      mcp: {
+        toolName: 'shopify.store.diagnostics',
+        description: 'Return safe Shopify store, app access, scope drift, and policy-presence diagnostics.',
         inputSchema: SHOP_SCHEMA,
       },
     },

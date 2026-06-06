@@ -143,6 +143,23 @@ export type {
   LocationsListResult,
 } from './inventory/details.js';
 
+export {
+  STORE_APP_DIAGNOSTICS_QUERY,
+  STORE_PRIVACY_DIAGNOSTICS_QUERY,
+  StoreDiagnosticsError,
+  generateStoreDiagnostics,
+} from './shops/diagnostics.js';
+export type {
+  StoreDiagnosticsAccess,
+  StoreDiagnosticsApp,
+  StoreDiagnosticsGraphqlClient,
+  StoreDiagnosticsOptions,
+  StoreDiagnosticsPolicy,
+  StoreDiagnosticsPrivacy,
+  StoreDiagnosticsResult,
+  StoreDiagnosticsStore,
+} from './shops/diagnostics.js';
+
 export { OrdersReportError } from './reports/orders.js';
 
 export {
