@@ -31,7 +31,7 @@ If neither tunnel tool is installed, it does not start a misleading local-only O
 - Hermes-native: uses `HERMES_HOME`, `~/.hermes/.env`, `hermes mcp add`, and an optional Hermes skill.
 - Minimal human setup: automate everything except unavoidable Shopify app creation/callback approval/store install approval.
 - Read-only by default.
-- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, `read_locations`. Curated customer, webhook, and fulfillment-order visibility tools additionally require `read_customers` / `read_webhooks` / the relevant fulfillment-order read scopes on stores where those tools are enabled.
+- Least-privilege default OAuth scopes for v0.1 reports/MCP: `read_products`, `read_orders`, `read_inventory`, `read_locations`. Curated customer, webhook, fulfillment-order, discount, and marketing-event tools additionally require `read_customers` / `read_webhooks` / fulfillment-order read scopes / `read_discounts` / `read_marketing_events` on stores where enabled.
 - Required Admin API Scopes are the Shopify app scopes that grant Admin API access for OAuth installs. Optional scopes are not a substitute for required Admin API scopes; optional-only app configuration can fail the callback with Shopify's `At least one scope is required` validation.
 - Use the store's canonical Admin `*.myshopify.com` domain for `/auth/start?shop=...`. If Shopify redirects back with a different canonical shop domain, retry the install using the callback shop domain.
 - No required private infrastructure, hosted forge, hosted service, or third-party secret manager.
@@ -182,6 +182,16 @@ The MCP allowlist includes read-only, privacy-aware customer tools:
 - `shopify.customers.get` — inspect one customer by stable `gid://shopify/Customer/...` ID.
 
 These tools require `read_customers`. Returned customer fields intentionally minimize PII: full email is reduced to `emailDomain`, phone is reduced to `phonePresent`, addresses/notes/tags/full email/full phone are not returned, and audit metadata records only shop, tool name, page bounds, and whether query/cursor inputs were present. Tag, note, metafield, or other customer updates are intentionally out of scope for this read-only surface.
+
+## Curated discounts and marketing event tools
+
+The MCP allowlist includes read-only discounts/marketing visibility:
+
+- `shopify.discounts.list` — list/search discounts with bounded pagination (`first` defaults to 25 and is capped at 50), safe fields, `codesCount.count` only, and aggregate summary counts.
+- `shopify.discounts.get` — inspect one `gid://shopify/DiscountNode/...` by stable ID with safe summary fields only.
+- `shopify.marketing_events.list` — list/search marketing events with shallow fields and bounded pagination (`first` defaults to 25 and is capped at 50).
+
+Discount tools require `read_discounts`; marketing event tools require `read_marketing_events`. Individual discount codes, customer/order data, usage attribution, customerSelection details, customer/order/conversion attribution, raw Admin GraphQL input, and all mutations are intentionally omitted. Marketing event `manageUrl`/`previewUrl` query strings are redacted before output. Audit metadata records only shop/tool, `first`, and whether query/cursor or discount ID inputs were present, not raw IDs, cursors, titles, codes, or URLs.
 
 ## Curated bulk export tools
 

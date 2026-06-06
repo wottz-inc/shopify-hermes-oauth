@@ -45,6 +45,9 @@ describe('Admin Graph capability registry and tool policy model', () => {
       'fulfillment.orders.get.read',
       'customers.list.read',
       'customers.get.read',
+      'discounts.list.read',
+      'discounts.get.read',
+      'marketing.events.list.read',
     ]);
 
     expect(expectCapability('shops.verify.read')).toMatchObject({
@@ -263,6 +266,44 @@ describe('Admin Graph capability registry and tool policy model', () => {
       auditEvent: 'customers.get',
       surfaces: { mcp: { toolName: 'shopify.customers.get' } },
     });
+
+    const discountsList = expectCapability('discounts.list.read');
+    expect(discountsList).toMatchObject({
+      domain: 'discounts',
+      operationName: 'Discounts',
+      requiredScopes: ['read_discounts'],
+      access: 'read',
+      riskLevel: 'read_financial',
+      auditEvent: 'discounts.list',
+      surfaces: { mcp: { toolName: 'shopify.discounts.list' } },
+    });
+    expect(discountsList.pagination).toContain('1..50');
+    expect(discountsList.cost).toContain('codesCount only');
+    expect(discountsList.cost).toContain('no raw GraphQL input');
+    expect(discountsList.cost).toContain('individual codes');
+
+    expect(expectCapability('discounts.get.read')).toMatchObject({
+      domain: 'discounts',
+      operationName: 'Discount',
+      requiredScopes: ['read_discounts'],
+      access: 'read',
+      riskLevel: 'read_financial',
+      auditEvent: 'discounts.get',
+      surfaces: { mcp: { toolName: 'shopify.discounts.get' } },
+    });
+
+    const marketingEvents = expectCapability('marketing.events.list.read');
+    expect(marketingEvents).toMatchObject({
+      domain: 'marketing',
+      operationName: 'MarketingEvents',
+      requiredScopes: ['read_marketing_events'],
+      access: 'read',
+      riskLevel: 'read_financial',
+      auditEvent: 'marketing.events.list',
+      surfaces: { mcp: { toolName: 'shopify.marketing_events.list' } },
+    });
+    expect(marketingEvents.pagination).toContain('1..50');
+    expect(marketingEvents.cost).toContain('redacts URL query strings');
   });
 
   it('keeps MCP tool registration backed by the registry allowlist', () => {

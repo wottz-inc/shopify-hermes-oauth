@@ -92,31 +92,11 @@ v0.1 ceilings:
 - Orders report: shows at most the first 50 line items per order and marks omitted line items.
 - Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels.
 
-Use `shopify.products.get`, `shopify.collections.list/get`, `shopify.locations.list/get`, `shopify.inventory.items.get`, `shopify.inventory.levels.list`, `shopify.orders.get`, and `shopify.fulfillment_orders.list/get` for targeted lookups. Lookup caps: product variants 25, media 10, metafield metadata 20; collection page 50/detail products 25/metafields 20; inventory locations/levels page 50; inventory levels require exactly one of inventoryItemId or locationId; order line items 25, fulfillments 10, refunds 10; fulfillment order page 50 and line items 25. Metafields expose namespace/key/type plus value presence/length, not raw values. Inventory lookups omit location address/contact fields, metafields, and adjustment history. `shopify.orders.get` omits customer contact/address, notes/tags, tracking numbers/URLs, and transactions. `shopify.fulfillment_orders.list/get` omits destination address, tracking numbers/URLs, customer contact, notes/tags, metafields, and transactions. If limits hit, narrow the scope or use a custom paginated Shopify Admin GraphQL workflow.
+Use `shopify.products.get`, `shopify.collections.list/get`, `shopify.locations.list/get`, `shopify.inventory.items.get`, `shopify.inventory.levels.list`, `shopify.orders.get`, and `shopify.fulfillment_orders.list/get` for targeted lookups. Lookup caps: product variants 25, media 10, metafield metadata 20; collection page 50/detail products 25/metafields 20; inventory locations/levels page 50; inventory levels require exactly one of inventoryItemId or locationId; order line items 25, fulfillments 10, refunds 10; fulfillment order page 50 and line items 25. Metafields expose namespace/key/type plus value presence/length, not raw values. `shopify.orders.get` omits customer contact/address, notes/tags, tracking numbers/URLs, and transactions. Fulfillment tools omit destination/tracking/contact, notes/tags, metafields, and transactions. If limits hit, narrow the scope or use a custom paginated Shopify Admin GraphQL workflow.
 
 ## MCP tools
 
-After `shopify-hermes-oauth hermes install`, MCP tools:
+MCP tools include `shopify.health`, `shopify.list_shops`, `shopify.verify_shop`, `shopify.report_products`, `shopify.report_orders`, `shopify.report_inventory`, `shopify.products.get`, `shopify.collections.list`, `shopify.collections.get`, `shopify.locations.list`, `shopify.locations.get`, `shopify.inventory.items.get`, `shopify.inventory.levels.list`, `shopify.orders.get`, `shopify.fulfillment_orders.list/get`, `shopify.webhooks.list/get`, `shopify.customers.list/get`, `shopify.discounts.list/get`, and `shopify.marketing_events.list`.
 
-- `shopify.health`
-- `shopify.list_shops`
-- `shopify.verify_shop`
-- `shopify.report_products`
-- `shopify.report_orders`
-- `shopify.report_inventory`
-- `shopify.products.get`
-- `shopify.collections.list`
-- `shopify.collections.get`
-- `shopify.locations.list`
-- `shopify.locations.get`
-- `shopify.inventory.items.get`
-- `shopify.inventory.levels.list`
-- `shopify.orders.get`
-- `shopify.fulfillment_orders.list`
-- `shopify.fulfillment_orders.get`
-- `shopify.webhooks.list/get`
-- `shopify.customers.list/get`
-
-`shopify.health` returns memory diagnostics. `mcp serve` emits lifecycle JSON to stderr.
-Webhook tools require `read_webhooks`; no create/update/delete until gated. Customer tools require `read_customers`, cap `first` at 50, return `emailDomain`/`phonePresent`, omit addresses/notes/tags, and audit no raw query/PII.
+`shopify.health` returns memory diagnostics. `mcp serve` emits lifecycle JSON to stderr. Webhook tools require `read_webhooks`; customer tools require `read_customers`; discount tools require `read_discounts`; marketing event tools require `read_marketing_events`. Discount outputs omit individual codes/customer/order/attribution/customerSelection details; marketing event outputs redact manage/preview URL query strings.
 App Automation Token CI/CD: `SHOPIFY_APP_AUTOMATION_TOKEN`; see `docs/shopify-app-automation-token-ci-cd.md`.

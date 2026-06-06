@@ -185,6 +185,23 @@ describe('SAFETY-CRITICAL README documentation contracts', () => {
     ]);
   });
 
+  it('documents curated discounts and marketing event tools with safe omissions', () => {
+    const markdown = readReadme();
+
+    expectAllPresent(markdown, [
+      '## Curated discounts and marketing event tools',
+      '`shopify.discounts.list`',
+      '`shopify.discounts.get`',
+      '`shopify.marketing_events.list`',
+      '`codesCount.count` only',
+      '`read_discounts`',
+      '`read_marketing_events`',
+      'Individual discount codes, customer/order data, usage attribution, customerSelection details, customer/order/conversion attribution, raw Admin GraphQL input, and all mutations are intentionally omitted',
+      'Marketing event `manageUrl`/`previewUrl` query strings are redacted',
+      'not raw IDs, cursors, titles, codes, or URLs',
+    ]);
+  });
+
   it('documents source installs and Hermes profile-local npm PATH expectations', () => {
     const markdown = readReadme();
 
