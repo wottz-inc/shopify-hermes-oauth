@@ -198,6 +198,27 @@ export type {
   PageInfo,
 } from './custom-data/index.js';
 
+export {
+  LOCALES_API_LIMITATION,
+  MARKETS_API_LIMITATION,
+  MARKETS_QUERY,
+  SHOP_LOCALES_QUERY,
+  MarketsLocalizationSurfaceError,
+  listMarkets,
+  listShopLocales,
+} from './markets-localization/index.js';
+export type {
+  ListMarketsOptions,
+  ListMarketsResult,
+  ListShopLocalesOptions,
+  ListShopLocalesResult,
+  MarketCurrencySummary,
+  MarketRegionSummary,
+  MarketSummary,
+  MarketsLocalizationGraphqlClient,
+  ShopLocaleSummary,
+} from './markets-localization/index.js';
+
 export { ShopVerificationError, verifyShop } from './shops/verify.js';
 export type { VerifyShopOptions, VerifyShopResult } from './shops/verify.js';
 

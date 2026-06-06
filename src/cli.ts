@@ -12,6 +12,7 @@ import { BulkOperationError, cancelBulkOperation, fetchBulkOperationResult, getB
 import { getCollection, getProductDetail, listCollections } from './catalog/details.js';
 import { listDiscounts, getDiscount, listMarketingEvents } from './discounts-marketing/index.js';
 import { getMetafieldDefinition, getMetaobject, getMetaobjectDefinition, listMetafieldDefinitions, listMetaobjectDefinitions, listMetaobjects, listResourceMetafields } from './custom-data/index.js';
+import { listMarkets, listShopLocales } from './markets-localization/index.js';
 import { getFulfillmentOrder, listFulfillmentOrders } from './fulfillment/details.js';
 import { getInventoryItem, getLocation, listInventoryLevels, listLocations } from './inventory/details.js';
 import { getOrderDetail } from './orders/details.js';
@@ -1310,6 +1311,8 @@ function localHermesSkillContent(): string {
     "- `shopify.customers.get` (requires `read_customers`; returns one customer by GID with the same minimal PII policy)",
     "- `shopify.discounts.list/get` (requires `read_discounts`; omits individual codes/customer/order/attribution/customerSelection details)",
     "- `shopify.marketing_events.list` (requires `read_marketing_events`; redacts manage/preview URL query strings)",
+    "- `shopify.markets.list` (requires `read_markets`; bounded market/region/currency summary; Shopify may gate Markets by plan/API/app approval)",
+    "- `shopify.localization.locales.list` (requires `read_locales`; locale names/status only, no translations; unsupported stores return a safe limitation object)",
     "- `shopify.metafield_definitions.list/get` and `shopify.resource_metafields.list` (require `read_products`; validate owner type/namespace/key and return no raw values)",
     "- `shopify.metaobject_definitions.list/get` (requires `read_metaobject_definitions`) and `shopify.metaobjects.list/get` (requires `read_metaobjects`; value presence/length only)",
     "",
@@ -2164,6 +2167,16 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
     listMarketingEvents: async ({ shop, first, after, query }) => {
       const reportRuntime = await reportClientFor(shop, ['read_marketing_events']);
       const report = await listMarketingEvents({ client: reportRuntime.client, first, after, query });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listMarkets: async ({ shop, first, after }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_markets']);
+      const report = await listMarkets({ client: reportRuntime.client, first, after });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listShopLocales: async ({ shop }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_locales']);
+      const report = await listShopLocales({ client: reportRuntime.client });
       return { shop: reportRuntime.shop, ...report };
     },
     listMetafieldDefinitions: async ({ shop, ownerType, namespace, key, first, after }) => {
