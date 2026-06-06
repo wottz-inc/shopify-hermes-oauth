@@ -108,6 +108,25 @@ export interface CustomerGetToolArgs {
   readonly id: string;
 }
 
+export interface DiscountListToolArgs {
+  readonly shop: string;
+  readonly first?: number;
+  readonly after?: string;
+  readonly query?: string;
+}
+
+export interface DiscountGetToolArgs {
+  readonly shop: string;
+  readonly id: string;
+}
+
+export interface MarketingEventsListToolArgs {
+  readonly shop: string;
+  readonly first?: number;
+  readonly after?: string;
+  readonly query?: string;
+}
+
 export interface BulkStartToolArgs {
   readonly shop: string;
   readonly templateId: string;
@@ -151,6 +170,9 @@ export interface McpServerDependencies {
   readonly getFulfillmentOrder: (args: FulfillmentOrderGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly listCustomers: (args: CustomerListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getCustomer: (args: CustomerGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listDiscounts: (args: DiscountListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly getDiscount: (args: DiscountGetToolArgs) => Promise<McpToolOutput> | McpToolOutput;
+  readonly listMarketingEvents: (args: MarketingEventsListToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly startBulkOperation: (args: BulkStartToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly getCurrentBulkOperation: (args: BulkStatusToolArgs) => Promise<McpToolOutput> | McpToolOutput;
   readonly fetchBulkOperationResult: (args: BulkResultToolArgs) => Promise<McpToolOutput> | McpToolOutput;
@@ -382,6 +404,21 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
         result = sanitizeToolOutput(await callDependency(() => deps.getCustomer(customerArgs)));
         break;
       }
+      case 'shopify.discounts.list': {
+        validateExactArgs(args, ['shop', 'first', 'after', 'query']);
+        result = sanitizeToolOutput(await callDependency(() => deps.listDiscounts(readDiscountListArgs(args))));
+        break;
+      }
+      case 'shopify.discounts.get': {
+        validateExactArgs(args, ['shop', 'id']);
+        result = sanitizeToolOutput(await callDependency(() => deps.getDiscount(readDiscountGetArgs(args))));
+        break;
+      }
+      case 'shopify.marketing_events.list': {
+        validateExactArgs(args, ['shop', 'first', 'after', 'query']);
+        result = sanitizeToolOutput(await callDependency(() => deps.listMarketingEvents(readMarketingEventsListArgs(args))));
+        break;
+      }
       default:
         throw new McpToolError();
     }
@@ -430,7 +467,8 @@ function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, err
     ...(name === 'shopify.bulk.start' ? readAuditTemplate(args) : {}),
     ...(name === 'shopify.bulk.result' ? readAuditResultLimits(args) : {}),
     ...(name === 'shopify.report_inventory' ? readAuditThreshold(args) : {}),
-    ...(name === 'shopify.customers.list' || name === 'shopify.collections.list' || name === 'shopify.locations.list' ? readAuditBoundedList(args) : {}),
+    ...(name === 'shopify.customers.list' || name === 'shopify.collections.list' || name === 'shopify.locations.list' || name === 'shopify.discounts.list' || name === 'shopify.marketing_events.list' ? readAuditBoundedList(args) : {}),
+    ...(name === 'shopify.discounts.get' ? readAuditDiscountGet(args) : {}),
     ...(name === 'shopify.inventory.levels.list' ? readAuditInventoryLevelsList(args) : {}),
     ...(name === 'shopify.orders.get' ? readAuditOrderGet(args) : {}),
     ...(name === 'shopify.fulfillment_orders.list' ? readAuditFulfillmentOrdersList(args) : {}),
@@ -530,6 +568,10 @@ function readAuditOrderGet(args: unknown): { readonly idPresent?: boolean; reado
     ...(isRecord(args) && typeof args.id === 'string' ? { idPresent: true } : {}),
     ...(isRecord(args) && typeof args.name === 'string' ? { namePresent: true } : {}),
   };
+}
+
+function readAuditDiscountGet(args: unknown): { readonly idPresent?: boolean } {
+  return isRecord(args) && typeof args.id === 'string' ? { idPresent: true } : {};
 }
 
 function readAuditFulfillmentOrdersList(args: unknown): { readonly first?: number; readonly queryPresent?: boolean; readonly afterPresent?: boolean; readonly orderIdPresent?: boolean; readonly orderNamePresent?: boolean } {
@@ -847,6 +889,40 @@ function readCustomerGetArgs(args: unknown): CustomerGetToolArgs {
     shop: readRequiredString(args, 'shop'),
     id: readRequiredString(args, 'id'),
   };
+}
+
+function readDiscountListArgs(args: unknown): DiscountListToolArgs {
+  return {
+    shop: readRequiredString(args, 'shop'),
+    ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50),
+    ...readOptionalStringProperty(args, 'after'),
+    ...readOptionalSafeSearchQuery(args),
+  };
+}
+
+function readDiscountGetArgs(args: unknown): DiscountGetToolArgs {
+  const id = readRequiredString(args, 'id');
+  if (!/^gid:\/\/shopify\/DiscountNode\/[0-9]+$/u.test(id)) {
+    throw new McpToolError('Invalid argument: id.');
+  }
+  return { shop: readRequiredString(args, 'shop'), id };
+}
+
+function readMarketingEventsListArgs(args: unknown): MarketingEventsListToolArgs {
+  return {
+    shop: readRequiredString(args, 'shop'),
+    ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50),
+    ...readOptionalStringProperty(args, 'after'),
+    ...readOptionalSafeSearchQuery(args),
+  };
+}
+
+function readOptionalSafeSearchQuery(args: unknown): Record<string, string> {
+  const query = readOptionalStringProperty(args, 'query');
+  if (query.query !== undefined && /[{}]|\b(?:mutation|query)\b/iu.test(query.query)) {
+    throw new McpToolError('Invalid argument: query.');
+  }
+  return query;
 }
 
 function readBulkResultArgs(args: unknown): BulkResultToolArgs {

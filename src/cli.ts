@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { appendAuditEvent, type AuditEventInput } from './audit.js';
 import { BulkOperationError, cancelBulkOperation, fetchBulkOperationResult, getBulkOperationTemplate, getCurrentBulkOperation, startBulkOperation } from './bulk/operations.js';
 import { getCollection, getProductDetail, listCollections } from './catalog/details.js';
+import { listDiscounts, getDiscount, listMarketingEvents } from './discounts-marketing/index.js';
 import { getFulfillmentOrder, listFulfillmentOrders } from './fulfillment/details.js';
 import { getInventoryItem, getLocation, listInventoryLevels, listLocations } from './inventory/details.js';
 import { getOrderDetail } from './orders/details.js';
@@ -2143,6 +2144,21 @@ async function createMcpServerDependencies(context: CliContext): Promise<McpServ
     getCustomer: async ({ shop, id }) => {
       const reportRuntime = await reportClientFor(shop, ['read_customers']);
       const report = await getCustomer({ client: reportRuntime.client, id });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listDiscounts: async ({ shop, first, after, query }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_discounts']);
+      const report = await listDiscounts({ client: reportRuntime.client, first, after, query });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    getDiscount: async ({ shop, id }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_discounts']);
+      const report = await getDiscount({ client: reportRuntime.client, id });
+      return { shop: reportRuntime.shop, ...report };
+    },
+    listMarketingEvents: async ({ shop, first, after, query }) => {
+      const reportRuntime = await reportClientFor(shop, ['read_marketing_events']);
+      const report = await listMarketingEvents({ client: reportRuntime.client, first, after, query });
       return { shop: reportRuntime.shop, ...report };
     },
   };

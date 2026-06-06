@@ -129,6 +129,27 @@ function createDeps(): McpServerDependencies {
       customer: { id, emailDomain: 'example.test', phonePresent: true, ordersCount: 2 },
       pii: { redactedFields: ['displayName', 'email', 'phone', 'addresses', 'note', 'tags'], email: 'domain_only', phone: 'presence_only' },
     }),
+    listDiscounts: ({ shop, first, query }) => ({
+      shop,
+      discounts: [{ id: 'gid://shopify/DiscountNode/1', type: 'DiscountCodeBasic', title: 'Summer', status: 'ACTIVE', usageCount: 4, codesCount: { count: 2 }, summary: '10% off' }],
+      summary: { discountCount: 1, activeCount: 1, expiredCount: 0, scheduledCount: 0, withCodesCount: 1, usageCount: 4 },
+      pageInfo: { hasNextPage: false },
+      first,
+      query,
+    }),
+    getDiscount: ({ shop, id }) => ({
+      shop,
+      discount: { id, type: 'DiscountCodeBasic', title: 'Summer', status: 'ACTIVE', usageCount: 4, codesCount: { count: 2 }, summary: '10% off' },
+    }),
+    listMarketingEvents: ({ shop, first, query }) => ({
+      shop,
+      marketingEvents: [{ id: 'gid://shopify/MarketingEvent/1', eventType: 'ad', marketingChannelType: 'social', manageUrl: 'https://ads.example.test/manage' }],
+      summary: { marketingEventCount: 1, byChannel: { social: 1 }, withBudgetCount: 0 },
+      pageInfo: { hasNextPage: false },
+      first,
+      query,
+      pii: { redactedFields: ['customer', 'orders', 'conversions', 'utm/query parameters'], urls: 'query_redacted' },
+    }),
     startBulkOperation: ({ shop, templateId }) => ({
       shop,
       templateId,
@@ -180,6 +201,9 @@ describe('curated MCP server', () => {
       'shopify.fulfillment_orders.get',
       'shopify.customers.list',
       'shopify.customers.get',
+      'shopify.discounts.list',
+      'shopify.discounts.get',
+      'shopify.marketing_events.list',
     ]);
   });
 
@@ -288,6 +312,22 @@ describe('curated MCP server', () => {
       customer: { id: 'gid://shopify/Customer/1', emailDomain: 'example.test', phonePresent: true, ordersCount: 2 },
       pii: { redactedFields: ['displayName', 'email', 'phone', 'addresses', 'note', 'tags'], email: 'domain_only', phone: 'presence_only' },
     });
+    await expect(callTool('shopify.discounts.list', { shop: 'alpha.myshopify.com', first: 10, query: 'status:active' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      discounts: [{ id: 'gid://shopify/DiscountNode/1', title: 'Summer', codesCount: { count: 2 } }],
+      first: 10,
+      query: 'status:active',
+    });
+    await expect(callTool('shopify.discounts.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/DiscountNode/1' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      discount: { id: 'gid://shopify/DiscountNode/1', title: 'Summer' },
+    });
+    await expect(callTool('shopify.marketing_events.list', { shop: 'alpha.myshopify.com', first: 10, query: 'event_type:ad' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      marketingEvents: [{ id: 'gid://shopify/MarketingEvent/1', manageUrl: 'https://ads.example.test/manage' }],
+      first: 10,
+      query: 'event_type:ad',
+    });
     await expect(callTool('shopify.bulk.start', { shop: 'alpha.myshopify.com', templateId: 'products-basic' }, deps)).resolves.toMatchObject({
       shop: 'alpha.myshopify.com',
       templateId: 'products-basic',
@@ -378,6 +418,18 @@ describe('curated MCP server', () => {
     await expect(callTool('shopify.customers.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Customer/1' }, deps)).resolves.toMatchObject({
       shop: 'alpha.myshopify.com',
       customer: { id: 'gid://shopify/Customer/1' },
+    });
+    await expect(callTool('shopify.discounts.list', { shop: 'alpha.myshopify.com', first: 10, after: 'discount-cursor', query: 'status:active' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      discounts: [{ id: 'gid://shopify/DiscountNode/1' }],
+    });
+    await expect(callTool('shopify.discounts.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/DiscountNode/1' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      discount: { id: 'gid://shopify/DiscountNode/1' },
+    });
+    await expect(callTool('shopify.marketing_events.list', { shop: 'alpha.myshopify.com', first: 10, after: 'marketing-cursor', query: 'event_type:ad' }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      marketingEvents: [{ id: 'gid://shopify/MarketingEvent/1' }],
     });
 
     expect(auditEvents).toEqual([
@@ -498,6 +550,24 @@ describe('curated MCP server', () => {
         shop: 'alpha.myshopify.com',
         result: 'success',
         metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.customers.get' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.discounts.list', first: 10, queryPresent: true, afterPresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.discounts.get', idPresent: true },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'success',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.marketing_events.list', first: 10, queryPresent: true, afterPresent: true },
       },
     ]);
     expect(JSON.stringify(auditEvents)).not.toContain('SKU');
@@ -828,6 +898,9 @@ describe('curated MCP server', () => {
       await expect(callTool('shopify.fulfillment_orders.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/FulfillmentOrder/10', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
       await expect(callTool('shopify.customers.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/Customer/1', ...args }, createDeps())).rejects.toThrow(McpToolError);
+      await expect(callTool('shopify.discounts.list', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
+      await expect(callTool('shopify.discounts.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/DiscountNode/1', ...args }, createDeps())).rejects.toThrow(McpToolError);
+      await expect(callTool('shopify.marketing_events.list', { shop: 'alpha.myshopify.com', ...args }, createDeps())).rejects.toThrow(McpToolError);
     }
   });
 
@@ -847,6 +920,13 @@ describe('curated MCP server', () => {
     await expect(callTool('shopify.fulfillment_orders.list', { shop: 'alpha.myshopify.com', orderId: 'gid://shopify/Order/1', first: 51 }, createDeps())).rejects.toThrow(McpToolError);
     await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', first: 0 }, createDeps())).rejects.toThrow(McpToolError);
     await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', first: 51 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.discounts.list', { shop: 'alpha.myshopify.com', first: 0 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.discounts.list', { shop: 'alpha.myshopify.com', first: 51 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.discounts.list', { shop: 'alpha.myshopify.com', query: 'query { shop { name } }' }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.discounts.get', { shop: 'alpha.myshopify.com', id: 'gid://shopify/PriceRule/1' }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.marketing_events.list', { shop: 'alpha.myshopify.com', first: 0 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.marketing_events.list', { shop: 'alpha.myshopify.com', first: 51 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.marketing_events.list', { shop: 'alpha.myshopify.com', query: 'mutation { shop { name } }' }, createDeps())).rejects.toThrow(McpToolError);
   });
 
   it('rejects non-positive bulk result preview limits before dispatch', async () => {

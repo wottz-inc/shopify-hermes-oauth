@@ -1,6 +1,6 @@
 export type CapabilityAccess = 'read' | 'write' | 'diagnostic';
 export type CapabilityRiskLevel = 'read_low' | 'read_pii' | 'read_financial' | 'write_medium' | 'write_high' | 'protected_data' | 'diagnostic_low';
-export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders' | 'fulfillment';
+export type CapabilityDomain = 'mcp' | 'shops' | 'reports' | 'webhooks' | 'customers' | 'products' | 'collections' | 'locations' | 'inventory' | 'orders' | 'fulfillment' | 'discounts' | 'marketing';
 export type CapabilityRequiredGate = 'dry_run' | 'explicit_confirmation' | 'audit_logging' | 'rollback_notes';
 
 export type McpToolName =
@@ -27,7 +27,10 @@ export type McpToolName =
   | 'shopify.inventory.levels.list'
   | 'shopify.orders.get'
   | 'shopify.fulfillment_orders.list'
-  | 'shopify.fulfillment_orders.get';
+  | 'shopify.fulfillment_orders.get'
+  | 'shopify.discounts.list'
+  | 'shopify.discounts.get'
+  | 'shopify.marketing_events.list';
 
 export interface JsonSchema {
   readonly type: 'object';
@@ -257,6 +260,33 @@ const FULFILLMENT_ORDER_GET_SCHEMA: JsonSchema = {
   },
   required: ['shop', 'id'],
   additionalProperties: false,
+};
+const DISCOUNT_LIST_SCHEMA: JsonSchema = {
+  ...SHOP_SCHEMA,
+  properties: {
+    ...SHOP_SCHEMA.properties,
+    first: { type: 'integer', minimum: 1, maximum: 50, description: 'Page size. Defaults to 25 and is capped at 50.' },
+    after: { type: 'string', description: 'Optional Shopify cursor for the next page.' },
+    query: { type: 'string', description: 'Explicit Shopify discount search string; omitted means Shopify default discount ordering.' },
+  },
+};
+const DISCOUNT_GET_SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
+    id: { type: 'string', description: 'DiscountNode GID, e.g. gid://shopify/DiscountNode/123.' },
+  },
+  required: ['shop', 'id'],
+  additionalProperties: false,
+};
+const MARKETING_EVENTS_LIST_SCHEMA: JsonSchema = {
+  ...SHOP_SCHEMA,
+  properties: {
+    ...SHOP_SCHEMA.properties,
+    first: { type: 'integer', minimum: 1, maximum: 50, description: 'Page size. Defaults to 25 and is capped at 50.' },
+    after: { type: 'string', description: 'Optional Shopify cursor for the next page.' },
+    query: { type: 'string', description: 'Explicit Shopify marketing event search string; omitted means Shopify default event ordering.' },
+  },
 };
 
 export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
@@ -696,6 +726,60 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
         toolName: 'shopify.customers.get',
         description: 'Inspect one Shopify customer by stable ID with minimal PII fields.',
         inputSchema: CUSTOMER_GET_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'discounts.list.read',
+    domain: 'discounts',
+    operationName: 'Discounts',
+    requiredScopes: ['read_discounts'],
+    access: 'read',
+    riskLevel: 'read_financial',
+    pagination: 'Paginates discountNodes with explicit cursor and page size 1..50 (default 25); returns safe discount summaries and aggregate counts only.',
+    cost: 'Uses a bounded curated discountNodes query with codesCount only; no raw GraphQL input, individual codes, customer/order data, attribution, or customerSelection.',
+    auditEvent: 'discounts.list',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.discounts.list',
+        description: 'List Shopify discounts with bounded pagination and safe aggregate summaries only.',
+        inputSchema: DISCOUNT_LIST_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'discounts.get.read',
+    domain: 'discounts',
+    operationName: 'Discount',
+    requiredScopes: ['read_discounts'],
+    access: 'read',
+    riskLevel: 'read_financial',
+    pagination: 'Single DiscountNode lookup by stable DiscountNode GID; no nested connections except codesCount.',
+    cost: 'Low-cost curated discountNode query; no raw GraphQL input, individual codes, customer/order data, attribution, or customerSelection.',
+    auditEvent: 'discounts.get',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.discounts.get',
+        description: 'Inspect one Shopify discount by stable ID with codesCount only and no individual codes or attribution data.',
+        inputSchema: DISCOUNT_GET_SCHEMA,
+      },
+    },
+  },
+  {
+    id: 'marketing.events.list.read',
+    domain: 'marketing',
+    operationName: 'MarketingEvents',
+    requiredScopes: ['read_marketing_events'],
+    access: 'read',
+    riskLevel: 'read_financial',
+    pagination: 'Paginates marketingEvents with explicit cursor and page size 1..50 (default 25); shallow fields only.',
+    cost: 'Uses a bounded curated marketingEvents query; omits customer/order/conversion attribution and redacts URL query strings.',
+    auditEvent: 'marketing.events.list',
+    surfaces: {
+      mcp: {
+        toolName: 'shopify.marketing_events.list',
+        description: 'List Shopify marketing events with shallow fields and redacted URL query strings.',
+        inputSchema: MARKETING_EVENTS_LIST_SCHEMA,
       },
     },
   },

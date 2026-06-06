@@ -145,6 +145,28 @@ export type {
 
 export { OrdersReportError } from './reports/orders.js';
 
+export {
+  DISCOUNT_NODE_QUERY,
+  DISCOUNTS_QUERY,
+  MARKETING_EVENTS_QUERY,
+  MARKETING_EVENT_PII_POLICY,
+  DiscountsMarketingSurfaceError,
+  getDiscount,
+  listDiscounts,
+  listMarketingEvents,
+} from './discounts-marketing/index.js';
+export type {
+  DiscountSummary,
+  DiscountsAggregateSummary,
+  DiscountsListResult,
+  DiscountsMarketingGraphqlClient,
+  GetDiscountOptions,
+  ListDiscountsOptions,
+  ListMarketingEventsOptions,
+  MarketingEventSummary,
+  MarketingEventsListResult,
+} from './discounts-marketing/index.js';
+
 export { ShopVerificationError, verifyShop } from './shops/verify.js';
 export type { VerifyShopOptions, VerifyShopResult } from './shops/verify.js';
 
