@@ -255,7 +255,7 @@ async function handleAuthCallback(
       code: callback.code,
       redirectUri,
     });
-    const scopes = normalizeScopes(token.scopes ?? dependencies.config.scopes);
+    const scopes = token.scopes === undefined ? [] : normalizeScopes(token.scopes);
 
     if (scopes.length === 0) {
       throw new MissingRequiredAdminApiScopesError();
@@ -275,7 +275,7 @@ async function handleAuthCallback(
 
 function safeOAuthCallbackErrorMessage(error: unknown): string {
   if (isMissingRequiredAdminApiScopesError(error)) {
-    return `Required Shopify Admin API scopes are missing. Configure at least one Required Admin API Scope for the app before retrying; optional scopes alone are insufficient. For v0.1 reports/MCP, use: ${DEFAULT_REQUIRED_ADMIN_API_SCOPES.join(', ')}.`;
+    return `Required Shopify Admin API scopes are missing. Reinstall or re-authorize the shop after configuring at least one Required Admin API Scope for the app; optional scopes alone are insufficient. For v0.1 reports/MCP, use: ${DEFAULT_REQUIRED_ADMIN_API_SCOPES.join(', ')}.`;
   }
 
   return 'Invalid OAuth callback';
