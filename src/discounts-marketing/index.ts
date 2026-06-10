@@ -1,3 +1,5 @@
+import { hasGraphqlLikeSearchSyntax, isValidOpaqueCursor } from '../input-validation.js';
+
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 50;
 const DISCOUNT_NODE_GID_PATTERN = /^gid:\/\/shopify\/DiscountNode\/\d+$/u;
@@ -242,8 +244,8 @@ export async function listMarketingEvents(options: ListMarketingEventsOptions): 
 function readListVariables(first: number | undefined, after: string | undefined, query: string | undefined, queryError: string): Record<string, unknown> {
   return {
     first: normalizePageSize(first),
-    ...(after === undefined ? {} : { after: normalizeNonEmptyString(after, 'Cursor is invalid.') }),
-    ...(query === undefined ? {} : { query: normalizeNonEmptyString(query, queryError) }),
+    ...(after === undefined ? {} : { after: normalizeCursor(after, 'Cursor is invalid.') }),
+    ...(query === undefined ? {} : { query: normalizeSearchQuery(query, queryError) }),
   };
 }
 
@@ -255,9 +257,16 @@ function normalizePageSize(first: number | undefined): number {
   return pageSize;
 }
 
-function normalizeNonEmptyString(value: string, message: string): string {
+function normalizeCursor(value: string, message: string): string {
+  if (!isValidOpaqueCursor(value)) {
+    throw new DiscountsMarketingSurfaceError(message);
+  }
+  return value;
+}
+
+function normalizeSearchQuery(value: string, message: string): string {
   const trimmed = value.trim();
-  if (trimmed.length === 0 || /[{}]|\b(?:mutation|query)\b/iu.test(trimmed)) {
+  if (trimmed.length === 0 || hasGraphqlLikeSearchSyntax(trimmed)) {
     throw new DiscountsMarketingSurfaceError(message);
   }
   return value;

@@ -1,3 +1,5 @@
+import { isValidOpaqueCursor } from '../input-validation.js';
+
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 50;
 
@@ -117,7 +119,7 @@ function isUnsupportedShopifyApiError(error: unknown): boolean {
   return /(?:access denied|permission|scope).*(?:markets|shopLocales|read_markets|read_locales)|(?:markets|shopLocales|read_markets|read_locales).*(?:access denied|permission|scope)|(?:doesn't exist|does not exist|undefined field|cannot query field|not supported|unavailable).*(?:markets|shopLocales)|(?:markets|shopLocales).*(?:doesn't exist|does not exist|undefined field|cannot query field|not supported|unavailable)/i.test(message);
 }
 function normalizePageSize(value: number | undefined): number { const pageSize = value ?? DEFAULT_PAGE_SIZE; if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MAX_PAGE_SIZE) throw new MarketsLocalizationSurfaceError('Page size must be an integer between 1 and 50.'); return pageSize; }
-function optionalCursor(value: string | undefined): Record<string, string> { if (value === undefined) return {}; if (value.trim().length === 0 || /[{}]|\b(?:mutation|query)\b/iu.test(value)) throw new MarketsLocalizationSurfaceError('Cursor is invalid.'); return { after: value }; }
+function optionalCursor(value: string | undefined): Record<string, string> { if (value === undefined) return {}; if (!isValidOpaqueCursor(value)) throw new MarketsLocalizationSurfaceError('Cursor is invalid.'); return { after: value }; }
 function normalizeMarket(node: Record<string, unknown>): MarketSummary {
   const regionsConnection = isRecord(node.regions) ? normalizeOptionalRegionsConnection(node.regions) : { regions: [], regionsTruncated: false };
   return { id: readString(node.id, 'market id'), ...optionalString(node, 'name'), ...optionalString(node, 'handle'), ...optionalString(node, 'status'), ...optionalBaseCurrency(node.currencySettings), regions: regionsConnection.regions, regionsTruncated: regionsConnection.regionsTruncated };

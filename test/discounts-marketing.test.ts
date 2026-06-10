@@ -122,6 +122,26 @@ describe('discounts and marketing Admin GraphQL read helpers', () => {
     await expect(getDiscount({ client, id: 'gid://shopify/PriceRule/1' })).rejects.toThrow('Discount id must be a Shopify DiscountNode GID');
     await expect(listMarketingEvents({ client, query: 'mutation { x }' })).rejects.toThrow('query is invalid');
   });
+
+  it('accepts opaque discount and marketing cursors containing query-like substrings while query filters stay strict', async () => {
+    const calls: unknown[] = [];
+    const cursor = 'YXJyYXljb25uZWN0aW9uOjEwOjEw-Query-query==';
+    const client: DiscountsMarketingGraphqlClient = {
+      query: (query, variables, options) => {
+        calls.push({ query, variables, options });
+        const key = query === DISCOUNTS_QUERY ? 'discountNodes' : 'marketingEvents';
+        return Promise.resolve({ data: { [key]: { edges: [], pageInfo: { hasNextPage: false } } } });
+      },
+    };
+
+    await expect(listDiscounts({ client, after: cursor, query: 'status:active' })).resolves.toMatchObject({ pageInfo: { hasNextPage: false } });
+    await expect(listMarketingEvents({ client, after: cursor, query: 'event_type:ad' })).resolves.toMatchObject({ pageInfo: { hasNextPage: false } });
+    expect(calls.map((call) => (call as { variables: unknown }).variables)).toEqual([
+      { first: 25, after: cursor, query: 'status:active' },
+      { first: 25, after: cursor, query: 'event_type:ad' },
+    ]);
+    await expect(listDiscounts({ client, query: 'query { shop { name } }' })).rejects.toThrow('query is invalid');
+  });
 });
 
 function discountNode(code: string): Record<string, unknown> {
