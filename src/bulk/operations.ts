@@ -243,10 +243,16 @@ export async function fetchBulkOperationResult(input: {
   readonly url: string;
   readonly maxLines?: number;
   readonly maxBytes?: number;
+  /**
+   * Direct operator/CLI preview escape hatch for raw Shopify bulk result HTTPS URLs.
+   * MCP callers must use opaque bulk-result handles minted by this process and must
+   * not set this flag.
+   */
+  readonly allowRawUrlForOperatorPreview?: boolean;
 }): Promise<{ readonly url: string; readonly lines: readonly unknown[]; readonly lineCount: number; readonly truncated: boolean }> {
   const maxLines = readPreviewLimit(input.maxLines, MAX_RESULT_PREVIEW_LINES);
   const maxBytes = readPreviewLimit(input.maxBytes, MAX_RESULT_PREVIEW_BYTES);
-  const url = parseBulkResultUrl(resolveBulkResultUrlInput(input.url));
+  const url = parseBulkResultUrl(resolveBulkResultUrlInput(input.url, input.allowRawUrlForOperatorPreview === true));
 
   const response = await input.fetch(url.toString(), { redirect: 'error' });
   if (!response.ok) {
@@ -312,8 +318,11 @@ function safeResultUrlForOutput(url: URL): string {
   return `${url.origin}${url.pathname}`;
 }
 
-function resolveBulkResultUrlInput(value: string): string {
+function resolveBulkResultUrlInput(value: string, allowRawUrlForOperatorPreview: boolean): string {
   if (!value.startsWith(BULK_RESULT_HANDLE_PREFIX)) {
+    if (!allowRawUrlForOperatorPreview) {
+      throw new BulkOperationError('Raw bulk operation result URLs require explicit operator preview opt-in.', 'BULK_OPERATION_RESULT_URL_INVALID');
+    }
     return value;
   }
   const entry = bulkResultUrlsByHandle.get(value);

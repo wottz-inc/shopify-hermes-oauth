@@ -384,7 +384,8 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
       }
       case 'shopify.bulk.result': {
         validateExactArgs(args, ['shop', 'url', 'maxLines', 'maxBytes']);
-        result = sanitizeToolOutput(await callDependency(() => deps.fetchBulkOperationResult(readBulkResultArgs(args))));
+        const bulkResultArgs = readBulkResultArgs(args);
+        result = sanitizeToolOutput(await callDependency(() => deps.fetchBulkOperationResult(bulkResultArgs)));
         break;
       }
       case 'shopify.bulk.cancel': {
@@ -1184,9 +1185,13 @@ function readMetaobjectsListArgs(args: unknown): MetaobjectsListToolArgs {
   return { shop: readRequiredString(args, 'shop'), type: readRequiredString(args, 'type'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalSafeCursor(args, 'after') };
 }
 function readBulkResultArgs(args: unknown): BulkResultToolArgs {
+  const url = readRequiredString(args, 'url');
+  if (!/^bulk-result:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(url)) {
+    throw new McpToolError('Invalid argument: url.');
+  }
   return {
     shop: readRequiredString(args, 'shop'),
-    url: readRequiredString(args, 'url'),
+    url,
     ...readOptionalBoundedPositiveIntegerProperty(args, 'maxLines', 100),
     ...readOptionalBoundedPositiveIntegerProperty(args, 'maxBytes', 1_000_000),
   };

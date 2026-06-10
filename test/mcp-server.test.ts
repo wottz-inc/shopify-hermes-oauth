@@ -1,12 +1,17 @@
 import { PassThrough } from 'node:stream';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { fetchBulkOperationResult as fetchBulkOperationResultCore, getCurrentBulkOperation as getCurrentBulkOperationCore } from '../src/bulk/operations.js';
 import { callTool, listTools, McpToolError, startStdioMcpServer, type McpHealthResult, type McpLifecycleEvent, type McpServerDependencies } from '../src/mcp/server.js';
 import { InventoryReportError } from '../src/reports/inventory.js';
 import { ShopifyqlAnalyticsError } from '../src/reports/shopifyql-analytics.js';
 import { MissingShopifyScopesError } from '../src/shopify/scopes.js';
 import { ALLOWED_SHOP_METADATA } from '../src/shops/metadata.js';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function createDeps(): McpServerDependencies {
   return {
@@ -450,7 +455,7 @@ describe('curated MCP server', () => {
       shop: 'alpha.myshopify.com',
       bulkOperation: { id: 'gid://shopify/BulkOperation/1', status: 'RUNNING', objectCount: 12 },
     });
-    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl', maxLines: 1 }, deps)).resolves.toMatchObject({
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'bulk-result:00000000-0000-4000-8000-000000000001', maxLines: 1 }, deps)).resolves.toMatchObject({
       shop: 'alpha.myshopify.com',
       lineCount: 1,
       truncated: false,
@@ -459,6 +464,129 @@ describe('curated MCP server', () => {
       shop: 'alpha.myshopify.com',
       bulkOperation: { id: 'gid://shopify/BulkOperation/1', status: 'CANCELING' },
     });
+  });
+
+  it('rejects raw bulk result HTTPS URLs before MCP dispatch', async () => {
+    const calls: unknown[] = [];
+    const deps = {
+      ...createDeps(),
+      fetchBulkOperationResult: (args: unknown) => {
+        calls.push(args);
+        return { shop: 'alpha.myshopify.com', lineCount: 0, lines: [], truncated: false };
+      },
+    };
+
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://storage.googleapis.com/shopify-bulk/result.jsonl?signature=attacker', maxLines: 1 }, deps)).rejects.toThrow('Invalid argument: url.');
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl?signature=attacker', maxLines: 1 }, deps)).rejects.toThrow('Invalid argument: url.');
+    expect(calls).toEqual([]);
+  });
+
+  it('allows opaque bulk result handles through MCP dispatch', async () => {
+    const calls: unknown[] = [];
+    const deps = {
+      ...createDeps(),
+      fetchBulkOperationResult: (args: { readonly shop: string; readonly url: string; readonly maxLines?: number }) => {
+        calls.push(args);
+        return { shop: args.shop, url: args.url, maxLines: args.maxLines, lineCount: 1, lines: [{ id: 'gid://shopify/Product/1' }], truncated: false };
+      },
+    };
+
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'bulk-result:00000000-0000-4000-8000-000000000002', maxLines: 1 }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      url: 'bulk-result:00000000-0000-4000-8000-000000000002',
+      lineCount: 1,
+    });
+    expect(calls).toEqual([{ shop: 'alpha.myshopify.com', url: 'bulk-result:00000000-0000-4000-8000-000000000002', maxLines: 1 }]);
+  });
+
+  it('fetches a process-minted opaque bulk result handle through the real MCP resolver path', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>((url) => {
+      expect(url).toBe('https://cdn.shopify.com/result.jsonl?signature=secret');
+      return Promise.resolve(new Response('{"id":"gid://shopify/Product/1"}\n', { status: 200 }));
+    });
+    const deps: McpServerDependencies = {
+      ...createDeps(),
+      getCurrentBulkOperation: async ({ shop }) => {
+        const status = await getCurrentBulkOperationCore({
+          client: {
+            query: () => Promise.resolve({
+              data: {
+                currentBulkOperation: {
+                  id: 'gid://shopify/BulkOperation/10',
+                  status: 'COMPLETED',
+                  url: 'https://cdn.shopify.com/result.jsonl?signature=secret',
+                },
+              },
+            }),
+          },
+        });
+        return { shop, ...status };
+      },
+      fetchBulkOperationResult: async ({ shop, url, maxLines, maxBytes }) => ({
+        shop,
+        ...(await fetchBulkOperationResultCore({ fetch, url, maxLines, maxBytes })),
+      }),
+    };
+
+    const status = await callTool('shopify.bulk.status', { shop: 'alpha.myshopify.com' }, deps) as { readonly bulkOperation?: { readonly urlHandle?: string; readonly url?: string } };
+    expect(status.bulkOperation?.url).toBe('https://cdn.shopify.com/result.jsonl');
+    expect(status.bulkOperation?.urlHandle).toMatch(/^bulk-result:/u);
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: status.bulkOperation?.urlHandle, maxLines: 1 }, deps)).resolves.toMatchObject({
+      shop: 'alpha.myshopify.com',
+      url: 'https://cdn.shopify.com/result.jsonl',
+      lineCount: 1,
+      lines: [{ id: 'gid://shopify/Product/1' }],
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails unknown opaque bulk result handles safely through the real MCP resolver path', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const deps: McpServerDependencies = {
+      ...createDeps(),
+      fetchBulkOperationResult: async ({ shop, url, maxLines, maxBytes }) => ({
+        shop,
+        ...(await fetchBulkOperationResultCore({ fetch, url, maxLines, maxBytes })),
+      }),
+    };
+
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'bulk-result:00000000-0000-4000-8000-000000000099' }, deps)).rejects.toThrow(McpToolError);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('fails expired opaque bulk result handles safely through the real MCP resolver path', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const deps: McpServerDependencies = {
+      ...createDeps(),
+      getCurrentBulkOperation: async ({ shop }) => ({
+        shop,
+        ...(await getCurrentBulkOperationCore({
+          client: {
+            query: () => Promise.resolve({
+              data: {
+                currentBulkOperation: {
+                  id: 'gid://shopify/BulkOperation/11',
+                  status: 'COMPLETED',
+                  url: 'https://cdn.shopify.com/expired.jsonl?signature=secret',
+                },
+              },
+            }),
+          },
+        })),
+      }),
+      fetchBulkOperationResult: async ({ shop, url, maxLines, maxBytes }) => ({
+        shop,
+        ...(await fetchBulkOperationResultCore({ fetch, url, maxLines, maxBytes })),
+      }),
+    };
+
+    const status = await callTool('shopify.bulk.status', { shop: 'alpha.myshopify.com' }, deps) as { readonly bulkOperation?: { readonly urlHandle?: string } };
+    expect(status.bulkOperation?.urlHandle).toMatch(/^bulk-result:/u);
+    vi.advanceTimersByTime(15 * 60 * 1000 + 1);
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: status.bulkOperation?.urlHandle }, deps)).rejects.toThrow(McpToolError);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('lists shops as metadata only and never returns token material', async () => {
@@ -1169,10 +1297,11 @@ describe('curated MCP server', () => {
   });
 
   it('rejects non-positive bulk result preview limits before dispatch', async () => {
-    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl', maxLines: 0 }, createDeps())).rejects.toThrow(McpToolError);
-    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl', maxBytes: 0 }, createDeps())).rejects.toThrow(McpToolError);
-    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl', maxLines: 101 }, createDeps())).rejects.toThrow(McpToolError);
-    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url: 'https://cdn.shopify.com/result.jsonl', maxBytes: 1_000_001 }, createDeps())).rejects.toThrow(McpToolError);
+    const url = 'bulk-result:00000000-0000-4000-8000-000000000003';
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url, maxLines: 0 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url, maxBytes: 0 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url, maxLines: 101 }, createDeps())).rejects.toThrow(McpToolError);
+    await expect(callTool('shopify.bulk.result', { shop: 'alpha.myshopify.com', url, maxBytes: 1_000_001 }, createDeps())).rejects.toThrow(McpToolError);
   });
 
   it.each([
