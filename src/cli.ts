@@ -1354,7 +1354,7 @@ function localHermesSkillContent(): string {
     "- Orders report: shows at most the first 50 line items per order and marks the line-item summary when additional line items are omitted.",
     "- Inventory report: hard-fails when a product has more than 100 variants or a variant has more than 50 inventory levels, including safe affected GIDs.",
     "",
-    "If a report hits these limits, narrow the report scope or use a custom paginated Shopify Admin GraphQL workflow outside the curated v0.1 reports.",
+    "If a report hits these limits, narrow the report scope or use Shopify bulk inventory export for stores exceeding report limits.",
     "",
     "## MCP tools",
     "",

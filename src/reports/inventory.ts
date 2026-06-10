@@ -10,7 +10,7 @@ export const INVENTORY_REPORT_QUERY = `
         node {
           id
           title
-          variants(first: 25) {
+          variants(first: 100) {
             edges {
               node {
                 id
@@ -159,11 +159,11 @@ export const INVENTORY_MAX_COST_REMEDIATION_MESSAGE = 'Shopify rejected the inve
 
 const DEFAULT_INVENTORY_PAGE_SIZE = 10;
 const MAX_INVENTORY_PAGE_SIZE = 10;
-const INVENTORY_VARIANTS_PAGE_SIZE = 25;
-const INVENTORY_LEVELS_PAGE_SIZE = 10;
+const INVENTORY_VARIANTS_PAGE_SIZE = 100;
+const INVENTORY_LEVELS_PAGE_SIZE = 50;
 const DEFAULT_MAX_INVENTORY_PAGES = 1_000;
-const DEFAULT_MAX_INVENTORY_LEVEL_PAGES = 1_000;
 const DEFAULT_LOW_STOCK_THRESHOLD = 5;
+const INVENTORY_LIMIT_REMEDIATION_MESSAGE = 'Narrow the report scope or use Shopify bulk inventory export for stores exceeding this report limit.';
 
 export async function generateInventoryReport(options: InventoryReportOptions): Promise<InventoryReport> {
   const pageSize = options.pageSize ?? DEFAULT_INVENTORY_PAGE_SIZE;
@@ -207,7 +207,7 @@ export async function generateInventoryReport(options: InventoryReportOptions): 
     for (const edge of connection.edges) {
       const variants = parseProductVariants(edge.node);
       for (const variant of variants) {
-        const levels = await fetchInventoryLevels(options.client, variant.inventoryItemGid, DEFAULT_MAX_INVENTORY_LEVEL_PAGES);
+        const levels = await fetchInventoryLevels(options.client, variant.inventoryItemGid);
         rows.push(...buildVariantRows(variant, levels, lowStockThreshold));
       }
     }
@@ -267,46 +267,28 @@ interface InventoryVariantContext {
   readonly inventoryItemGid: string;
 }
 
-async function fetchInventoryLevels(client: InventoryReportGraphqlClient, inventoryItemGid: string, maxPages: number): Promise<readonly unknown[]> {
-  const levels: unknown[] = [];
-  let after: string | null = null;
-  const seenCursors = new Set<string>();
-
-  for (let page = 0; page < maxPages; page += 1) {
-    let graphqlResponse: InventoryLevelsGraphqlResponse;
-    try {
-      graphqlResponse = await client.query(INVENTORY_LEVELS_QUERY, { inventoryItemId: inventoryItemGid, first: INVENTORY_LEVELS_PAGE_SIZE, after }, { operationName: 'InventoryReportInventoryLevels' }) as InventoryLevelsGraphqlResponse;
-    } catch (error) {
-      if (isMaxCostExceededError(error)) {
-        throw new InventoryReportError(INVENTORY_MAX_COST_REMEDIATION_MESSAGE, 'MAX_COST_EXCEEDED');
-      }
-      throw error;
+async function fetchInventoryLevels(client: InventoryReportGraphqlClient, inventoryItemGid: string): Promise<readonly unknown[]> {
+  let graphqlResponse: InventoryLevelsGraphqlResponse;
+  try {
+    graphqlResponse = await client.query(INVENTORY_LEVELS_QUERY, { inventoryItemId: inventoryItemGid, first: INVENTORY_LEVELS_PAGE_SIZE, after: null }, { operationName: 'InventoryReportInventoryLevels' }) as InventoryLevelsGraphqlResponse;
+  } catch (error) {
+    if (isMaxCostExceededError(error)) {
+      throw new InventoryReportError(INVENTORY_MAX_COST_REMEDIATION_MESSAGE, 'MAX_COST_EXCEEDED');
     }
-    const connection = graphqlResponse.data?.inventoryItem?.inventoryLevels;
+    throw error;
+  }
+  const connection = graphqlResponse.data?.inventoryItem?.inventoryLevels;
 
-    if (connection?.edges === undefined || connection.pageInfo === undefined) {
-      throw new InventoryReportError(`Shopify Admin GraphQL response did not include expected inventory levels connection for inventory item ${inventoryItemGid}.`);
-    }
-
-    levels.push(...connection.edges);
-
-    if (connection.pageInfo.hasNextPage !== true) {
-      return levels;
-    }
-
-    if (typeof connection.pageInfo.endCursor !== 'string' || connection.pageInfo.endCursor.length === 0) {
-      throw new InventoryReportError(`Shopify Admin GraphQL inventory levels page was missing the next cursor for inventory item ${inventoryItemGid}.`);
-    }
-
-    if (connection.pageInfo.endCursor === after || seenCursors.has(connection.pageInfo.endCursor)) {
-      throw new InventoryReportError(`Shopify Admin GraphQL inventory levels pagination did not advance for inventory item ${inventoryItemGid}.`);
-    }
-
-    seenCursors.add(connection.pageInfo.endCursor);
-    after = connection.pageInfo.endCursor;
+  if (connection?.edges === undefined || connection.pageInfo === undefined) {
+    throw new InventoryReportError(`Shopify Admin GraphQL response did not include expected inventory levels connection for inventory item ${inventoryItemGid}.`);
   }
 
-  throw new InventoryReportError(`Shopify Admin GraphQL inventory levels pagination exceeded the maximum page count for inventory item ${inventoryItemGid}.`);
+  assertConnectionNotTruncated(
+    connection,
+    `inventory levels connection was truncated for inventory item ${inventoryItemGid}. v0.1 inventory reports support at most ${INVENTORY_LEVELS_PAGE_SIZE.toString(10)} inventory levels per variant`,
+  );
+
+  return connection.edges;
 }
 
 function parseProductVariants(value: unknown): InventoryVariantContext[] {
@@ -387,7 +369,7 @@ function assertConnectionNotTruncated(value: unknown, detail: string): void {
 
   const pageInfo = value.pageInfo;
   if (isRecord(pageInfo) && pageInfo.hasNextPage === true) {
-    throw new InventoryReportError(`Shopify Admin GraphQL ${detail}.`);
+    throw new InventoryReportError(`Shopify Admin GraphQL ${detail}. ${INVENTORY_LIMIT_REMEDIATION_MESSAGE}`);
   }
 }
 
