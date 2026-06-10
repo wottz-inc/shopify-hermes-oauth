@@ -760,6 +760,7 @@ async function runServe(args: readonly string[], context: CliContext): Promise<n
         redirectUri,
         clientId,
         clientSecret,
+        ...(isPresent(oldClientSecret) ? { oldClientSecret } : {}),
       }),
     });
 
