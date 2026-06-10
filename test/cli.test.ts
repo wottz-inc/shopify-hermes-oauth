@@ -974,6 +974,77 @@ describe('CLI serve', () => {
     }
   });
 
+  it('retries the served OAuth token exchange with the old client secret after a safe auth failure without exposing rotation details', async () => {
+    let server: Server | undefined;
+    let baseUrl = '';
+    const tokenRequests: Request[] = [];
+    const harness = createHarness({
+      env: {
+        HERMES_HOME: '/tmp/hermes',
+        SHOPIFY_HERMES_CLIENT_ID: 'client-id',
+        SHOPIFY_HERMES_CLIENT_SECRET: 'current-client-secret',
+        SHOPIFY_HERMES_OLD_CLIENT_SECRET: 'old-client-secret',
+        SHOPIFY_HERMES_APP_URL: 'https://public-app.example.test',
+      },
+      fetch: (input, init) => {
+        const request = new Request(input, init);
+        tokenRequests.push(request);
+        const body = JSON.parse(init?.body as string) as { readonly client_secret?: string };
+
+        if (body.client_secret === 'current-client-secret') {
+          return Promise.resolve(new Response(JSON.stringify({ error: 'invalid_client' }), {
+            headers: { 'content-type': 'application/json' },
+            status: 401,
+          }));
+        }
+
+        return Promise.resolve(new Response(JSON.stringify({ access_token: 'shpat_mocked_access_token', scope: 'read_products' }), {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        }));
+      },
+      listenServer: async (createdServer) => {
+        server = createdServer;
+        await new Promise<void>((resolve) => createdServer.listen(0, '127.0.0.1', resolve));
+        const address = createdServer.address() as AddressInfo;
+        baseUrl = `http://127.0.0.1:${address.port.toString(10)}`;
+      },
+    });
+
+    try {
+      const exitCode = await runShopifyHermesOauthCli(['serve', '--host', '127.0.0.1', '--port', '3456'], harness.deps);
+      expect(exitCode).toBe(0);
+
+      const startResponse = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, { redirect: 'manual' });
+      const location = startResponse.headers.get('location');
+      expect(location).not.toBeNull();
+      const state = new URL(location ?? '').searchParams.get('state');
+      expect(state).not.toBeNull();
+
+      const callbackResponse = await fetch(signedCliCallbackUrl(baseUrl, 'old-client-secret', {
+        shop: 'example.myshopify.com',
+        code: 'oauth-code',
+        state: state ?? '',
+        timestamp: Math.floor(Date.now() / 1_000).toString(10),
+      }));
+      const callbackBody = await callbackResponse.text();
+
+      expect(callbackResponse.status).toBe(200);
+      expect(callbackBody).toBe('OAuth install complete');
+      expect(tokenRequests).toHaveLength(2);
+      await expect(tokenRequests[0]?.json()).resolves.toMatchObject({ client_secret: 'current-client-secret' });
+      await expect(tokenRequests[1]?.json()).resolves.toMatchObject({ client_secret: 'old-client-secret' });
+      expect(callbackBody).not.toContain('old');
+      expect(callbackBody).not.toContain('current');
+      expect(harness.stdout.join('\n')).not.toContain('old-client-secret');
+      expect(harness.stdout.join('\n')).not.toContain('current-client-secret');
+      expect(harness.stderr.join('\n')).not.toContain('old-client-secret');
+      expect(harness.stderr.join('\n')).not.toContain('current-client-secret');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('trims scopes and drops blanks from SHOPIFY_HERMES_SCOPES', async () => {
     let server: Server | undefined;
     let baseUrl = '';
@@ -1239,6 +1310,68 @@ describe('Shopify OAuth token exchange', () => {
       code: 'OAUTH_TOKEN_EXCHANGE_INVALID_RESPONSE',
       message: 'Shopify OAuth token exchange response did not include an access token.',
     });
+  });
+
+  it('retries a safe auth-failure-shaped token exchange with the old client secret', async () => {
+    const tokenRequests: { readonly url: string; readonly init?: RequestInit }[] = [];
+    const tokenFetch: typeof globalThis.fetch = (url, init) => {
+      const requestUrl = typeof url === 'string' || url instanceof URL ? url.toString() : url.url;
+      tokenRequests.push({ url: requestUrl, init });
+      const body = JSON.parse(init?.body as string) as { readonly client_secret?: string };
+
+      if (body.client_secret === 'current-client-secret') {
+        return Promise.resolve(new Response(JSON.stringify({ error: 'invalid_client' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        }));
+      }
+
+      return Promise.resolve(new Response(JSON.stringify({ access_token: 'shpat_mocked_access_token', scope: 'read_products' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    };
+
+    await expect(exchangeShopifyOAuthToken({
+      fetch: tokenFetch,
+      shop: 'Example',
+      code: 'oauth-code',
+      redirectUri: 'https://public-app.example.test/auth/callback',
+      clientId: 'client-id',
+      clientSecret: 'current-client-secret',
+      oldClientSecret: 'old-client-secret',
+    })).resolves.toEqual({ accessToken: 'shpat_mocked_access_token', scopes: 'read_products' });
+
+    expect(tokenRequests).toHaveLength(2);
+    expect(JSON.parse(tokenRequests[0]?.init?.body as string)).toMatchObject({ client_secret: 'current-client-secret' });
+    expect(JSON.parse(tokenRequests[1]?.init?.body as string)).toMatchObject({ client_secret: 'old-client-secret' });
+  });
+
+  it('does not retry token exchange failures that are not auth-failure-shaped', async () => {
+    const tokenRequests: { readonly init?: RequestInit }[] = [];
+    const tokenFetch: typeof globalThis.fetch = (_url, init) => {
+      tokenRequests.push({ init });
+      return Promise.resolve(new Response(JSON.stringify({ error: 'invalid_grant' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    };
+
+    await expect(exchangeShopifyOAuthToken({
+      fetch: tokenFetch,
+      shop: 'Example',
+      code: 'oauth-code',
+      redirectUri: 'https://public-app.example.test/auth/callback',
+      clientId: 'client-id',
+      clientSecret: 'current-client-secret',
+      oldClientSecret: 'old-client-secret',
+    })).rejects.toMatchObject({
+      code: 'OAUTH_TOKEN_EXCHANGE_HTTP_ERROR',
+      message: 'Shopify OAuth token exchange failed with HTTP 400.',
+    });
+
+    expect(tokenRequests).toHaveLength(1);
+    expect(JSON.parse(tokenRequests[0]?.init?.body as string)).toMatchObject({ client_secret: 'current-client-secret' });
   });
 
   it.each([
