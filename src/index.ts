@@ -307,6 +307,7 @@ export type { VerifyShopOptions, VerifyShopResult } from './shops/verify.js';
 
 export { createOAuthHttpServer } from './server.js';
 export type {
+  OAuthAuthStartRateLimitConfig,
   OAuthHttpServerConfig,
   OAuthHttpServerDependencies,
   OAuthStateStore,

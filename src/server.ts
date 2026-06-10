@@ -8,6 +8,7 @@ import {
 } from './internal/oauth-http-server.js';
 
 export type {
+  OAuthAuthStartRateLimitConfig,
   OAuthHttpServerConfig,
   OAuthHttpServerDependencies,
   OAuthStateStore,
