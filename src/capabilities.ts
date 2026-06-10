@@ -144,7 +144,7 @@ const BULK_RESULT_SCHEMA: JsonSchema = {
   type: 'object',
   properties: {
     shop: { type: 'string', description: 'Shopify myshopify.com domain.' },
-    url: { type: 'string', description: 'HTTPS Shopify bulk operation result URL or opaque bulk-result handle returned by status.' },
+    url: { type: 'string', pattern: '^bulk-result:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', description: 'Opaque bulk-result handle returned by bulk status/cancel responses. Raw HTTPS result URLs are not accepted over MCP.' },
     maxLines: { type: 'integer', minimum: 1, maximum: 100, description: 'Maximum JSONL rows to preview. Defaults to 100 and is capped at 100.' },
     maxBytes: { type: 'integer', minimum: 1, maximum: 1000000, description: 'Maximum response bytes to process. Defaults to 1000000 and is capped at 1000000.' },
   },
@@ -592,13 +592,13 @@ export const CAPABILITY_REGISTRY: readonly CapabilityDefinition[] = [
     requiredScopes: [],
     access: 'read',
     riskLevel: 'read_low',
-    pagination: 'Fetches a bounded JSONL preview from a Shopify bulk operation result URL.',
-    cost: 'No Admin GraphQL cost; bounded HTTPS result download.',
+    pagination: 'Fetches a bounded JSONL preview from an opaque bulk-result handle minted by this process.',
+    cost: 'No Admin GraphQL cost; bounded result download through a process-local opaque handle.',
     auditEvent: 'bulk.result',
     surfaces: {
       mcp: {
         toolName: 'shopify.bulk.result',
-        description: 'Fetch a bounded JSONL preview from a Shopify bulk operation result URL.',
+        description: 'Fetch a bounded JSONL preview from an opaque bulk-result handle returned by bulk status/cancel responses.',
         inputSchema: BULK_RESULT_SCHEMA,
       },
     },

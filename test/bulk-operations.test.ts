@@ -183,13 +183,36 @@ describe('curated bulk operations', () => {
     });
   });
 
-  it('fetches JSONL bulk result previews with line and byte limits', async () => {
+  it('rejects unknown opaque bulk result handles without fetching', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+
+    await expect(fetchBulkOperationResult({
+      fetch,
+      url: 'bulk-result:00000000-0000-4000-8000-000000000099',
+    })).rejects.toMatchObject({
+      code: 'BULK_OPERATION_RESULT_URL_INVALID',
+      message: 'Bulk operation result handle is unknown or expired.',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('requires explicit operator opt-in for raw JSONL bulk result URL previews', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+
+    await expect(fetchBulkOperationResult({ fetch, url: 'https://cdn.shopify.com/result.jsonl?signature=secret' })).rejects.toMatchObject({
+      code: 'BULK_OPERATION_RESULT_URL_INVALID',
+      message: 'Raw bulk operation result URLs require explicit operator preview opt-in.',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('fetches JSONL bulk result previews with line and byte limits when raw URL operator preview is allowed', async () => {
     const fetch: typeof globalThis.fetch = (_url, init) => {
       expect(init).toEqual({ redirect: 'error' });
       return Promise.resolve(new Response('{"id":"1","title":"A"}\n{"id":"2","title":"B"}\n', { status: 200 }));
     };
 
-    await expect(fetchBulkOperationResult({ fetch, url: 'https://cdn.shopify.com/result.jsonl?signature=secret', maxLines: 1, maxBytes: 10_000 })).resolves.toEqual({
+    await expect(fetchBulkOperationResult({ fetch, url: 'https://cdn.shopify.com/result.jsonl?signature=secret', maxLines: 1, maxBytes: 10_000, allowRawUrlForOperatorPreview: true })).resolves.toEqual({
       url: 'https://cdn.shopify.com/result.jsonl',
       lines: [{ id: '1', title: 'A' }],
       lineCount: 1,
@@ -279,14 +302,14 @@ describe('curated bulk operations', () => {
   it('rejects non-HTTPS result URLs and oversized result downloads', async () => {
     const fetch: typeof globalThis.fetch = () => Promise.resolve(new Response('{"id":"1"}\n', { status: 200 }));
 
-    await expect(fetchBulkOperationResult({ fetch, url: 'http://example.test/result.jsonl' })).rejects.toBeInstanceOf(BulkOperationError);
-    await expect(fetchBulkOperationResult({ fetch, url: 'https://example.test/result.jsonl' })).rejects.toMatchObject({
+    await expect(fetchBulkOperationResult({ fetch, url: 'http://example.test/result.jsonl', allowRawUrlForOperatorPreview: true })).rejects.toBeInstanceOf(BulkOperationError);
+    await expect(fetchBulkOperationResult({ fetch, url: 'https://example.test/result.jsonl', allowRawUrlForOperatorPreview: true })).rejects.toMatchObject({
       code: 'BULK_OPERATION_RESULT_URL_INVALID',
     });
-    await expect(fetchBulkOperationResult({ fetch, url: 'https://cdn.shopify.com/result.jsonl', maxLines: 101 })).rejects.toMatchObject({
+    await expect(fetchBulkOperationResult({ fetch, url: 'https://cdn.shopify.com/result.jsonl', maxLines: 101, allowRawUrlForOperatorPreview: true })).rejects.toMatchObject({
       code: 'BULK_OPERATION_RESULT_TOO_LARGE',
     });
-    await expect(fetchBulkOperationResult({ fetch, url: 'https://cdn.shopify.com/result.jsonl', maxBytes: 2 })).rejects.toMatchObject({
+    await expect(fetchBulkOperationResult({ fetch, url: 'https://cdn.shopify.com/result.jsonl', maxBytes: 2, allowRawUrlForOperatorPreview: true })).rejects.toMatchObject({
       code: 'BULK_OPERATION_RESULT_TOO_LARGE',
     });
   });

@@ -241,7 +241,7 @@ The MCP allowlist includes template-only read-oriented Shopify Admin GraphQL bul
 
 - `shopify.bulk.start` — start one approved template (`products-basic`, `orders-basic`, or `inventory-items-basic`) after validating the template's required scopes.
 - `shopify.bulk.status` — poll `currentBulkOperation` and return status, counts, failure code, redacted result URL paths, and opaque result handles when Shopify provides result URLs.
-- `shopify.bulk.result` — fetch a bounded HTTPS JSONL preview from a Shopify bulk result URL or opaque `bulk-result:` handle using explicit `maxLines` / `maxBytes` limits. Prefer the opaque handle returned by status/cancel responses; raw signed Shopify URLs are accepted only for direct operator-supplied previews and are never echoed with query strings.
+- `shopify.bulk.result` — fetch a bounded JSONL preview using an opaque `bulk-result:` handle minted by this process and returned by status/cancel responses, with explicit `maxLines` / `maxBytes` limits. Raw signed Shopify result URLs are intentionally rejected over MCP; any direct raw-URL preview path is CLI/operator-only and must never echo query strings.
 - `shopify.bulk.cancel` — cancel a running read-only bulk operation by BulkOperation GID.
 
 These tools do not expose arbitrary raw GraphQL input. Result previews are bounded and sanitized before returning through MCP structured content. Opaque result handles are process-local, expire after 15 minutes, and are capped to avoid retaining signed result URLs indefinitely.
