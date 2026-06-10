@@ -1,3 +1,5 @@
+import { hasGraphqlLikeSearchSyntax, isValidOpaqueCursor } from '../input-validation.js';
+
 const DEFAULT_CUSTOMER_PAGE_SIZE = 25;
 const MAX_CUSTOMER_PAGE_SIZE = 50;
 const CUSTOMER_GID_PATTERN = /^gid:\/\/shopify\/Customer\/\d+$/u;
@@ -167,8 +169,8 @@ export async function listCustomers(options: ListCustomersOptions): Promise<Cust
   const first = normalizePageSize(options.first);
   const variables: CustomerListVariables = {
     first,
-    ...(options.after === undefined ? {} : { after: normalizeNonEmptyString(options.after, 'Customer cursor is invalid.') }),
-    ...(options.query === undefined ? {} : { query: normalizeNonEmptyString(options.query, 'Customer query is invalid.') }),
+    ...(options.after === undefined ? {} : { after: normalizeCursor(options.after, 'Customer cursor is invalid.') }),
+    ...(options.query === undefined ? {} : { query: normalizeSearchQuery(options.query, 'Customer query is invalid.') }),
   };
   const response = await options.client.query(CUSTOMERS_QUERY, variables, { operationName: 'Customers' }) as CustomersResponse;
   const connection = response.data?.customers;
@@ -206,12 +208,19 @@ function normalizePageSize(first: number | undefined): number {
   return pageSize;
 }
 
-function normalizeNonEmptyString(value: string, message: string): string {
+function normalizeCursor(value: string, message: string): string {
+  if (!isValidOpaqueCursor(value)) {
+    throw new CustomerSurfaceError(message);
+  }
+  return value;
+}
+
+function normalizeSearchQuery(value: string, message: string): string {
   const trimmed = value.trim();
   if (trimmed.length === 0) {
     throw new CustomerSurfaceError(message);
   }
-  if (/[{}]|\b(?:mutation|query)\b/iu.test(trimmed)) {
+  if (hasGraphqlLikeSearchSyntax(trimmed)) {
     throw new CustomerSurfaceError(message);
   }
   return value;

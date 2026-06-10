@@ -16,6 +16,7 @@ import { type B2bCatalogsSummaryResult, type B2bCompaniesSummaryResult } from '.
 import { type VerifyShopResult } from '../shops/verify.js';
 import { summarizeShopMetadata, type AllowedShopMetadata } from '../shops/metadata.js';
 import { type StoredShopToken, type TokenStore } from '../tokens/local-token-store.js';
+import { hasGraphqlLikeSearchSyntax, isValidOpaqueCursor } from '../input-validation.js';
 import { isJsonPlainRecord as isRecord } from '../util/json.js';
 
 export type { JsonSchema, McpToolDefinition, McpToolName } from '../capabilities.js';
@@ -1033,7 +1034,7 @@ function readCollectionListArgs(args: unknown): CollectionListToolArgs {
 
 function readOptionalCollectionSearchQuery(args: unknown): Record<string, string> {
   const query = readOptionalStringProperty(args, 'query');
-  if (query.query !== undefined && /[{}]|\b(?:mutation|query)\b/iu.test(query.query)) {
+  if (query.query !== undefined && hasGraphqlLikeSearchSyntax(query.query)) {
     throw new McpToolError('Invalid argument: query.');
   }
   return query;
@@ -1068,7 +1069,7 @@ function readOrderGetArgs(args: unknown): OrderGetToolArgs {
   if ((id === undefined && name === undefined) || (id !== undefined && name !== undefined)) {
     throw new McpToolError('Provide exactly one of order id or order name.');
   }
-  if (name !== undefined && /[{}]|\b(?:mutation|query)\b/iu.test(name)) {
+  if (name !== undefined && hasGraphqlLikeSearchSyntax(name)) {
     throw new McpToolError('Invalid argument: name.');
   }
   return { shop: readRequiredString(args, 'shop'), ...(id === undefined ? {} : { id }), ...(name === undefined ? {} : { name }) };
@@ -1080,7 +1081,7 @@ function readFulfillmentOrdersListArgs(args: unknown): FulfillmentOrdersListTool
   if ((orderId === undefined && orderName === undefined) || (orderId !== undefined && orderName !== undefined)) {
     throw new McpToolError('Provide exactly one of orderId or orderName.');
   }
-  if (orderName !== undefined && /[{}]|\b(?:mutation|query)\b/iu.test(orderName)) {
+  if (orderName !== undefined && hasGraphqlLikeSearchSyntax(orderName)) {
     throw new McpToolError('Invalid argument: orderName.');
   }
   return {
@@ -1096,14 +1097,14 @@ function readCustomerListArgs(args: unknown): CustomerListToolArgs {
   return {
     shop: readRequiredString(args, 'shop'),
     ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50),
-    ...readOptionalStringProperty(args, 'after'),
+    ...readOptionalSafeCursor(args, 'after'),
     ...readOptionalCustomerSearchQuery(args),
   };
 }
 
 function readOptionalCustomerSearchQuery(args: unknown): Record<string, string> {
   const query = readOptionalStringProperty(args, 'query');
-  if (query.query !== undefined && /[{}]|\b(?:mutation|query)\b/iu.test(query.query)) {
+  if (query.query !== undefined && hasGraphqlLikeSearchSyntax(query.query)) {
     throw new McpToolError('Invalid argument: query.');
   }
   return query;
@@ -1120,7 +1121,7 @@ function readDiscountListArgs(args: unknown): DiscountListToolArgs {
   return {
     shop: readRequiredString(args, 'shop'),
     ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50),
-    ...readOptionalStringProperty(args, 'after'),
+    ...readOptionalSafeCursor(args, 'after'),
     ...readOptionalSafeSearchQuery(args),
   };
 }
@@ -1137,7 +1138,7 @@ function readMarketingEventsListArgs(args: unknown): MarketingEventsListToolArgs
   return {
     shop: readRequiredString(args, 'shop'),
     ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50),
-    ...readOptionalStringProperty(args, 'after'),
+    ...readOptionalSafeCursor(args, 'after'),
     ...readOptionalSafeSearchQuery(args),
   };
 }
@@ -1152,7 +1153,7 @@ function readMarketsListArgs(args: unknown): MarketsListToolArgs {
 
 function readOptionalSafeCursor(args: unknown, key: string): Record<string, string> {
   const cursor = readOptionalStringProperty(args, key);
-  if (cursor[key] !== undefined && /[{}]|\b(?:mutation|query)\b/iu.test(cursor[key])) {
+  if (cursor[key] !== undefined && !isValidOpaqueCursor(cursor[key])) {
     throw new McpToolError(`Invalid argument: ${key}.`);
   }
   return cursor;
@@ -1160,7 +1161,7 @@ function readOptionalSafeCursor(args: unknown, key: string): Record<string, stri
 
 function readOptionalSafeSearchQuery(args: unknown): Record<string, string> {
   const query = readOptionalStringProperty(args, 'query');
-  if (query.query !== undefined && /[{}]|\b(?:mutation|query)\b/iu.test(query.query)) {
+  if (query.query !== undefined && hasGraphqlLikeSearchSyntax(query.query)) {
     throw new McpToolError('Invalid argument: query.');
   }
   return query;
@@ -1168,19 +1169,19 @@ function readOptionalSafeSearchQuery(args: unknown): Record<string, string> {
 
 
 function readMetafieldDefinitionsListArgs(args: unknown): MetafieldDefinitionsListToolArgs {
-  return { shop: readRequiredString(args, 'shop'), ownerType: readRequiredString(args, 'ownerType'), ...readOptionalStringProperty(args, 'namespace'), ...readOptionalStringProperty(args, 'key'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalStringProperty(args, 'after') };
+  return { shop: readRequiredString(args, 'shop'), ownerType: readRequiredString(args, 'ownerType'), ...readOptionalStringProperty(args, 'namespace'), ...readOptionalStringProperty(args, 'key'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalSafeCursor(args, 'after') };
 }
 function readMetafieldDefinitionGetArgs(args: unknown): MetafieldDefinitionGetToolArgs {
   return { shop: readRequiredString(args, 'shop'), ownerType: readRequiredString(args, 'ownerType'), namespace: readRequiredString(args, 'namespace'), key: readRequiredString(args, 'key') };
 }
 function readResourceMetafieldsListArgs(args: unknown): ResourceMetafieldsListToolArgs {
-  return { shop: readRequiredString(args, 'shop'), ownerId: readRequiredString(args, 'ownerId'), ...readOptionalStringProperty(args, 'namespace'), ...readOptionalStringProperty(args, 'key'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalStringProperty(args, 'after') };
+  return { shop: readRequiredString(args, 'shop'), ownerId: readRequiredString(args, 'ownerId'), ...readOptionalStringProperty(args, 'namespace'), ...readOptionalStringProperty(args, 'key'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalSafeCursor(args, 'after') };
 }
 function readMetaobjectDefinitionsListArgs(args: unknown): MetaobjectDefinitionsListToolArgs {
-  return { shop: readRequiredString(args, 'shop'), ...readOptionalStringProperty(args, 'type'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalStringProperty(args, 'after') };
+  return { shop: readRequiredString(args, 'shop'), ...readOptionalStringProperty(args, 'type'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalSafeCursor(args, 'after') };
 }
 function readMetaobjectsListArgs(args: unknown): MetaobjectsListToolArgs {
-  return { shop: readRequiredString(args, 'shop'), type: readRequiredString(args, 'type'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalStringProperty(args, 'after') };
+  return { shop: readRequiredString(args, 'shop'), type: readRequiredString(args, 'type'), ...readOptionalBoundedPositiveIntegerProperty(args, 'first', 50), ...readOptionalSafeCursor(args, 'after') };
 }
 function readBulkResultArgs(args: unknown): BulkResultToolArgs {
   return {

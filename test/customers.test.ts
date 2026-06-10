@@ -113,7 +113,22 @@ describe('customer Admin GraphQL helpers', () => {
 
     await expect(listCustomers({ client, first: 0 })).rejects.toThrow('Customer page size must be an integer between 1 and 50.');
     await expect(listCustomers({ client, first: 51 })).rejects.toThrow(CustomerSurfaceError);
+    await expect(listCustomers({ client, query: 'query { shop { name } }' })).rejects.toThrow('Customer query is invalid.');
     await expect(getCustomer({ client, id: '   ' })).rejects.toThrow('Customer id is required.');
     await expect(getCustomer({ client, id: 'gid://shopify/Order/1' })).rejects.toThrow('Customer id must be a Shopify Customer GID.');
+  });
+
+  it('accepts opaque cursors containing query-like substrings without treating them as search queries', async () => {
+    const calls: unknown[] = [];
+    const cursor = 'cursor-Query-query-123';
+    const client = {
+      query: (_query: string, variables: unknown) => {
+        calls.push(variables);
+        return Promise.resolve({ data: { customers: { edges: [], pageInfo: { hasNextPage: false } } } });
+      },
+    };
+
+    await expect(listCustomers({ client, after: cursor })).resolves.toMatchObject({ pageInfo: { hasNextPage: false } });
+    expect(calls).toEqual([{ first: 25, after: cursor }]);
   });
 });

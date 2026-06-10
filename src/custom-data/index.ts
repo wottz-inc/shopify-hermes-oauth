@@ -1,3 +1,5 @@
+import { isValidOpaqueCursor } from '../input-validation.js';
+
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 50;
 const NAMESPACE_PATTERN = /^[A-Za-z0-9_-]{1,64}$/u;
@@ -201,10 +203,10 @@ function normalizeMetaobjectType(value: string): string { const v = value.trim()
 function normalizeOwnerId(value: string): string { const v = value.trim(); if (!SUPPORTED_OWNER_GID_PATTERN.test(v)) throw new CustomDataSurfaceError('Owner id must be a supported Shopify resource GID.'); return v; }
 function normalizeMetaobjectId(value: string): string { const v = value.trim(); if (!METAOBJECT_GID_PATTERN.test(v)) throw new CustomDataSurfaceError('Metaobject id must be a Shopify Metaobject GID.'); return v; }
 function normalizePageSize(value: number | undefined): number { const pageSize = value ?? DEFAULT_PAGE_SIZE; if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MAX_PAGE_SIZE) throw new CustomDataSurfaceError('Page size must be an integer between 1 and 50.'); return pageSize; }
-function optionalCursor(value: string | undefined): Record<string, string> { if (value === undefined) return {}; return { after: normalizeNonEmptyString(value, 'Cursor is invalid.') }; }
+function optionalCursor(value: string | undefined): Record<string, string> { if (value === undefined) return {}; if (!isValidOpaqueCursor(value)) throw new CustomDataSurfaceError('Cursor is invalid.'); return { after: value }; }
 function optionalNamespace(value: string | undefined): Record<string, string> { return value === undefined ? {} : { namespace: normalizeNamespace(value) }; }
 function optionalKey(value: string | undefined): Record<string, string> { return value === undefined ? {} : { key: normalizeKey(value) }; }
-function normalizeNonEmptyString(value: string, message: string): string { if (value.trim().length === 0 || /[{}]|\b(?:mutation|query)\b/iu.test(value)) throw new CustomDataSurfaceError(message); return value; }
+
 
 function normalizeMetafieldDefinition(node: Record<string, unknown>): Record<string, unknown> { return { key: readString(node.key, 'metafield definition key'), namespace: readString(node.namespace, 'metafield definition namespace'), name: readString(node.name, 'metafield definition name'), ownerType: readString(node.ownerType, 'metafield definition owner type'), type: normalizeTypeRef(node.type), validations: Array.isArray(node.validations) ? node.validations.map(normalizeValidation) : [] }; }
 function normalizeMetafield(node: Record<string, unknown>): Record<string, unknown> { return { id: readString(node.id, 'metafield id'), namespace: readString(node.namespace, 'metafield namespace'), key: readString(node.key, 'metafield key'), type: readString(node.type, 'metafield type'), ...summarizeValue(node.value), ...(isRecord(node.definition) ? { definition: { name: typeof node.definition.name === 'string' ? node.definition.name : undefined, type: isRecord(node.definition.type) ? { name: readString(node.definition.type.name, 'definition type') } : undefined } } : {}) }; }

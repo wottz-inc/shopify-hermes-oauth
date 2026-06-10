@@ -100,6 +100,24 @@ describe('custom data Admin GraphQL read helpers', () => {
     await expect(listMetaobjects({ client, type: 'bad type' })).rejects.toThrow('Metaobject type is invalid');
     await expect(getMetaobject({ client, id: 'gid://shopify/Product/1' })).rejects.toThrow('Metaobject id must be a Shopify Metaobject GID');
   });
+
+  it('accepts opaque custom data cursors containing query-like substrings for each paginated surface', async () => {
+    const calls: unknown[] = [];
+    const cursor = 'Y3VzdG9tZGF0YToxOlF1ZXJ5cXVlcnk=-Query-query';
+    const client: CustomDataGraphqlClient = { query: (query, variables, options) => {
+      calls.push({ query, variables, options });
+      if (query === RESOURCE_METAFIELDS_QUERY) return Promise.resolve({ data: { node: { id: variables.ownerId, metafields: { edges: [], pageInfo: { hasNextPage: false } } } } });
+      if (query === METAOBJECTS_QUERY) return Promise.resolve({ data: { metaobjects: { edges: [], pageInfo: { hasNextPage: false } } } });
+      const key = query === METAFIELD_DEFINITIONS_QUERY ? 'metafieldDefinitions' : 'metaobjectDefinitions';
+      return Promise.resolve({ data: { [key]: { edges: [], pageInfo: { hasNextPage: false } } } });
+    } };
+
+    await expect(listMetafieldDefinitions({ client, ownerType: 'PRODUCT', after: cursor })).resolves.toMatchObject({ pageInfo: { hasNextPage: false } });
+    await expect(listResourceMetafields({ client, ownerId: 'gid://shopify/Product/1', after: cursor })).resolves.toMatchObject({ pageInfo: { hasNextPage: false } });
+    await expect(listMetaobjectDefinitions({ client, after: cursor })).resolves.toMatchObject({ pageInfo: { hasNextPage: false } });
+    await expect(listMetaobjects({ client, type: 'designer_profile', after: cursor })).resolves.toMatchObject({ pageInfo: { hasNextPage: false } });
+    expect(calls.map((call) => (call as { variables: Record<string, unknown> }).variables.after)).toEqual([cursor, cursor, cursor, cursor]);
+  });
 });
 
 function metafieldDefinitionNode(): Record<string, unknown> {

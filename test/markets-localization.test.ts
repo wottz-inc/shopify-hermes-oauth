@@ -130,4 +130,18 @@ describe('markets and localization Admin GraphQL read helpers', () => {
     await expect(listMarkets({ client, first: 51 })).rejects.toThrow('integer between 1 and 50');
     await expect(listMarkets({ client, after: 'query { shop { name } }' })).rejects.toThrow('Cursor is invalid');
   });
+
+  it('accepts opaque market cursors containing query-like substrings', async () => {
+    const calls: unknown[] = [];
+    const cursor = 'bWFya2V0OjEyMzpRdWVyeXF1ZXJ5-Query-query==';
+    const client: MarketsLocalizationGraphqlClient = {
+      query: (_query, variables, options) => {
+        calls.push({ variables, options });
+        return Promise.resolve({ data: { markets: { edges: [], pageInfo: { hasNextPage: false } } } });
+      },
+    };
+
+    await expect(listMarkets({ client, after: cursor })).resolves.toMatchObject({ pageInfo: { hasNextPage: false } });
+    expect(calls).toEqual([{ variables: { first: 25, after: cursor }, options: { operationName: 'Markets' } }]);
+  });
 });

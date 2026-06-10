@@ -156,12 +156,13 @@ function createDeps(): McpServerDependencies {
       fulfillmentOrder: { id, status: 'OPEN', requestStatus: 'UNSUBMITTED', lineItems: [] },
       pii: { redactedFields: ['destinationAddress', 'customer', 'email', 'phone', 'trackingNumber', 'trackingUrl', 'label', 'note', 'tags', 'metafields', 'transactions'] },
     }),
-    listCustomers: ({ shop, first, query }) => ({
+    listCustomers: ({ shop, first, after, query }) => ({
       shop,
       customers: [{ id: 'gid://shopify/Customer/1', emailDomain: 'example.test', phonePresent: true, ordersCount: 2 }],
       summary: { customerCount: 1, withEmailDomainCount: 1, withPhoneCount: 1, ordersCount: 2 },
       pageInfo: { hasNextPage: false },
       first,
+      after,
       query,
       pii: { redactedFields: ['displayName', 'email', 'phone', 'addresses', 'note', 'tags'], email: 'domain_only', phone: 'presence_only' },
     }),
@@ -170,35 +171,37 @@ function createDeps(): McpServerDependencies {
       customer: { id, emailDomain: 'example.test', phonePresent: true, ordersCount: 2 },
       pii: { redactedFields: ['displayName', 'email', 'phone', 'addresses', 'note', 'tags'], email: 'domain_only', phone: 'presence_only' },
     }),
-    listDiscounts: ({ shop, first, query }) => ({
+    listDiscounts: ({ shop, first, after, query }) => ({
       shop,
       discounts: [{ id: 'gid://shopify/DiscountNode/1', type: 'DiscountCodeBasic', title: 'Summer', status: 'ACTIVE', usageCount: 4, codesCount: { count: 2 }, summary: '10% off' }],
       summary: { discountCount: 1, activeCount: 1, expiredCount: 0, scheduledCount: 0, withCodesCount: 1, usageCount: 4 },
       pageInfo: { hasNextPage: false },
       first,
+      after,
       query,
     }),
     getDiscount: ({ shop, id }) => ({
       shop,
       discount: { id, type: 'DiscountCodeBasic', title: 'Summer', status: 'ACTIVE', usageCount: 4, codesCount: { count: 2 }, summary: '10% off' },
     }),
-    listMarketingEvents: ({ shop, first, query }) => ({
+    listMarketingEvents: ({ shop, first, after, query }) => ({
       shop,
       marketingEvents: [{ id: 'gid://shopify/MarketingEvent/1', eventType: 'ad', marketingChannelType: 'social', manageUrl: 'https://ads.example.test/manage' }],
       summary: { marketingEventCount: 1, byChannel: { social: 1 }, withBudgetCount: 0 },
       pageInfo: { hasNextPage: false },
       first,
+      after,
       query,
       pii: { redactedFields: ['customer', 'orders', 'conversions', 'utm/query parameters'], urls: 'query_redacted' },
     }),
-    listMarkets: ({ shop, first }) => ({ shop, supported: true, markets: [{ id: 'gid://shopify/Market/1', name: 'North America', status: 'ACTIVE', regions: [], regionsTruncated: false }], summary: { marketCount: 1, activeCount: 1, regionCount: 0, regionsTruncatedCount: 0 }, pageInfo: { hasNextPage: false }, first }),
+    listMarkets: ({ shop, first, after }) => ({ shop, supported: true, markets: [{ id: 'gid://shopify/Market/1', name: 'North America', status: 'ACTIVE', regions: [], regionsTruncated: false }], summary: { marketCount: 1, activeCount: 1, regionCount: 0, regionsTruncatedCount: 0 }, pageInfo: { hasNextPage: false }, first, after }),
     listShopLocales: ({ shop }) => ({ shop, supported: true, locales: [{ locale: 'en', name: 'English', primary: true, published: true }], summary: { localeCount: 1, publishedCount: 1, primaryLocale: 'en' } }),
-    listMetafieldDefinitions: ({ shop, ownerType, namespace, key, first }) => ({ shop, metafieldDefinitions: [{ namespace: namespace ?? 'custom', key: key ?? 'care', ownerType, name: 'Care', type: { name: 'single_line_text_field' }, validations: [] }], pageInfo: { hasNextPage: false }, schema: { ownerType, namespace, key }, first }),
+    listMetafieldDefinitions: ({ shop, ownerType, namespace, key, first, after }) => ({ shop, metafieldDefinitions: [{ namespace: namespace ?? 'custom', key: key ?? 'care', ownerType, name: 'Care', type: { name: 'single_line_text_field' }, validations: [] }], pageInfo: { hasNextPage: false }, schema: { ownerType, namespace, key }, first, after }),
     getMetafieldDefinition: ({ shop, ownerType, namespace, key }) => ({ shop, metafieldDefinition: { namespace, key, ownerType, name: 'Care', type: { name: 'single_line_text_field' }, validations: [] }, schema: { ownerType, namespace, key } }),
-    listResourceMetafields: ({ shop, ownerId, namespace, key, first }) => ({ shop, owner: { id: ownerId, type: 'Product' }, metafields: [{ id: 'gid://shopify/Metafield/1', namespace: namespace ?? 'custom', key: key ?? 'care', type: 'single_line_text_field', valuePresent: true, valueLength: 9 }], pageInfo: { hasNextPage: false }, schema: { namespace, key }, first }),
-    listMetaobjectDefinitions: ({ shop, type, first }) => ({ shop, metaobjectDefinitions: [{ id: 'gid://shopify/MetaobjectDefinition/1', type: type ?? 'designer_profile', name: 'Designer profile', fieldDefinitions: [] }], pageInfo: { hasNextPage: false }, schema: type === undefined ? undefined : { type }, first }),
+    listResourceMetafields: ({ shop, ownerId, namespace, key, first, after }) => ({ shop, owner: { id: ownerId, type: 'Product' }, metafields: [{ id: 'gid://shopify/Metafield/1', namespace: namespace ?? 'custom', key: key ?? 'care', type: 'single_line_text_field', valuePresent: true, valueLength: 9 }], pageInfo: { hasNextPage: false }, schema: { namespace, key }, first, after }),
+    listMetaobjectDefinitions: ({ shop, type, first, after }) => ({ shop, metaobjectDefinitions: [{ id: 'gid://shopify/MetaobjectDefinition/1', type: type ?? 'designer_profile', name: 'Designer profile', fieldDefinitions: [] }], pageInfo: { hasNextPage: false }, schema: type === undefined ? undefined : { type }, first, after }),
     getMetaobjectDefinition: ({ shop, type }) => ({ shop, metaobjectDefinition: { id: 'gid://shopify/MetaobjectDefinition/1', type, name: 'Designer profile', fieldDefinitions: [] }, schema: { type } }),
-    listMetaobjects: ({ shop, type, first }) => ({ shop, metaobjects: [{ id: 'gid://shopify/Metaobject/1', handle: 'ada', type, fields: [{ key: 'bio', type: 'multi_line_text_field', valuePresent: true, valueLength: 3 }] }], pageInfo: { hasNextPage: false }, schema: { type }, first }),
+    listMetaobjects: ({ shop, type, first, after }) => ({ shop, metaobjects: [{ id: 'gid://shopify/Metaobject/1', handle: 'ada', type, fields: [{ key: 'bio', type: 'multi_line_text_field', valuePresent: true, valueLength: 3 }] }], pageInfo: { hasNextPage: false }, schema: { type }, first, after }),
     getMetaobject: ({ shop, id }) => ({ shop, metaobject: { id, handle: 'ada', type: 'designer_profile', fields: [{ key: 'bio', type: 'multi_line_text_field', valuePresent: true, valueLength: 3 }] } }),
     startBulkOperation: ({ shop, templateId }) => ({
       shop,
@@ -1149,6 +1152,20 @@ describe('curated MCP server', () => {
     await expect(callTool('shopify.marketing_events.list', { shop: 'alpha.myshopify.com', query: 'mutation { shop { name } }' }, createDeps())).rejects.toThrow(McpToolError);
     await expect(callTool('shopify.markets.list', { shop: 'alpha.myshopify.com', first: 0 }, createDeps())).rejects.toThrow(McpToolError);
     await expect(callTool('shopify.markets.list', { shop: 'alpha.myshopify.com', first: 51 }, createDeps())).rejects.toThrow(McpToolError);
+  });
+
+  it('accepts opaque MCP cursors containing query-like substrings but keeps human query inputs strict', async () => {
+    const cursor = 'bWNwOjEyMzpRdWVyeXF1ZXJ5cXVlcnk=-Query-query';
+    await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', after: cursor }, createDeps())).resolves.toMatchObject({ after: cursor });
+    await expect(callTool('shopify.discounts.list', { shop: 'alpha.myshopify.com', after: cursor }, createDeps())).resolves.toMatchObject({ after: cursor });
+    await expect(callTool('shopify.marketing_events.list', { shop: 'alpha.myshopify.com', after: cursor }, createDeps())).resolves.toMatchObject({ after: cursor });
+    await expect(callTool('shopify.markets.list', { shop: 'alpha.myshopify.com', after: cursor }, createDeps())).resolves.toMatchObject({ after: cursor });
+    await expect(callTool('shopify.metafield_definitions.list', { shop: 'alpha.myshopify.com', ownerType: 'PRODUCT', after: cursor }, createDeps())).resolves.toMatchObject({ after: cursor });
+    await expect(callTool('shopify.resource_metafields.list', { shop: 'alpha.myshopify.com', ownerId: 'gid://shopify/Product/1', after: cursor }, createDeps())).resolves.toMatchObject({ after: cursor });
+    await expect(callTool('shopify.metaobject_definitions.list', { shop: 'alpha.myshopify.com', after: cursor }, createDeps())).resolves.toMatchObject({ after: cursor });
+    await expect(callTool('shopify.metaobjects.list', { shop: 'alpha.myshopify.com', type: 'designer_profile', after: cursor }, createDeps())).resolves.toMatchObject({ after: cursor });
+
+    await expect(callTool('shopify.customers.list', { shop: 'alpha.myshopify.com', query: 'query { shop { name } }' }, createDeps())).rejects.toThrow(McpToolError);
   });
 
   it('rejects non-positive bulk result preview limits before dispatch', async () => {
