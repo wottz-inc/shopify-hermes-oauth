@@ -54,7 +54,7 @@ describe('SAFETY-CRITICAL README documentation contracts', () => {
       'first 50 line items per order',
       'more than 100 variants',
       'more than 50 inventory levels',
-      'custom paginated Shopify Admin GraphQL workflow outside the curated v0.1 reports',
+      'Shopify bulk inventory export',
     ]);
   });
 

@@ -127,7 +127,7 @@ describe('shopify-hermes-oauth Hermes skill', () => {
       'order line items 25, fulfillments 10, refunds 10',
       'Metafields expose namespace/key/type plus value presence/length, not raw values',
       '`shopify.orders.get` omits customer contact/address, notes/tags, tracking numbers/URLs, and transactions',
-      'narrow the scope or use a custom paginated Shopify Admin GraphQL workflow',
+      'narrow the scope or use Shopify bulk inventory export',
       'Do not ask users to paste Shopify access tokens into chat',
       'Do not ask users to paste Shopify client secrets into chat',
       'Hermes Bitwarden Secrets Manager',

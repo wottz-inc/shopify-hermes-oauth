@@ -87,9 +87,9 @@ describe('inventory report service', () => {
     });
     expect(calls).toEqual([
       { query: 'products', after: null, first: 10, operationName: 'InventoryReportProducts' },
-      { query: 'levels', inventoryItemId: 'gid://shopify/InventoryItem/3001', after: null, first: 10, operationName: 'InventoryReportInventoryLevels' },
+      { query: 'levels', inventoryItemId: 'gid://shopify/InventoryItem/3001', after: null, first: 50, operationName: 'InventoryReportInventoryLevels' },
       { query: 'products', after: 'cursor-1', first: 10, operationName: 'InventoryReportProducts' },
-      { query: 'levels', inventoryItemId: 'gid://shopify/InventoryItem/3002', after: null, first: 10, operationName: 'InventoryReportInventoryLevels' },
+      { query: 'levels', inventoryItemId: 'gid://shopify/InventoryItem/3002', after: null, first: 50, operationName: 'InventoryReportInventoryLevels' },
     ]);
   });
 
@@ -154,7 +154,7 @@ describe('inventory report service', () => {
     await expect(generateInventoryReport({ client })).resolves.toEqual({ lowStockThreshold: 5, rows: [] });
     expect(calls).toEqual([{ after: null, first: 10 }]);
     expect(INVENTORY_REPORT_QUERY).toContain('products(first: $first, after: $after)');
-    expect(INVENTORY_REPORT_QUERY).toContain('variants(first: 25)');
+    expect(INVENTORY_REPORT_QUERY).toContain('variants(first: 100)');
     expect(INVENTORY_REPORT_QUERY).not.toContain('inventoryLevels');
     expect(INVENTORY_LEVELS_QUERY).toContain('inventoryItem(id: $inventoryItemId)');
     expect(INVENTORY_LEVELS_QUERY).toContain('inventoryLevels(first: $first, after: $after)');
@@ -199,12 +199,12 @@ describe('inventory report service', () => {
     };
 
     await expect(generateInventoryReport({ client })).rejects.toThrow(
-      'Shopify Admin GraphQL variants connection was truncated for product gid://shopify/Product/1001. v0.1 inventory reports support at most 25 variants per product.',
+      'Shopify Admin GraphQL variants connection was truncated for product gid://shopify/Product/1001. v0.1 inventory reports support at most 100 variants per product. Narrow the report scope or use Shopify bulk inventory export for stores exceeding this report limit.',
     );
     await expect(generateInventoryReport({ client })).rejects.not.toThrow('Sensitive Shirt');
   });
 
-  it('paginates inventory levels separately so variants with more than 10 locations are reported', async () => {
+  it('fails safely instead of paginating beyond 50 inventory levels for one variant', async () => {
     const calls: { readonly inventoryItemId: string; readonly after: string | null; readonly first: number }[] = [];
     const client: InventoryReportGraphqlClient = {
       query: (query, variables) => {
@@ -223,21 +223,18 @@ describe('inventory report service', () => {
           throw new Error('expected inventory item variables');
         }
         calls.push({ inventoryItemId: variables.inventoryItemId, after: variables.after, first: variables.first });
-        return Promise.resolve(variables.after === null
-          ? inventoryLevelsResponse([{ node: { location: { name: 'Location 1' }, quantities: [{ name: 'available', quantity: 3 }] } }], { hasNextPage: true, endCursor: 'level-cursor-1' })
-          : inventoryLevelsResponse([{ node: { location: { name: 'Location 11' }, quantities: [{ name: 'available', quantity: 11 }] } }], { hasNextPage: false, endCursor: 'level-cursor-2' }));
+        return Promise.resolve(inventoryLevelsResponse(
+          [{ node: { location: { name: 'Location 1' }, quantities: [{ name: 'available', quantity: 3 }] } }],
+          { hasNextPage: true, endCursor: 'level-cursor-1' },
+        ));
       },
     };
 
-    await expect(generateInventoryReport({ client })).resolves.toEqual(expect.objectContaining({
-      rows: [
-        expect.objectContaining({ locationName: 'Location 1', available: 3 }),
-        expect.objectContaining({ locationName: 'Location 11', available: 11 }),
-      ],
-    }));
+    await expect(generateInventoryReport({ client })).rejects.toThrow(
+      'Shopify Admin GraphQL inventory levels connection was truncated for inventory item gid://shopify/InventoryItem/3001. v0.1 inventory reports support at most 50 inventory levels per variant. Narrow the report scope or use Shopify bulk inventory export for stores exceeding this report limit.',
+    );
     expect(calls).toEqual([
-      { inventoryItemId: 'gid://shopify/InventoryItem/3001', after: null, first: 10 },
-      { inventoryItemId: 'gid://shopify/InventoryItem/3001', after: 'level-cursor-1', first: 10 },
+      { inventoryItemId: 'gid://shopify/InventoryItem/3001', after: null, first: 50 },
     ]);
   });
 
