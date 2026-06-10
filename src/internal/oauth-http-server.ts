@@ -5,7 +5,7 @@ import { ApiVersion, LogSeverity, shopifyApi } from '@shopify/shopify-api';
 
 import { MissingRequiredAdminApiScopesError } from './shopify-oauth-token-exchange.js';
 import { type SafeErrorCode } from '../safe-errors.js';
-import { normalizeShopDomain } from '../shop-domain.js';
+import { normalizeShopDomain, ShopDomainValidationError } from '../shop-domain.js';
 
 const SERVICE_NAME = 'shopify-hermes-oauth';
 const CALLBACK_PATH = '/auth/callback';
@@ -13,6 +13,9 @@ const START_PATH = '/auth/start';
 const HEALTH_PATH = '/health';
 const SHOPIFY_OAUTH_PATH = '/admin/oauth/authorize';
 const DEFAULT_MAX_CALLBACK_AGE_MS = 5 * 60 * 1_000;
+const DEFAULT_AUTH_START_RATE_LIMIT_MAX_REQUESTS = 30;
+const DEFAULT_AUTH_START_RATE_LIMIT_WINDOW_MS = 60_000;
+const DEFAULT_AUTH_START_RATE_LIMIT_MAX_BUCKETS = 10_000;
 const MAX_SAFE_TIMESTAMP_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1_000);
 const DEFAULT_REQUIRED_ADMIN_API_SCOPES = ['read_products', 'read_orders', 'read_inventory', 'read_locations'] as const;
 
@@ -78,6 +81,12 @@ export type OAuthCallbackHmacValidator = (
   query: Readonly<Record<string, string | undefined>>,
 ) => Promise<boolean> | boolean;
 
+export interface OAuthAuthStartRateLimitConfig {
+  readonly maxRequests?: number;
+  readonly windowMs?: number;
+  readonly maxBuckets?: number;
+}
+
 export interface OAuthHttpServerDependencies {
   readonly config: OAuthHttpServerConfig;
   readonly stateStore: OAuthStateStore;
@@ -85,6 +94,7 @@ export interface OAuthHttpServerDependencies {
   readonly tokenStore: OAuthTokenStore;
   readonly now?: () => number;
   readonly maxCallbackAgeMs?: number;
+  readonly authStartRateLimit?: OAuthAuthStartRateLimitConfig;
 }
 
 export interface OAuthHttpServerInternalDependencies extends OAuthHttpServerDependencies {
@@ -94,18 +104,30 @@ export interface OAuthHttpServerInternalDependencies extends OAuthHttpServerDepe
 export function createOAuthHttpServerWithDependencies(
   dependencies: OAuthHttpServerInternalDependencies,
 ): Server {
+  const authStartRateLimiter = createAuthStartRateLimiter(dependencies);
+
   return createServer((request, response) => {
-    void routeRequestSafely(request, response, dependencies);
+    void routeRequestSafely(request, response, dependencies, authStartRateLimiter);
   });
+}
+
+interface AuthStartRateLimiter {
+  check(input: { readonly ip: string; readonly shop: string }): { readonly allowed: boolean; readonly retryAfterSeconds?: number };
+}
+
+interface RateLimitBucket {
+  windowStartedAt: number;
+  count: number;
 }
 
 async function routeRequestSafely(
   request: IncomingMessage,
   response: ServerResponse,
   dependencies: OAuthHttpServerInternalDependencies,
+  authStartRateLimiter: AuthStartRateLimiter,
 ): Promise<void> {
   try {
-    await routeRequest(request, response, dependencies);
+    await routeRequest(request, response, dependencies, authStartRateLimiter);
   } catch {
     trySendGenericError(response);
   }
@@ -144,6 +166,7 @@ async function routeRequest(
   request: IncomingMessage,
   response: ServerResponse,
   dependencies: OAuthHttpServerInternalDependencies,
+  authStartRateLimiter: AuthStartRateLimiter,
 ): Promise<void> {
   const url = parseRequestUrl(request, dependencies.config.appUrl);
 
@@ -163,7 +186,7 @@ async function routeRequest(
   }
 
   if (url.pathname === START_PATH) {
-    handleAuthStart(url, response, dependencies);
+    handleAuthStart(request, url, response, dependencies, authStartRateLimiter);
     return;
   }
 
@@ -176,14 +199,23 @@ async function routeRequest(
 }
 
 function handleAuthStart(
+  request: IncomingMessage,
   url: URL,
   response: ServerResponse,
   dependencies: OAuthHttpServerInternalDependencies,
+  authStartRateLimiter: AuthStartRateLimiter,
 ): void {
   const shopParam = url.searchParams.get('shop');
 
   try {
     const shop = normalizeShopDomain(shopParam ?? '');
+    const rateLimit = authStartRateLimiter.check({ ip: clientIp(request), shop });
+
+    if (!rateLimit.allowed) {
+      sendText(response, 429, 'Too many requests', retryAfterHeaders(rateLimit.retryAfterSeconds));
+      return;
+    }
+
     const redirectUri = callbackUrl(dependencies.config.appUrl);
     const stateRecord = dependencies.stateStore.create({ shop, redirectUri });
     const oauthUrl = new URL(SHOPIFY_OAUTH_PATH, `https://${shop}`);
@@ -193,8 +225,13 @@ function handleAuthStart(
     oauthUrl.searchParams.set('state', stateRecord.state);
 
     redirect(response, oauthUrl.toString());
-  } catch {
-    sendText(response, 400, 'Invalid Shopify shop domain');
+  } catch (error) {
+    if (error instanceof ShopDomainValidationError) {
+      sendText(response, 400, 'Invalid Shopify shop domain');
+      return;
+    }
+
+    sendText(response, 503, 'OAuth install is temporarily unavailable');
   }
 }
 
@@ -374,6 +411,80 @@ function callbackUrl(appUrl: string): string {
 
 function ensureTrailingSlash(value: string): string {
   return value.endsWith('/') ? value : `${value}/`;
+}
+
+function createAuthStartRateLimiter(dependencies: OAuthHttpServerInternalDependencies): AuthStartRateLimiter {
+  const maxRequests = dependencies.authStartRateLimit?.maxRequests ?? DEFAULT_AUTH_START_RATE_LIMIT_MAX_REQUESTS;
+  const windowMs = dependencies.authStartRateLimit?.windowMs ?? DEFAULT_AUTH_START_RATE_LIMIT_WINDOW_MS;
+  const maxBuckets = dependencies.authStartRateLimit?.maxBuckets ?? DEFAULT_AUTH_START_RATE_LIMIT_MAX_BUCKETS;
+
+  if (!Number.isSafeInteger(maxRequests) || maxRequests <= 0) {
+    throw new Error('Auth start rate-limit maxRequests must be a positive safe integer');
+  }
+
+  if (!Number.isSafeInteger(windowMs) || windowMs <= 0) {
+    throw new Error('Auth start rate-limit windowMs must be a positive safe integer');
+  }
+
+  if (!Number.isSafeInteger(maxBuckets) || maxBuckets <= 0) {
+    throw new Error('Auth start rate-limit maxBuckets must be a positive safe integer');
+  }
+
+  const buckets = new Map<string, RateLimitBucket>();
+  const now = dependencies.now ?? Date.now;
+
+  return {
+    check: ({ ip, shop }) => {
+      const checkedAt = now();
+      const key = `${ip}\u0000${shop}`;
+      const bucket = buckets.get(key);
+
+      if (bucket === undefined || checkedAt - bucket.windowStartedAt >= windowMs) {
+        pruneExpiredRateLimitBuckets(buckets, checkedAt, windowMs);
+
+        if (!buckets.has(key) && buckets.size >= maxBuckets) {
+          return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(windowMs / 1_000)) };
+        }
+
+        buckets.set(key, { windowStartedAt: checkedAt, count: 1 });
+        return { allowed: true };
+      }
+
+      if (bucket.count >= maxRequests) {
+        return {
+          allowed: false,
+          retryAfterSeconds: Math.max(1, Math.ceil((bucket.windowStartedAt + windowMs - checkedAt) / 1_000)),
+        };
+      }
+
+      bucket.count += 1;
+      return { allowed: true };
+    },
+  };
+}
+
+function pruneExpiredRateLimitBuckets(
+  buckets: Map<string, RateLimitBucket>,
+  checkedAt: number,
+  windowMs: number,
+): void {
+  for (const [key, bucket] of buckets) {
+    if (checkedAt - bucket.windowStartedAt >= windowMs) {
+      buckets.delete(key);
+    }
+  }
+}
+
+function retryAfterHeaders(retryAfterSeconds: number | undefined): Record<string, string> {
+  if (retryAfterSeconds === undefined) {
+    return {};
+  }
+
+  return { 'Retry-After': retryAfterSeconds.toString(10) };
+}
+
+function clientIp(request: IncomingMessage): string {
+  return request.socket.remoteAddress ?? 'unknown';
 }
 
 function parseRequestUrl(request: IncomingMessage, appUrl: string): URL | undefined {

@@ -5,6 +5,7 @@ import { normalizeShopDomain } from '../shop-domain.js';
 const DEFAULT_TTL_MS = 15 * 60 * 1_000;
 const MAX_TTL_MS = 15 * 60 * 1_000;
 const DEFAULT_STATE_BYTES = 32;
+const DEFAULT_MAX_RECORDS = 10_000;
 const MAX_STATE_GENERATION_ATTEMPTS = 3;
 const INVALID_STATE_MESSAGE = 'Invalid or expired OAuth state';
 
@@ -22,6 +23,7 @@ export interface CreateOAuthStateInput {
 
 export interface OAuthStateStoreOptions {
   readonly ttlMs?: number;
+  readonly maxRecords?: number;
   readonly now?: () => number;
   readonly randomState?: () => string;
 }
@@ -36,6 +38,7 @@ export class OAuthStateError extends Error {
 export class InMemoryOAuthStateStore {
   private readonly records = new Map<string, OAuthStateRecord>();
   private readonly ttlMs: number;
+  private readonly maxRecords: number;
   private readonly now: () => number;
   private readonly randomState: () => string;
 
@@ -46,7 +49,14 @@ export class InMemoryOAuthStateStore {
       throw new OAuthStateError('OAuth state TTL must be a positive safe integer no greater than 15 minutes');
     }
 
+    const maxRecords = options.maxRecords ?? DEFAULT_MAX_RECORDS;
+
+    if (!Number.isSafeInteger(maxRecords) || maxRecords <= 0) {
+      throw new OAuthStateError('OAuth state store capacity must be a positive safe integer');
+    }
+
     this.ttlMs = ttlMs;
+    this.maxRecords = maxRecords;
     this.now = options.now ?? Date.now;
     this.randomState = options.randomState ?? defaultRandomState;
   }
@@ -57,6 +67,10 @@ export class InMemoryOAuthStateStore {
     this.cleanupExpired();
 
     const shop = normalizeShopDomain(input.shop);
+
+    if (this.records.size >= this.maxRecords) {
+      throw new OAuthStateError('OAuth state store is at capacity');
+    }
 
     for (let attempt = 0; attempt < MAX_STATE_GENERATION_ATTEMPTS; attempt += 1) {
       const state = this.randomState();

@@ -36,6 +36,175 @@ describe('OAuth callback HMAC validation', () => {
     await Promise.all(openServers.splice(0).map((server) => closeServer(server)));
   });
 
+  it('rate-limits auth-start requests per IP and shop with a safe generic 429', async () => {
+    let now = 1_000;
+    const createdShops: string[] = [];
+    const server = await listen(createOAuthHttpServerForTesting({
+      ...baseDependencies(),
+      authStartRateLimit: { maxRequests: 2, windowMs: 60_000 },
+      now: () => now,
+      stateStore: {
+        ...baseDependencies().stateStore,
+        create: ({ shop }) => {
+          createdShops.push(shop);
+          return {
+            state: `state-secret-${createdShops.length.toString(10)}`,
+            shop,
+            expiresAt: now + 60_000,
+          };
+        },
+      },
+      hmacValidator: () => true,
+    }));
+    const baseUrl = serverBaseUrl(server);
+
+    const first = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, { redirect: 'manual' });
+    const second = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, { redirect: 'manual' });
+    const limited = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, { redirect: 'manual' });
+    const limitedBody = await limited.text();
+
+    expect(first.status).toBe(302);
+    expect(second.status).toBe(302);
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('location')).toBeNull();
+    expect(limited.headers.get('retry-after')).toBe('60');
+    expect(limitedBody).toBe('Too many requests');
+    expect(limitedBody).not.toContain('state-secret');
+    expect(limitedBody).not.toContain('test-client-secret');
+    expect(createdShops).toEqual(['example.myshopify.com', 'example.myshopify.com']);
+
+    now = 61_001;
+    const afterWindow = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, { redirect: 'manual' });
+
+    expect(afterWindow.status).toBe(302);
+    expect(createdShops).toEqual(['example.myshopify.com', 'example.myshopify.com', 'example.myshopify.com']);
+  });
+
+  it('tracks auth-start rate limits independently for different shops from the same IP', async () => {
+    const createdShops: string[] = [];
+    const server = await listen(createOAuthHttpServerForTesting({
+      ...baseDependencies(),
+      authStartRateLimit: { maxRequests: 1, windowMs: 60_000 },
+      stateStore: {
+        ...baseDependencies().stateStore,
+        create: ({ shop }) => {
+          createdShops.push(shop);
+          return {
+            state: `state-${shop}`,
+            shop,
+            expiresAt: Date.now() + 60_000,
+          };
+        },
+      },
+      hmacValidator: () => true,
+    }));
+    const baseUrl = serverBaseUrl(server);
+
+    const example = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, { redirect: 'manual' });
+    const other = await fetch(`${baseUrl}/auth/start?shop=other.myshopify.com`, { redirect: 'manual' });
+    const limitedExample = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, { redirect: 'manual' });
+
+    expect(example.status).toBe(302);
+    expect(other.status).toBe(302);
+    expect(limitedExample.status).toBe(429);
+    expect(createdShops).toEqual(['example.myshopify.com', 'other.myshopify.com']);
+  });
+
+  it('does not trust arbitrary x-forwarded-for values for auth-start rate limiting', async () => {
+    const createdShops: string[] = [];
+    const server = await listen(createOAuthHttpServerForTesting({
+      ...baseDependencies(),
+      authStartRateLimit: { maxRequests: 1, windowMs: 60_000 },
+      stateStore: {
+        ...baseDependencies().stateStore,
+        create: ({ shop }) => {
+          createdShops.push(shop);
+          return {
+            state: `state-${createdShops.length.toString(10)}`,
+            shop,
+            expiresAt: Date.now() + 60_000,
+          };
+        },
+      },
+      hmacValidator: () => true,
+    }));
+    const baseUrl = serverBaseUrl(server);
+
+    const first = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, {
+      headers: { 'x-forwarded-for': '198.51.100.10' },
+      redirect: 'manual',
+    });
+    const second = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, {
+      headers: { 'x-forwarded-for': '203.0.113.20' },
+      redirect: 'manual',
+    });
+
+    expect(first.status).toBe(302);
+    expect(second.status).toBe(429);
+    expect(createdShops).toEqual(['example.myshopify.com']);
+  });
+
+  it('bounds auth-start rate-limit buckets and prunes expired buckets deterministically', async () => {
+    let now = 1_000;
+    const createdShops: string[] = [];
+    const server = await listen(createOAuthHttpServerForTesting({
+      ...baseDependencies(),
+      authStartRateLimit: { maxRequests: 10, windowMs: 60_000, maxBuckets: 2 },
+      now: () => now,
+      stateStore: {
+        ...baseDependencies().stateStore,
+        create: ({ shop }) => {
+          createdShops.push(shop);
+          return {
+            state: `state-${createdShops.length.toString(10)}`,
+            shop,
+            expiresAt: now + 60_000,
+          };
+        },
+      },
+      hmacValidator: () => true,
+    }));
+    const baseUrl = serverBaseUrl(server);
+
+    const first = await fetch(`${baseUrl}/auth/start?shop=first.myshopify.com`, { redirect: 'manual' });
+    const second = await fetch(`${baseUrl}/auth/start?shop=second.myshopify.com`, { redirect: 'manual' });
+    const capped = await fetch(`${baseUrl}/auth/start?shop=third.myshopify.com`, { redirect: 'manual' });
+
+    expect(first.status).toBe(302);
+    expect(second.status).toBe(302);
+    expect(capped.status).toBe(429);
+    expect(await capped.text()).toBe('Too many requests');
+    expect(createdShops).toEqual(['first.myshopify.com', 'second.myshopify.com']);
+
+    now = 61_001;
+    const afterPrune = await fetch(`${baseUrl}/auth/start?shop=third.myshopify.com`, { redirect: 'manual' });
+
+    expect(afterPrune.status).toBe(302);
+    expect(createdShops).toEqual(['first.myshopify.com', 'second.myshopify.com', 'third.myshopify.com']);
+  });
+
+  it('returns a generic 503 when auth-start cannot create OAuth state', async () => {
+    const server = await listen(createOAuthHttpServerForTesting({
+      ...baseDependencies(),
+      stateStore: {
+        ...baseDependencies().stateStore,
+        create: () => {
+          throw new Error('OAuth state store is at capacity: secret internals');
+        },
+      },
+      hmacValidator: () => true,
+    }));
+    const baseUrl = serverBaseUrl(server);
+
+    const response = await fetch(`${baseUrl}/auth/start?shop=example.myshopify.com`, { redirect: 'manual' });
+    const body = await response.text();
+
+    expect(response.status).toBe(503);
+    expect(body).toBe('OAuth install is temporarily unavailable');
+    expect(body).not.toContain('capacity');
+    expect(body).not.toContain('secret internals');
+  });
+
   it('rejects an invalid HMAC through the default official Shopify helper path before consuming state', async () => {
     let consumedState: string | undefined;
     let tokenExchangeCalls = 0;

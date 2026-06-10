@@ -173,4 +173,52 @@ describe('InMemoryOAuthStateStore', () => {
     expect(second).toMatch(/^[A-Za-z0-9_-]{43}$/u);
     expect(second).not.toBe(first);
   });
+
+  it('rejects new unexpired states at the configured capacity without leaking state values', () => {
+    let stateIndex = 0;
+    const states = ['bounded-state-1', 'bounded-state-2', 'bounded-state-3'];
+    const store = new InMemoryOAuthStateStore({
+      maxRecords: 2,
+      now: () => 1_000,
+      randomState: () => states[stateIndex++] ?? 'bounded-state-fallback',
+      ttlMs: 60_000,
+    });
+
+    expect(store.create({ shop: 'example.myshopify.com' }).state).toBe('bounded-state-1');
+    expect(store.create({ shop: 'example.myshopify.com' }).state).toBe('bounded-state-2');
+
+    expect(() => store.create({ shop: 'example.myshopify.com' })).toThrow(OAuthStateError);
+
+    try {
+      store.create({ shop: 'example.myshopify.com' });
+    } catch (error) {
+      expect((error as Error).message).toBe('OAuth state store is at capacity');
+      expect((error as Error).message).not.toContain('bounded-state-1');
+      expect((error as Error).message).not.toContain('bounded-state-2');
+      expect((error as Error).message).not.toContain('bounded-state-3');
+    }
+
+    expect(store.consume('bounded-state-1').state).toBe('bounded-state-1');
+    expect(store.consume('bounded-state-2').state).toBe('bounded-state-2');
+    expect(() => store.consume('bounded-state-3')).toThrow(OAuthStateError);
+  });
+
+  it('frees capacity by pruning expired states before enforcing the bound', () => {
+    let now = 1_000;
+    let stateIndex = 0;
+    const states = ['expired-bounded-state', 'fresh-bounded-state'];
+    const store = new InMemoryOAuthStateStore({
+      maxRecords: 1,
+      now: () => now,
+      randomState: () => states[stateIndex++] ?? 'fallback-bounded-state',
+      ttlMs: 5_000,
+    });
+
+    store.create({ shop: 'example.myshopify.com' });
+    now = 6_001;
+
+    expect(store.create({ shop: 'example.myshopify.com' }).state).toBe('fresh-bounded-state');
+    expect(() => store.consume('expired-bounded-state')).toThrow(OAuthStateError);
+    expect(store.consume('fresh-bounded-state').state).toBe('fresh-bounded-state');
+  });
 });
