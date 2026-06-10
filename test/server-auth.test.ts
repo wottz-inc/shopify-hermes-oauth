@@ -290,6 +290,32 @@ describe('OAuth HTTP server routes', () => {
     expect(body).not.toContain(accessToken);
     expect(body).not.toContain(clientSecret);
   });
+
+  it.each([
+    { name: 'omitted', exchangeResult: { accessToken } },
+    { name: 'empty', exchangeResult: { accessToken, scopes: '' } },
+  ] as const)('fails closed and does not store configured scopes when token exchange returns $name scopes', async ({ exchangeResult }) => {
+    const deps = { ...makeDeps(), now: Date.now };
+    deps.tokenExchange.mockResolvedValue(exchangeResult);
+    const { baseUrl } = await listen(deps);
+    const callbackTimestamp = Math.floor(Date.now() / 1_000).toString(10);
+    const callbackUrl = signedCallbackUrl(baseUrl, {
+      shop: 'example.myshopify.com',
+      code: 'oauth-code',
+      state: 'state-123',
+      timestamp: callbackTimestamp,
+    });
+
+    const response = await fetch(callbackUrl);
+    const body = await response.text();
+
+    expect(response.status).toBe(400);
+    expect(body).toContain('Required Shopify Admin API scopes are missing');
+    expect(body).toContain('Reinstall or re-authorize the shop');
+    expect(body).not.toContain(accessToken);
+    expect(body).not.toContain(clientSecret);
+    expect(deps.tokenStore.storeToken).not.toHaveBeenCalled();
+  });
 });
 
 function makeDeps(): OAuthHttpServerDependencies & {

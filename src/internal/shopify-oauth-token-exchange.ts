@@ -19,7 +19,7 @@ export interface ShopifyOAuthExchangeInput {
   readonly clientSecret: string;
 }
 
-export async function exchangeShopifyOAuthToken(input: ShopifyOAuthExchangeInput): Promise<{ readonly accessToken: string; readonly scopes?: string }> {
+export async function exchangeShopifyOAuthToken(input: ShopifyOAuthExchangeInput): Promise<{ readonly accessToken: string; readonly scopes: string }> {
   const shop = normalizeTokenStoreShopDomain(input.shop);
   let response: Response;
 
@@ -57,9 +57,13 @@ export async function exchangeShopifyOAuthToken(input: ShopifyOAuthExchangeInput
     throw new SafeError('Shopify OAuth token exchange response did not include an access token.', 'OAUTH_TOKEN_EXCHANGE_INVALID_RESPONSE');
   }
 
+  if (typeof payload.scope !== 'string' || payload.scope.trim().length === 0) {
+    throw new MissingRequiredAdminApiScopesError();
+  }
+
   return {
     accessToken: payload.access_token,
-    ...(typeof payload.scope === 'string' ? { scopes: payload.scope } : {}),
+    scopes: payload.scope,
   };
 }
 

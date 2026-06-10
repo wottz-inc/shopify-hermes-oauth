@@ -1163,6 +1163,26 @@ describe('Shopify OAuth token exchange', () => {
     expect(tokenRequests[0]?.url).toBe('https://example.myshopify.com/admin/oauth/access_token');
   });
 
+  it.each([
+    { name: 'omitted', body: { access_token: 'shpat_token_should_not_leak' } },
+    { name: 'empty', body: { access_token: 'shpat_token_should_not_leak', scope: '' } },
+  ] as const)('rejects token exchange responses with $name granted scopes without leaking secrets', async ({ body }) => {
+    await expect(exchangeShopifyOAuthToken({
+      fetch: () => Promise.resolve(new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })),
+      shop: 'Example',
+      code: 'oauth-code-should-not-leak',
+      redirectUri: 'https://public-app.example.test/auth/callback',
+      clientId: 'client-id',
+      clientSecret: 'client-secret-should-not-leak',
+    })).rejects.toMatchObject({
+      code: 'OAUTH_MISSING_REQUIRED_SCOPES',
+      message: 'At least one scope is required',
+    });
+  });
+
   it('classifies Shopify missing required Admin API scope exchange errors without leaking the response body', async () => {
     const tokenFetch: typeof globalThis.fetch = () => Promise.resolve(new Response(JSON.stringify({
       error: 'invalid_request',

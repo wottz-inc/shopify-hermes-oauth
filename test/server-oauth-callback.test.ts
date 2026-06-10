@@ -26,7 +26,7 @@ const baseDependencies = (): OAuthHttpServerDependencies => ({
       expiresAt: Date.now() + 60_000,
     }),
   },
-  tokenExchange: () => ({ accessToken: 'offline-token' }),
+  tokenExchange: () => ({ accessToken: 'offline-token', scopes: ['read_products'] }),
   tokenStore: { storeToken: () => undefined },
   now: () => 1_700_000_000_000,
 });
@@ -220,7 +220,7 @@ describe('OAuth callback HMAC validation', () => {
       },
       tokenExchange: () => {
         tokenExchangeCalls += 1;
-        return { accessToken: 'offline-token' };
+        return { accessToken: 'offline-token', scopes: ['read_products'] };
       },
       tokenStore: {
         storeToken: () => {
@@ -267,7 +267,7 @@ describe('OAuth callback HMAC validation', () => {
         },
         tokenExchange: () => {
           tokenExchangeCalls += 1;
-          return { accessToken: 'offline-token' };
+          return { accessToken: 'offline-token', scopes: ['read_products'] };
         },
         tokenStore: {
           storeToken: () => {
@@ -340,7 +340,7 @@ describe('OAuth callback HMAC validation', () => {
       },
       tokenExchange: () => {
         tokenExchangeCalls += 1;
-        return { accessToken: 'offline-token' };
+        return { accessToken: 'offline-token', scopes: ['read_products'] };
       },
       tokenStore: {
         storeToken: () => {
@@ -494,7 +494,7 @@ describe('OAuth callback HMAC validation', () => {
       },
       tokenExchange: ({ code }) => {
         exchangedCodes.push(code);
-        return { accessToken: 'offline-token' };
+        return { accessToken: 'offline-token', scopes: ['read_products'] };
       },
       tokenStore: {
         storeToken: ({ shop }) => {
@@ -545,7 +545,7 @@ describe('OAuth callback HMAC validation', () => {
       },
       tokenExchange: ({ code }) => {
         exchangedCodes.push(code);
-        return { accessToken: 'offline-token' };
+        return { accessToken: 'offline-token', scopes: ['read_products'] };
       },
       tokenStore: {
         storeToken: ({ shop }) => {
