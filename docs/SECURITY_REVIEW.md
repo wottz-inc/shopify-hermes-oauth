@@ -39,15 +39,55 @@ Reviewed `src/mcp/server.ts`, `test/mcp-server.test.ts`, the skill, and PRD.
 
 Findings:
 
-- The v0.1 MCP allowlist is curated read-only and includes:
-  - `shopify.list_shops`
-  - `shopify.verify_shop`
-  - `shopify.report_products`
-  - `shopify.report_orders`
-  - `shopify.report_inventory`
-  - `shopify.analytics.shopifyql.summary` only when `read_reports`, protected customer data / analytics approval, and `SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS=true` are in place
+- The MCP allowlist is curated and read-oriented. The current full MCP tool surface is generated from `CAPABILITY_REGISTRY` metadata in `src/capabilities.ts`; keep this marked block in sync when registry metadata changes:
+
+<!-- MCP_TOOL_SURFACE_START -->
+- `shopify.health`
+- `shopify.list_shops`
+- `shopify.verify_shop`
+- `shopify.store.diagnostics`
+- `shopify.online_store.summary`
+- `shopify.b2b.companies.summary`
+- `shopify.b2b.catalogs.summary`
+- `shopify.report_products`
+- `shopify.report_orders`
+- `shopify.report_inventory`
+- `shopify.analytics.shopifyql.summary`
+- `shopify.bulk.start`
+- `shopify.bulk.status`
+- `shopify.bulk.result`
+- `shopify.bulk.cancel`
+- `shopify.webhooks.list`
+- `shopify.webhooks.get`
+- `shopify.products.get`
+- `shopify.collections.list`
+- `shopify.collections.get`
+- `shopify.locations.list`
+- `shopify.locations.get`
+- `shopify.inventory.items.get`
+- `shopify.inventory.levels.list`
+- `shopify.orders.get`
+- `shopify.fulfillment_orders.list`
+- `shopify.fulfillment_orders.get`
+- `shopify.customers.list`
+- `shopify.customers.get`
+- `shopify.discounts.list`
+- `shopify.discounts.get`
+- `shopify.marketing_events.list`
+- `shopify.markets.list`
+- `shopify.localization.locales.list`
+- `shopify.metafield_definitions.list`
+- `shopify.metafield_definitions.get`
+- `shopify.resource_metafields.list`
+- `shopify.metaobject_definitions.list`
+- `shopify.metaobject_definitions.get`
+- `shopify.metaobjects.list`
+- `shopify.metaobjects.get`
+<!-- MCP_TOOL_SURFACE_END -->
+
+- Higher-sensitivity read surfaces remain intentionally gated by scopes/feature flags where applicable; for example, `shopify.analytics.shopifyql.summary` requires `read_reports`, protected customer data / analytics approval, and `SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS=true`.
 - No raw Admin GraphQL, REST, or ShopifyQL MCP tool is exposed.
-- No mutation/write MCP tools are exposed for refunds, deletes, fulfilment, product updates, or arbitrary GraphQL.
+- No merchant-data write MCP tools are exposed for refunds, deletes, fulfilment, product updates, or arbitrary GraphQL. Bulk lifecycle tools use constrained Admin GraphQL mutations only to start/cancel curated read-only export templates; they do not expose arbitrary GraphQL or mutate merchant records.
 - Unknown/write-like tools such as `shopify.raw_graphql`, mutation-like names, refund/delete examples, and unknown tools fail closed with `Tool is not allowed.`
 - Tool argument validation rejects extra/raw GraphQL/mutation-looking arguments per tool.
 - MCP audit metadata records only safe operational fields: source, actor, read-only mode, tool name, optional shop, format, threshold, and generic reason. It does not audit customer/order/report rows, raw GraphQL, tokens, authorization headers, or token-store values.

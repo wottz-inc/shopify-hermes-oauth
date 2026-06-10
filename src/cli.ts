@@ -31,6 +31,7 @@ import { analyticsReportsDisabledMessage, formatShopifyqlAnalyticsReport, genera
 import { createOAuthHttpServer } from './server.js';
 import { createShopifyAdminGraphqlClient, redactSensitiveErrorMessage, ShopifyAdminGraphqlError } from './shopify/admin-client.js';
 import { generateStoreDiagnostics } from './shops/diagnostics.js';
+import { formatMcpToolSurfaceMarkdown } from './capabilities.js';
 import { compareShopifyScopes, MissingShopifyScopesError, missingShopifyScopes, normalizeShopifyScopes } from './shopify/scopes.js';
 import { verifyShop, type VerifyShopResult } from './shops/verify.js';
 import { LocalJsonTokenStore, normalizeTokenStoreShopDomain, parseLocalJsonTokenStoreFile, type StoredShopToken } from './tokens/local-token-store.js';
@@ -1252,7 +1253,7 @@ function parseYamlInlineArgs(value: string): readonly string[] {
   return trimmed.split(/\s+/u);
 }
 
-function localHermesSkillContent(): string {
+export function localHermesSkillContent(): string {
   return [
     "---",
     "name: shopify-hermes-oauth",
@@ -1358,37 +1359,13 @@ function localHermesSkillContent(): string {
     "",
     "## MCP tools",
     "",
-    "After `shopify-hermes-oauth hermes install`, use the MCP server for agent workflows. Expected read-oriented tools include:",
+    "After `shopify-hermes-oauth hermes install`, use the MCP server for agent workflows. The full MCP tool surface is generated from `CAPABILITY_REGISTRY` metadata:",
     "",
-    "- `shopify.health`",
-    "- `shopify.list_shops`",
-    "- `shopify.verify_shop`",
-    "- `shopify.store.diagnostics` (safe store/app install status/access/privacy JSON; no tokens, raw GraphQL, owner/contact/billing/customer data, or policy bodies)",
-    "- `shopify.report_products`",
-    "- `shopify.report_orders`",
-    "- `shopify.report_inventory`",
-    "- `shopify.products.get`",
-    "- `shopify.collections.list`",
-    "- `shopify.collections.get`",
-    "- `shopify.locations.list`",
-    "- `shopify.locations.get`",
-    "- `shopify.inventory.items.get`",
-    "- `shopify.inventory.levels.list`",
-    "- `shopify.orders.get`",
-    "- `shopify.fulfillment_orders.list` (requires `read_orders`, `read_merchant_managed_fulfillment_orders`, `read_assigned_fulfillment_orders`, and `read_third_party_fulfillment_orders`; page cap 50, line items 25)",
-    "- `shopify.fulfillment_orders.get` (same fulfillment-order scopes; omits destination address, tracking numbers/URLs, customer contact, notes/tags, metafields, and transactions)",
-    "- `shopify.webhooks.list` (requires `read_webhooks`; no create/update/delete until gated)",
-    "- `shopify.webhooks.get` (requires `read_webhooks`)",
-    "- `shopify.customers.list` (requires `read_customers`; returns bounded pages with email domains only, phone presence only, and aggregate order/spend summaries)",
-    "- `shopify.customers.get` (requires `read_customers`; returns one customer by GID with the same minimal PII policy)",
-    "- `shopify.discounts.list/get` (requires `read_discounts`; omits individual codes/customer/order/attribution/customerSelection details)",
-    "- `shopify.marketing_events.list` (requires `read_marketing_events`; redacts manage/preview URL query strings)",
-    "- `shopify.markets.list` (requires `read_markets`; bounded market/region/currency summary; Shopify may gate Markets by plan/API/app approval)",
-    "- `shopify.localization.locales.list` (requires `read_locales`; locale names/status only, no translations; unsupported stores return a safe limitation object)",
-    "- `shopify.metafield_definitions.list/get` and `shopify.resource_metafields.list` (require `read_products`; validate owner type/namespace/key and return no raw values)",
-    "- `shopify.metaobject_definitions.list/get` (requires `read_metaobject_definitions`) and `shopify.metaobjects.list/get` (requires `read_metaobjects`; value presence/length only)",
+    "<!-- MCP_TOOL_SURFACE_START -->",
+    ...formatMcpToolSurfaceMarkdown().split('\n'),
+    "<!-- MCP_TOOL_SURFACE_END -->",
     "",
-    "`shopify.health` returns lightweight process memory diagnostics for reconnect/OOM triage without token-store contents. `mcp serve` also emits start/stop lifecycle JSON to stderr, keeping JSON-RPC stdout clean.",
+    "`shopify.health` returns lightweight process memory diagnostics for reconnect/OOM triage without token-store contents. `shopify.store.diagnostics` is safe store/app install status/access/privacy JSON; no tokens, raw GraphQL, owner/contact/billing/customer data, or policy bodies. ShopifyQL analytics requires `read_reports`, protected customer data / analytics approval, and `SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS=true`. Bulk: curated read-only export templates only. Fulfillment-order tools require `read_orders`, `read_merchant_managed_fulfillment_orders`, `read_assigned_fulfillment_orders`, and `read_third_party_fulfillment_orders`; omits destination address, tracking numbers/URLs, customer contact, notes/tags, metafields, and transactions. Optional surfaces may require additional scopes such as `read_webhooks`; customers requires `read_customers`; plus `read_discounts`, `read_marketing_events`, `read_markets`, `read_locales`, `read_metaobject_definitions`, or `read_metaobjects`. Custom data returns schema/value-presence summaries without raw metafield/metaobject values. No raw GraphQL/REST/ShopifyQL MCP or write/mutation custom data tool is exposed. `mcp serve` also emits start/stop lifecycle JSON to stderr, keeping JSON-RPC stdout clean.",
     "",
     "If MCP is unavailable, fall back to matching CLI commands and include output without secrets.",
     "",
