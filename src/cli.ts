@@ -418,7 +418,13 @@ async function runReport(args: readonly string[], context: CliContext): Promise<
     return 2;
   }
 
-  const runtime = await resolveRuntimeConfiguration(context);
+  let runtime: Awaited<ReturnType<typeof resolveRuntimeConfiguration>>;
+  try {
+    runtime = await resolveRuntimeConfiguration(context);
+  } catch (error) {
+    context.stderr(formatRuntimeConfigurationError(error));
+    return 1;
+  }
 
   try {
     const store = createTokenStoreForPath(runtime.paths.tokenStore, context);
@@ -531,6 +537,13 @@ function enrichAuditEvent(event: AuditEventInput, source: 'cli' | 'mcp', mode: '
     ...event,
     metadata: auditMetadata({ mode, ...(event.metadata ?? {}) }, source),
   };
+}
+
+function formatRuntimeConfigurationError(error: unknown): string {
+  const detail = error instanceof Error ? redactSensitiveErrorMessage(error.message.split(/\r?\n/u)[0] ?? '').trim() : '';
+  return detail.length === 0
+    ? 'Could not load runtime configuration. Check Hermes configuration and file permissions.'
+    : `Could not load runtime configuration. ${detail}`;
 }
 
 function auditMetadata(metadata: Readonly<Record<string, unknown>> = {}, source: 'cli' | 'mcp' = 'cli'): Record<string, unknown> {
