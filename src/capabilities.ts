@@ -1063,6 +1063,14 @@ export const CAPABILITY_MCP_TOOL_DEFINITIONS: readonly McpToolDefinition[] = CAP
   }];
 });
 
+export function listMcpToolNamesFromCapabilityRegistry(): readonly McpToolName[] {
+  return CAPABILITY_MCP_TOOL_DEFINITIONS.map((tool) => tool.name);
+}
+
+export function formatMcpToolSurfaceMarkdown(): string {
+  return listMcpToolNamesFromCapabilityRegistry().map((toolName) => `- \`${toolName}\``).join('\n');
+}
+
 export function listCapabilities(): readonly CapabilityDefinition[] {
   return CAPABILITY_REGISTRY;
 }
