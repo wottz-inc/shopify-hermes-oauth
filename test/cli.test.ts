@@ -2961,6 +2961,35 @@ describe('CLI report products', () => {
     }
   });
 
+  it('reports runtime-configuration failures safely without stack traces or secrets', async () => {
+    const harness = createHarness({
+      readFile: (path) => {
+        if (path === '/tmp/hermes/.env') {
+          throw new Error('EACCES reading /tmp/hermes/.env access_token=plain_runtime_secret shpat_runtime_secret');
+        }
+
+        return undefined;
+      },
+      fetch: () => Promise.reject(new Error('Admin GraphQL should not be called')),
+      appendAuditEvent: () => {
+        throw new Error('audit sink unavailable');
+      },
+    });
+
+    const exitCode = await runShopifyHermesOauthCli(['report', 'products', 'example'], harness.deps);
+    const errorOutput = harness.stderr.join('\n');
+
+    expect(exitCode).toBe(1);
+    expect(errorOutput).toContain('Could not load runtime configuration.');
+    expect(errorOutput).toContain('/tmp/hermes/.env');
+    expect(errorOutput).toContain('[REDACTED]');
+    expect(errorOutput).not.toContain('plain_runtime_secret');
+    expect(errorOutput).not.toContain('shpat_runtime_secret');
+    expect(errorOutput).not.toContain('audit sink unavailable');
+    expect(errorOutput).not.toContain('Error:');
+    expect(errorOutput).not.toContain('at ');
+  });
+
   it('does not let products report success audit failures mask successful output', async () => {
     const harness = createHarness({
       appendAuditEvent: () => {
