@@ -7,7 +7,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { defaultStartProcess, isDirectCliRun, runShopifyHermesOauthCli, type CliDependencies } from '../src/cli.js';
+import { defaultStartProcess, isDirectCliRun, localHermesSkillContent, runShopifyHermesOauthCli, type CliDependencies } from '../src/cli.js';
 import { exchangeShopifyOAuthToken } from '../src/internal/shopify-oauth-token-exchange.js';
 
 function createHarness(overrides: Partial<CliDependencies> = {}) {
@@ -2221,6 +2221,7 @@ describe('CLI hermes install', () => {
       args: ['mcp', 'add', 'shopify-hermes-oauth', '--command', 'shopify-hermes-oauth', '--args', 'mcp', 'serve'],
     }]);
     expect(harness.madeDirs).toContain('/tmp/hermes/skills/productivity/shopify-hermes-oauth');
+    expect(skill).toBe(localHermesSkillContent());
     expect(skill).toContain('shopify-hermes-oauth');
     expect(skill).toContain('Prefer the direct-token `shopify` skill');
     expect(skill).toContain('For durable access, multiple stores, scheduled reports, or avoiding pasted per-store tokens, use this OAuth connector.');

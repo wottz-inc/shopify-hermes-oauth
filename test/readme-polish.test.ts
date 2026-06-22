@@ -34,4 +34,25 @@ describe('copy-polish README review notes', () => {
 
     expect(source).toMatch(/Shopify callback timestamps are seconds since epoch/u);
   });
+
+  it('keeps a short quick start before the exhaustive documentation index', () => {
+    const markdown = readProjectFile('README.md');
+    const quickStart = markdown.indexOf('## Quick start');
+    const documentationIndex = markdown.indexOf('For practical setup, see');
+
+    expect(quickStart).toBeGreaterThan(0);
+    expect(documentationIndex).toBeGreaterThan(quickStart);
+    expect(markdown).toContain('npm ci\nnpm test\nnpm run typecheck\nnpm run lint\nnpm run build');
+    expect(markdown).toContain('shopify-hermes-oauth onboard --shop <shop>.myshopify.com --app-name <app-name>');
+    expect(markdown).toContain('Enter Shopify client credentials only through `shopify-hermes-oauth credentials set`');
+  });
+
+  it('documents intentional Hermes skill source divergence', () => {
+    const markdown = readProjectFile('README.md');
+
+    expect(markdown).toContain('## Hermes skill sources');
+    expect(markdown).toContain('`shopify-hermes-oauth hermes install` writes the embedded local skill from `src/cli.ts`');
+    expect(markdown).toContain('deliberately concise repository/upstream companion skill');
+    expect(markdown).toContain('rather than being byte-identical');
+  });
 });

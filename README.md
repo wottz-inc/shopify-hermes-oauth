@@ -2,6 +2,30 @@
 
 Hermes-first Shopify OAuth connector for agent-safe multi-store access, read-only reporting, guardrails, audit logging, and MCP integration.
 
+## Quick start
+
+For a new source checkout, install dependencies and run the local quality gate:
+
+```bash
+npm ci
+npm test
+npm run typecheck
+npm run lint
+npm run build
+```
+
+For local Shopify OAuth setup, install the CLI from the source package if it is not already on `PATH` (see [Local/source install and PATH diagnostics](#localsource-install-and-path-diagnostics)), then use the guided checklist first and follow its human/agent handoff steps:
+
+```bash
+shopify-hermes-oauth onboard --shop <shop>.myshopify.com --app-name <app-name>
+shopify-hermes-oauth init
+shopify-hermes-oauth doctor
+shopify-hermes-oauth hermes install
+shopify-hermes-oauth dev --tunnel
+```
+
+Enter Shopify client credentials only through `shopify-hermes-oauth credentials set` in a local terminal/SSH shell, never in chat.
+
 This repository is being planned as the native Shopify OAuth access layer for Hermes agents. See [`docs/PRD.md`](docs/PRD.md) for the product requirements, implementation specification, milestones, and v0.1 acceptance criteria.
 
 For practical setup, see [`docs/shopify-app-setup.md`](docs/shopify-app-setup.md). It separates automated CLI/Hermes steps from unavoidable Shopify dashboard and store approval steps. If you already use Shopify CLI, the optional [`docs/shopify-cli-assisted-setup.md`](docs/shopify-cli-assisted-setup.md) runbook automates safe CLI-supported app project/config sync steps while keeping the core connector path CLI-independent; for non-interactive staging/production config deploys with a Shopify App Automation Token, see [`docs/shopify-app-automation-token-ci-cd.md`](docs/shopify-app-automation-token-ci-cd.md). For Python app migrations and cross-language Shopify OAuth/ShopifyQL boundary notes, see [`docs/python-shopify-migration.md`](docs/python-shopify-migration.md); for the embedded-app/session-token boundary, see [`docs/embedded-token-exchange-boundary.md`](docs/embedded-token-exchange-boundary.md). For the M8 Admin GraphQL expansion sequence and safety metadata, see [`docs/admin-graphql-coverage-plan.md`](docs/admin-graphql-coverage-plan.md); for B2B and retail/POS coverage evaluation, see [`docs/b2b-retail-coverage-evaluation.md`](docs/b2b-retail-coverage-evaluation.md), and for the optional curated B2B MCP summaries see [`docs/b2b-summaries.md`](docs/b2b-summaries.md); for billing and Shopify Payments coverage evaluation, see [`docs/billing-payments-coverage-evaluation.md`](docs/billing-payments-coverage-evaluation.md); for analytics, timeline events, and ShopifyQL evaluation, see [`docs/analytics-timeline-shopifyql-coverage-evaluation.md`](docs/analytics-timeline-shopifyql-coverage-evaluation.md); for the optional curated ShopifyQL analytics MCP surface, see [`docs/shopifyql-analytics-reports.md`](docs/shopifyql-analytics-reports.md). Reviewers can also find the security notes in [`docs/SECURITY_REVIEW.md`](docs/SECURITY_REVIEW.md), the live dev-store validation runbook in [`docs/LIVE_DEV_STORE_VALIDATION.md`](docs/LIVE_DEV_STORE_VALIDATION.md), and the post-review hardening backlog in [`docs/PRD.md`](docs/PRD.md#131-full-repository-review-follow-up-requirements).
@@ -150,6 +174,10 @@ Local token-store writes use an owner-only lock file. The default lock-acquisiti
 CI runs `npm audit --audit-level=high` after `npm ci` so high, critical, or worse dependency advisories fail the build while non-actionable low/moderate advisories remain non-blocking. `npm outdated` is an informational local maintenance check for reviewers and maintainers; it is not a blocking CI gate because new package releases alone do not imply an actionable or deterministic failure.
 
 Toolchain packages that can aggressively change compiler, linter, type, or test behavior (`typescript`, `eslint`, `typescript-eslint`, `@eslint/js`, `@types/node`, and `vitest`) are intentionally pinned to exact versions in `package.json` and `package-lock.json`. Upgrade them deliberately by changing both files together, confirming peer ranges remain compatible, and letting the existing CI gates (`npm ci`, audit, test, typecheck, lint, and build on Node 20) prove the new toolchain before merging.
+
+## Hermes skill sources
+
+`shopify-hermes-oauth hermes install` writes the embedded local skill from `src/cli.ts` so installed agents get the full, current setup/MCP guidance generated with the package. The checked-in `skills/productivity/shopify-hermes-oauth/SKILL.md` is a deliberately concise repository/upstream companion skill with its own size guard; both skill surfaces have tests for the shared MCP tool list and critical safety guidance rather than being byte-identical.
 
 ## Curated webhook subscription tools
 
