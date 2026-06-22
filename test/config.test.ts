@@ -143,7 +143,11 @@ describe('Shopify Hermes config loading', () => {
     expect(parseBooleanGate('')).toBe(false);
     expect(parseBooleanGate('1')).toBe(false);
     expect(parseBooleanGate('yes')).toBe(false);
-    expect(parseBooleanGate(' TRUE ')).toBe(true);
+    expect(parseBooleanGate('on')).toBe(false);
+    expect(parseBooleanGate('enabled')).toBe(false);
+    expect(parseBooleanGate(' true ')).toBe(true);
+    expect(parseBooleanGate('TRUE')).toBe(true);
+    expect(parseBooleanGate(' TrUe ')).toBe(true);
 
     const config = loadShopifyHermesConfig({
       env: { SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS: 'true' },
