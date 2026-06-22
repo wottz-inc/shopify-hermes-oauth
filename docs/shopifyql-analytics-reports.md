@@ -32,7 +32,7 @@ Curated ShopifyQL analytics requires all of the following:
 SHOPIFY_HERMES_ENABLE_ANALYTICS_REPORTS=true
 ```
 
-The gate intentionally only accepts the literal value `true`; values such as `1` or `yes` keep analytics disabled. Scope presence alone is not enough.
+The gate is case-insensitive and ignores surrounding whitespace: `true`, `TRUE`, and ` true ` enable analytics. Other truthy-looking values such as `1`, `yes`, `on`, or `enabled` keep analytics disabled. Scope presence alone is not enough.
 
 ## Scope configuration example
 
