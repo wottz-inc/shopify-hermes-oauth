@@ -149,6 +149,8 @@ Local token-store writes use an owner-only lock file. The default lock-acquisiti
 
 CI runs `npm audit --audit-level=high` after `npm ci` so high, critical, or worse dependency advisories fail the build while non-actionable low/moderate advisories remain non-blocking. `npm outdated` is an informational local maintenance check for reviewers and maintainers; it is not a blocking CI gate because new package releases alone do not imply an actionable or deterministic failure.
 
+Toolchain packages that can aggressively change compiler, linter, type, or test behavior (`typescript`, `eslint`, `typescript-eslint`, `@eslint/js`, `@types/node`, and `vitest`) are intentionally pinned to exact versions in `package.json` and `package-lock.json`. Upgrade them deliberately by changing both files together, confirming peer ranges remain compatible, and letting the existing CI gates (`npm ci`, audit, test, typecheck, lint, and build on Node 20) prove the new toolchain before merging.
+
 ## Curated webhook subscription tools
 
 The MCP allowlist includes read-only webhook subscription tools:
