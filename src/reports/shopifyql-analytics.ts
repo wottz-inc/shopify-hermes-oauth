@@ -1,4 +1,5 @@
 import { csvCell } from './csv.js';
+import { sanitizeReportOutput } from './sanitize.js';
 
 export const SHOPIFYQL_ANALYTICS_QUERY = `
   query CuratedShopifyqlAnalytics($query: String!) {
@@ -256,15 +257,7 @@ function markdownCell(value: string): string {
 }
 
 function sanitizeCell(value: string): string {
-  let sanitized = '';
-  for (const character of value) {
-    const codePoint = character.codePointAt(0) ?? 0;
-    if (codePoint === 0x0A) sanitized += '\\n';
-    else if (codePoint === 0x0D) sanitized += '\\r';
-    else if (codePoint === 0x09) sanitized += '\\t';
-    else if ((codePoint >= 0x00 && codePoint <= 0x1F) || (codePoint >= 0x7F && codePoint <= 0x9F)) sanitized += `\\u${codePoint.toString(16).toUpperCase().padStart(4, '0')}`;
-    else sanitized += character;
-  }
+  const sanitized = sanitizeReportOutput(value);
   return sanitized.length > MAX_CELL_LENGTH ? `${sanitized.slice(0, MAX_CELL_LENGTH)}…` : sanitized;
 }
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DISCOUNT_NODE_QUERY,
   DISCOUNTS_QUERY,
+  DiscountsMarketingSurfaceError,
   MARKETING_EVENTS_QUERY,
   getDiscount,
   listDiscounts,
@@ -121,6 +122,15 @@ describe('discounts and marketing Admin GraphQL read helpers', () => {
     await expect(listDiscounts({ client, query: 'query { shop { name } }' })).rejects.toThrow('query is invalid');
     await expect(getDiscount({ client, id: 'gid://shopify/PriceRule/1' })).rejects.toThrow('Discount id must be a Shopify DiscountNode GID');
     await expect(listMarketingEvents({ client, query: 'mutation { x }' })).rejects.toThrow('query is invalid');
+  });
+
+  it('preserves precise domain errors for malformed GraphQL connections', async () => {
+    const client: DiscountsMarketingGraphqlClient = {
+      query: () => Promise.resolve({ data: { discountNodes: { edges: [{ node: null }], pageInfo: { hasNextPage: false } } } }),
+    };
+
+    await expect(listDiscounts({ client })).rejects.toThrow(DiscountsMarketingSurfaceError);
+    await expect(listDiscounts({ client })).rejects.toThrow('Shopify Admin GraphQL response included an invalid discount node edge.');
   });
 
   it('accepts opaque discount and marketing cursors containing query-like substrings while query filters stay strict', async () => {

@@ -1,3 +1,4 @@
+import { createGraphqlResponseNormalizer } from '../graphql/normalization.js';
 import { isValidOpaqueCursor } from '../input-validation.js';
 
 const DEFAULT_PAGE_SIZE = 25;
@@ -135,6 +136,8 @@ export class CustomDataSurfaceError extends Error {
   }
 }
 
+const graphql = createGraphqlResponseNormalizer((message) => new CustomDataSurfaceError(message));
+
 export async function listMetafieldDefinitions(options: ListMetafieldDefinitionsOptions): Promise<Record<string, unknown>> {
   const variables = metafieldDefinitionVariables(options);
   const response = await options.client.query(METAFIELD_DEFINITIONS_QUERY, variables, { operationName: 'MetafieldDefinitions' }) as Record<string, unknown>;
@@ -218,10 +221,10 @@ function normalizeTypeRef(value: unknown): Record<string, string> { const node =
 function normalizeValidation(value: unknown): Record<string, string> { const node = requireRecord(value, 'validation'); return { name: readString(node.name, 'validation name'), value: readString(node.value, 'validation value') }; }
 function summarizeValue(value: unknown): Record<string, unknown> { const text = typeof value === 'string' ? value : ''; return { valuePresent: text.length > 0, valueLength: text.length }; }
 function optionalString(node: Record<string, unknown>, key: string): Record<string, string> { return typeof node[key] === 'string' ? { [key]: node[key] } : {}; }
-function requireConnection(value: unknown, label: string): { readonly edges: readonly unknown[]; readonly pageInfo: Record<string, unknown> } { if (!isRecord(value) || !Array.isArray(value.edges) || !isRecord(value.pageInfo)) throw new CustomDataSurfaceError(`Shopify Admin GraphQL response did not include expected ${label} connection.`); return { edges: value.edges, pageInfo: value.pageInfo }; }
-function readNode(edge: unknown, label: string): Record<string, unknown> { if (!isRecord(edge) || !isRecord(edge.node)) throw new CustomDataSurfaceError(`Shopify Admin GraphQL response included an invalid ${label} edge.`); return edge.node; }
-function normalizePageInfo(pageInfo: Record<string, unknown>): PageInfo { if (typeof pageInfo.hasNextPage !== 'boolean') throw new CustomDataSurfaceError('Shopify Admin GraphQL pageInfo was invalid.'); return { hasNextPage: pageInfo.hasNextPage, ...(typeof pageInfo.endCursor === 'string' ? { endCursor: pageInfo.endCursor } : {}) }; }
-function readString(value: unknown, label: string): string { if (typeof value !== 'string') throw new CustomDataSurfaceError(`Shopify Admin GraphQL response included invalid ${label}.`); return value; }
-function requireRecord(value: unknown, label: string): Record<string, unknown> { if (!isRecord(value)) throw new CustomDataSurfaceError(`Shopify Admin GraphQL response included invalid ${label}.`); return value; }
-function readPath(value: unknown, path: readonly string[]): unknown { let current = value; for (const key of path) { if (!isRecord(current)) return undefined; current = current[key]; } return current; }
-function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+function requireConnection(value: unknown, label: string): { readonly edges: readonly unknown[]; readonly pageInfo: Record<string, unknown> } { return graphql.requireConnection(value, label); }
+function readNode(edge: unknown, label: string): Record<string, unknown> { return graphql.readNode(edge, label); }
+function normalizePageInfo(pageInfo: Record<string, unknown>): PageInfo { return graphql.normalizePageInfo(pageInfo); }
+function readString(value: unknown, label: string): string { return graphql.readString(value, label); }
+function requireRecord(value: unknown, label: string): Record<string, unknown> { return graphql.requireRecord(value, label); }
+const readPath = graphql.readPath;
+const isRecord = graphql.isRecord;
