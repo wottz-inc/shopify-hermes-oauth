@@ -3,7 +3,7 @@ import { stdin as processStdin, stdout as processStdout } from 'node:process';
 import { type Readable, type Writable } from 'node:stream';
 
 import { type AuditEventInput } from '../audit.js';
-import { CAPABILITY_MCP_TOOL_DEFINITIONS, type McpToolDefinition } from '../capabilities.js';
+import { CAPABILITY_MCP_TOOL_DEFINITIONS, CAPABILITY_REGISTRY, type CapabilityDefinition, type McpToolDefinition, type McpToolName } from '../capabilities.js';
 import { InventoryReportError, INVENTORY_MAX_COST_REMEDIATION_MESSAGE } from '../reports/inventory.js';
 import { type ShopifyqlAnalyticsFormat, ShopifyqlAnalyticsError, type ShopifyqlAnalyticsGranularity, type ShopifyqlAnalyticsReportId } from '../reports/shopifyql-analytics.js';
 import { safeErrorCode, type SafeErrorCode } from '../safe-errors.js';
@@ -291,6 +291,107 @@ const MCP_SUMMARY_MAX_KEYS = 5;
 const MCP_SUMMARY_MAX_KEY_LENGTH = 40;
 const MCP_SUMMARY_MAX_KEYS_TEXT_LENGTH = 160;
 
+type McpToolHandler = (args: unknown, deps: McpServerDependencies) => unknown;
+type McpAuditMetadataExtractor = (args: unknown, result?: unknown) => Record<string, unknown>;
+
+export interface McpDispatchAuditDefinition {
+  readonly handler: McpToolHandler;
+  readonly auditMetadata: McpAuditMetadataExtractor;
+}
+
+function noAuditMetadata(): Record<string, unknown> {
+  return {};
+}
+
+function combineAuditMetadata(...extractors: readonly McpAuditMetadataExtractor[]): McpAuditMetadataExtractor {
+  return (args, result) => {
+    const metadata: Record<string, unknown> = {};
+    for (const extractor of extractors) {
+      Object.assign(metadata, extractor(args, result));
+    }
+    return metadata;
+  };
+}
+
+export const MCP_DISPATCH_AUDIT_DEFINITIONS = {
+  'shopify.health': { handler: () => readMcpHealth(), auditMetadata: noAuditMetadata },
+  'shopify.list_shops': { handler: async (_args, deps) => sanitizeToolOutput(await callDependency(() => listShops(deps.tokenStore))), auditMetadata: noAuditMetadata },
+  'shopify.verify_shop': { handler: async (args, deps) => { validateExactArgs(args, ['shop']); return callToolDependency({ shop: readRequiredString(args, 'shop') }, deps.verifyShop); }, auditMetadata: noAuditMetadata },
+  'shopify.store.diagnostics': { handler: async (args, deps) => { validateExactArgs(args, ['shop']); return callToolDependency({ shop: readRequiredString(args, 'shop') }, deps.storeDiagnostics); }, auditMetadata: noAuditMetadata },
+  'shopify.online_store.summary': { handler: async (args, deps) => { validateExactArgs(args, ['shop']); return callToolDependency({ shop: readRequiredString(args, 'shop') }, deps.summarizeOnlineStore); }, auditMetadata: noAuditMetadata },
+  'shopify.b2b.companies.summary': { handler: async (args, deps) => { validateExactArgs(args, ['shop']); return callToolDependency({ shop: readRequiredString(args, 'shop') }, deps.summarizeB2bCompanies); }, auditMetadata: noAuditMetadata },
+  'shopify.b2b.catalogs.summary': { handler: async (args, deps) => { validateExactArgs(args, ['shop']); return callToolDependency({ shop: readRequiredString(args, 'shop') }, deps.summarizeB2bCatalogs); }, auditMetadata: noAuditMetadata },
+  'shopify.report_products': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'format']); return callToolDependency(readReportArgs(args), deps.reportProducts); }, auditMetadata: readAuditFormat },
+  'shopify.report_orders': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'format', 'since', 'from', 'to']); return callToolDependency(readReportArgs(args), deps.reportOrders); }, auditMetadata: readAuditFormat },
+  'shopify.report_inventory': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'format', 'lowStockThreshold']); return callToolDependency(readReportArgs(args), deps.reportInventory); }, auditMetadata: combineAuditMetadata(readAuditFormat, readAuditThreshold) },
+  'shopify.analytics.shopifyql.summary': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'report', 'format', 'from', 'to', 'granularity', 'limit']); return callToolDependency(readShopifyqlAnalyticsArgs(args), deps.analyticsShopifyqlSummary); }, auditMetadata: readAuditFormat },
+  'shopify.bulk.start': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'templateId']); return callToolDependency({ shop: readRequiredString(args, 'shop'), templateId: readRequiredString(args, 'templateId') }, deps.startBulkOperation); }, auditMetadata: readAuditTemplate },
+  'shopify.bulk.status': { handler: async (args, deps) => { validateExactArgs(args, ['shop']); return callToolDependency({ shop: readRequiredString(args, 'shop') }, deps.getCurrentBulkOperation); }, auditMetadata: noAuditMetadata },
+  'shopify.bulk.result': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'url', 'maxLines', 'maxBytes']); return callToolDependency(readBulkResultArgs(args), deps.fetchBulkOperationResult); }, auditMetadata: readAuditResultLimits },
+  'shopify.bulk.cancel': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'id']); return callToolDependency({ shop: readRequiredString(args, 'shop'), id: readRequiredString(args, 'id') }, deps.cancelBulkOperation); }, auditMetadata: noAuditMetadata },
+  'shopify.webhooks.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'first', 'after']); return callToolDependency(readWebhookListArgs(args), deps.listWebhookSubscriptions); }, auditMetadata: noAuditMetadata },
+  'shopify.webhooks.get': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'id']); return callToolDependency(readWebhookGetArgs(args), deps.getWebhookSubscription); }, auditMetadata: noAuditMetadata },
+  'shopify.products.get': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'id']); return callToolDependency({ shop: readRequiredString(args, 'shop'), id: readRequiredString(args, 'id') }, deps.getProductDetail); }, auditMetadata: noAuditMetadata },
+  'shopify.collections.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'first', 'after', 'query']); return callToolDependency(readCollectionListArgs(args), deps.listCollections); }, auditMetadata: readAuditBoundedList },
+  'shopify.collections.get': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'id']); return callToolDependency({ shop: readRequiredString(args, 'shop'), id: readRequiredString(args, 'id') }, deps.getCollection); }, auditMetadata: noAuditMetadata },
+  'shopify.locations.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'first', 'after']); return callToolDependency(readLocationListArgs(args), deps.listLocations); }, auditMetadata: readAuditBoundedList },
+  'shopify.locations.get': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'id']); return callToolDependency({ shop: readRequiredString(args, 'shop'), id: readRequiredString(args, 'id') }, deps.getLocation); }, auditMetadata: noAuditMetadata },
+  'shopify.inventory.items.get': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'id']); return callToolDependency({ shop: readRequiredString(args, 'shop'), id: readRequiredString(args, 'id') }, deps.getInventoryItem); }, auditMetadata: noAuditMetadata },
+  'shopify.inventory.levels.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'inventoryItemId', 'locationId', 'first', 'after']); return callToolDependency(readInventoryLevelsListArgs(args), deps.listInventoryLevels); }, auditMetadata: readAuditInventoryLevelsList },
+  'shopify.orders.get': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'id', 'name']); return callToolDependency(readOrderGetArgs(args), deps.getOrder); }, auditMetadata: readAuditOrderGet },
+  'shopify.fulfillment_orders.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'orderId', 'orderName', 'first', 'after']); return callToolDependency(readFulfillmentOrdersListArgs(args), deps.listFulfillmentOrders); }, auditMetadata: readAuditFulfillmentOrdersList },
+  'shopify.fulfillment_orders.get': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'id']); return callToolDependency({ shop: readRequiredString(args, 'shop'), id: readRequiredString(args, 'id') }, deps.getFulfillmentOrder); }, auditMetadata: noAuditMetadata },
+  'shopify.customers.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'first', 'after', 'query']); return callToolDependency(readCustomerListArgs(args), deps.listCustomers); }, auditMetadata: readAuditBoundedList },
+  'shopify.customers.get': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'id']); return callToolDependency(readCustomerGetArgs(args), deps.getCustomer); }, auditMetadata: noAuditMetadata },
+  'shopify.discounts.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'first', 'after', 'query']); return callToolDependency(readDiscountListArgs(args), deps.listDiscounts); }, auditMetadata: readAuditBoundedList },
+  'shopify.discounts.get': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'id']); return callToolDependency(readDiscountGetArgs(args), deps.getDiscount); }, auditMetadata: readAuditDiscountGet },
+  'shopify.marketing_events.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'first', 'after', 'query']); return callToolDependency(readMarketingEventsListArgs(args), deps.listMarketingEvents); }, auditMetadata: readAuditBoundedList },
+  'shopify.markets.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'first', 'after']); return callToolDependency(readMarketsListArgs(args), deps.listMarkets); }, auditMetadata: combineAuditMetadata(readAuditBoundedList, (_args, result) => readMarketsLocalizationAuditResult('shopify.markets.list', result)) },
+  'shopify.localization.locales.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop']); return callToolDependency({ shop: readRequiredString(args, 'shop') }, deps.listShopLocales); }, auditMetadata: (_args, result) => readMarketsLocalizationAuditResult('shopify.localization.locales.list', result) },
+  'shopify.metafield_definitions.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'ownerType', 'namespace', 'key', 'first', 'after']); return callToolDependency(readMetafieldDefinitionsListArgs(args), deps.listMetafieldDefinitions); }, auditMetadata: combineAuditMetadata(readAuditBoundedList, readAuditMetafieldFilters) },
+  'shopify.metafield_definitions.get': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'ownerType', 'namespace', 'key']); return callToolDependency(readMetafieldDefinitionGetArgs(args), deps.getMetafieldDefinition); }, auditMetadata: readAuditMetafieldGet },
+  'shopify.resource_metafields.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'ownerId', 'namespace', 'key', 'first', 'after']); return callToolDependency(readResourceMetafieldsListArgs(args), deps.listResourceMetafields); }, auditMetadata: combineAuditMetadata(readAuditBoundedList, readAuditMetafieldFilters) },
+  'shopify.metaobject_definitions.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'type', 'first', 'after']); return callToolDependency(readMetaobjectDefinitionsListArgs(args), deps.listMetaobjectDefinitions); }, auditMetadata: combineAuditMetadata(readAuditBoundedList, readAuditMetaobjectList) },
+  'shopify.metaobject_definitions.get': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'type']); return callToolDependency({ shop: readRequiredString(args, 'shop'), type: readRequiredString(args, 'type') }, deps.getMetaobjectDefinition); }, auditMetadata: readAuditMetaobjectDefinitionGet },
+  'shopify.metaobjects.list': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'type', 'first', 'after']); return callToolDependency(readMetaobjectsListArgs(args), deps.listMetaobjects); }, auditMetadata: combineAuditMetadata(readAuditBoundedList, readAuditMetaobjectList) },
+  'shopify.metaobjects.get': { handler: async (args, deps) => { validateExactArgs(args, ['shop', 'id']); return callToolDependency({ shop: readRequiredString(args, 'shop'), id: readRequiredString(args, 'id') }, deps.getMetaobject); }, auditMetadata: readAuditMetaobjectGet },
+} satisfies Record<McpToolName, McpDispatchAuditDefinition>;
+
+export function validateMcpDispatchAuditDefinitions(
+  registry: readonly CapabilityDefinition[] = CAPABILITY_REGISTRY,
+  definitions: Readonly<Record<string, Partial<McpDispatchAuditDefinition> | undefined>> = MCP_DISPATCH_AUDIT_DEFINITIONS,
+): readonly string[] {
+  const errors: string[] = [];
+  const registryToolNames = new Set<string>(registry.flatMap((capability) => capability.surfaces.mcp === undefined ? [] : [capability.surfaces.mcp.toolName]));
+
+  for (const toolName of registryToolNames) {
+    const definition = definitions[toolName];
+    if (definition === undefined) {
+      errors.push(`${toolName} is missing an MCP dispatch/audit definition.`);
+      continue;
+    }
+    if (typeof definition.handler !== 'function') {
+      errors.push(`${toolName} is missing an MCP dispatch handler.`);
+    }
+    if (typeof definition.auditMetadata !== 'function') {
+      errors.push(`${toolName} is missing an MCP audit metadata extractor.`);
+    }
+  }
+
+  for (const toolName of Object.keys(definitions)) {
+    if (!registryToolNames.has(toolName)) {
+      errors.push(`${toolName} has an MCP dispatch/audit definition but is not exposed by the capability registry.`);
+    }
+  }
+
+  return errors;
+}
+
+const DISPATCH_AUDIT_VALIDATION_ERRORS = validateMcpDispatchAuditDefinitions();
+if (DISPATCH_AUDIT_VALIDATION_ERRORS.length > 0) {
+  throw new Error(`Invalid MCP dispatch/audit definitions: ${DISPATCH_AUDIT_VALIDATION_ERRORS.join(' ')}`);
+}
+
 export function listTools(): readonly McpToolDefinition[] {
   return TOOL_DEFINITIONS;
 }
@@ -310,247 +411,14 @@ export async function callTool(name: string, args: unknown, deps: McpServerDepen
   }
 
   try {
-    let result: unknown;
-    switch (name) {
-      case 'shopify.health':
-        validateExactArgs(args, []);
-        result = readMcpHealth();
-        break;
-      case 'shopify.list_shops':
-        validateExactArgs(args, []);
-        result = await callDependency(() => listShops(deps.tokenStore));
-        break;
-      case 'shopify.verify_shop': {
-        validateExactArgs(args, ['shop']);
-        const shop = readRequiredString(args, 'shop');
-        result = sanitizeToolOutput(await callDependency(() => deps.verifyShop({ shop })));
-        break;
-      }
-      case 'shopify.store.diagnostics': {
-        validateExactArgs(args, ['shop']);
-        result = sanitizeToolOutput(await callDependency(() => deps.storeDiagnostics({ shop: readRequiredString(args, 'shop') })));
-        break;
-      }
-      case 'shopify.online_store.summary': {
-        validateExactArgs(args, ['shop']);
-        result = sanitizeToolOutput(await callDependency(() => deps.summarizeOnlineStore({ shop: readRequiredString(args, 'shop') })));
-        break;
-      }
-      case 'shopify.b2b.companies.summary': {
-        validateExactArgs(args, ['shop']);
-        result = sanitizeToolOutput(await callDependency(() => deps.summarizeB2bCompanies({ shop: readRequiredString(args, 'shop') })));
-        break;
-      }
-      case 'shopify.b2b.catalogs.summary': {
-        validateExactArgs(args, ['shop']);
-        result = sanitizeToolOutput(await callDependency(() => deps.summarizeB2bCatalogs({ shop: readRequiredString(args, 'shop') })));
-        break;
-      }
-      case 'shopify.report_products': {
-        validateExactArgs(args, ['shop', 'format']);
-        const reportArgs = readReportArgs(args);
-        result = sanitizeToolOutput(await callDependency(() => deps.reportProducts(reportArgs)));
-        break;
-      }
-      case 'shopify.report_orders': {
-        validateExactArgs(args, ['shop', 'format', 'since', 'from', 'to']);
-        const reportArgs = readReportArgs(args);
-        result = sanitizeToolOutput(await callDependency(() => deps.reportOrders(reportArgs)));
-        break;
-      }
-      case 'shopify.report_inventory': {
-        validateExactArgs(args, ['shop', 'format', 'lowStockThreshold']);
-        const reportArgs = readReportArgs(args);
-        result = sanitizeToolOutput(await callDependency(() => deps.reportInventory(reportArgs)));
-        break;
-      }
-      case 'shopify.analytics.shopifyql.summary': {
-        validateExactArgs(args, ['shop', 'report', 'format', 'from', 'to', 'granularity', 'limit']);
-        const analyticsArgs = readShopifyqlAnalyticsArgs(args);
-        result = sanitizeToolOutput(await callDependency(() => deps.analyticsShopifyqlSummary(analyticsArgs)));
-        break;
-      }
-      case 'shopify.bulk.start': {
-        validateExactArgs(args, ['shop', 'templateId']);
-        result = sanitizeToolOutput(await callDependency(() => deps.startBulkOperation({
-          shop: readRequiredString(args, 'shop'),
-          templateId: readRequiredString(args, 'templateId'),
-        })));
-        break;
-      }
-      case 'shopify.bulk.status': {
-        validateExactArgs(args, ['shop']);
-        result = sanitizeToolOutput(await callDependency(() => deps.getCurrentBulkOperation({ shop: readRequiredString(args, 'shop') })));
-        break;
-      }
-      case 'shopify.bulk.result': {
-        validateExactArgs(args, ['shop', 'url', 'maxLines', 'maxBytes']);
-        const bulkResultArgs = readBulkResultArgs(args);
-        result = sanitizeToolOutput(await callDependency(() => deps.fetchBulkOperationResult(bulkResultArgs)));
-        break;
-      }
-      case 'shopify.bulk.cancel': {
-        validateExactArgs(args, ['shop', 'id']);
-        result = sanitizeToolOutput(await callDependency(() => deps.cancelBulkOperation({
-          shop: readRequiredString(args, 'shop'),
-          id: readRequiredString(args, 'id'),
-        })));
-        break;
-      }
-      case 'shopify.webhooks.list': {
-        validateExactArgs(args, ['shop', 'first', 'after']);
-        const webhookArgs = readWebhookListArgs(args);
-        result = sanitizeToolOutput(await callDependency(() => deps.listWebhookSubscriptions(webhookArgs)));
-        break;
-      }
-      case 'shopify.webhooks.get': {
-        validateExactArgs(args, ['shop', 'id']);
-        const webhookArgs = readWebhookGetArgs(args);
-        result = sanitizeToolOutput(await callDependency(() => deps.getWebhookSubscription(webhookArgs)));
-        break;
-      }
-      case 'shopify.products.get': {
-        validateExactArgs(args, ['shop', 'id']);
-        result = sanitizeToolOutput(await callDependency(() => deps.getProductDetail({
-          shop: readRequiredString(args, 'shop'),
-          id: readRequiredString(args, 'id'),
-        })));
-        break;
-      }
-      case 'shopify.collections.list': {
-        validateExactArgs(args, ['shop', 'first', 'after', 'query']);
-        const collectionArgs = readCollectionListArgs(args);
-        result = sanitizeToolOutput(await callDependency(() => deps.listCollections(collectionArgs)));
-        break;
-      }
-      case 'shopify.collections.get': {
-        validateExactArgs(args, ['shop', 'id']);
-        result = sanitizeToolOutput(await callDependency(() => deps.getCollection({
-          shop: readRequiredString(args, 'shop'),
-          id: readRequiredString(args, 'id'),
-        })));
-        break;
-      }
-      case 'shopify.locations.list': {
-        validateExactArgs(args, ['shop', 'first', 'after']);
-        result = sanitizeToolOutput(await callDependency(() => deps.listLocations(readLocationListArgs(args))));
-        break;
-      }
-      case 'shopify.locations.get': {
-        validateExactArgs(args, ['shop', 'id']);
-        result = sanitizeToolOutput(await callDependency(() => deps.getLocation({
-          shop: readRequiredString(args, 'shop'),
-          id: readRequiredString(args, 'id'),
-        })));
-        break;
-      }
-      case 'shopify.inventory.items.get': {
-        validateExactArgs(args, ['shop', 'id']);
-        result = sanitizeToolOutput(await callDependency(() => deps.getInventoryItem({
-          shop: readRequiredString(args, 'shop'),
-          id: readRequiredString(args, 'id'),
-        })));
-        break;
-      }
-      case 'shopify.inventory.levels.list': {
-        validateExactArgs(args, ['shop', 'inventoryItemId', 'locationId', 'first', 'after']);
-        result = sanitizeToolOutput(await callDependency(() => deps.listInventoryLevels(readInventoryLevelsListArgs(args))));
-        break;
-      }
-      case 'shopify.orders.get': {
-        validateExactArgs(args, ['shop', 'id', 'name']);
-        result = sanitizeToolOutput(await callDependency(() => deps.getOrder(readOrderGetArgs(args))));
-        break;
-      }
-      case 'shopify.fulfillment_orders.list': {
-        validateExactArgs(args, ['shop', 'orderId', 'orderName', 'first', 'after']);
-        result = sanitizeToolOutput(await callDependency(() => deps.listFulfillmentOrders(readFulfillmentOrdersListArgs(args))));
-        break;
-      }
-      case 'shopify.fulfillment_orders.get': {
-        validateExactArgs(args, ['shop', 'id']);
-        result = sanitizeToolOutput(await callDependency(() => deps.getFulfillmentOrder({
-          shop: readRequiredString(args, 'shop'),
-          id: readRequiredString(args, 'id'),
-        })));
-        break;
-      }
-      case 'shopify.customers.list': {
-        validateExactArgs(args, ['shop', 'first', 'after', 'query']);
-        const customerArgs = readCustomerListArgs(args);
-        result = sanitizeToolOutput(await callDependency(() => deps.listCustomers(customerArgs)));
-        break;
-      }
-      case 'shopify.customers.get': {
-        validateExactArgs(args, ['shop', 'id']);
-        const customerArgs = readCustomerGetArgs(args);
-        result = sanitizeToolOutput(await callDependency(() => deps.getCustomer(customerArgs)));
-        break;
-      }
-      case 'shopify.discounts.list': {
-        validateExactArgs(args, ['shop', 'first', 'after', 'query']);
-        result = sanitizeToolOutput(await callDependency(() => deps.listDiscounts(readDiscountListArgs(args))));
-        break;
-      }
-      case 'shopify.discounts.get': {
-        validateExactArgs(args, ['shop', 'id']);
-        result = sanitizeToolOutput(await callDependency(() => deps.getDiscount(readDiscountGetArgs(args))));
-        break;
-      }
-      case 'shopify.marketing_events.list': {
-        validateExactArgs(args, ['shop', 'first', 'after', 'query']);
-        result = sanitizeToolOutput(await callDependency(() => deps.listMarketingEvents(readMarketingEventsListArgs(args))));
-        break;
-      }
-      case 'shopify.markets.list': {
-        validateExactArgs(args, ['shop', 'first', 'after']);
-        const marketArgs = readMarketsListArgs(args);
-        result = sanitizeToolOutput(await callDependency(() => deps.listMarkets(marketArgs)));
-        break;
-      }
-      case 'shopify.localization.locales.list': {
-        validateExactArgs(args, ['shop']);
-        result = sanitizeToolOutput(await callDependency(() => deps.listShopLocales({ shop: readRequiredString(args, 'shop') })));
-        break;
-      }
-      case 'shopify.metafield_definitions.list': {
-        validateExactArgs(args, ['shop', 'ownerType', 'namespace', 'key', 'first', 'after']);
-        result = sanitizeToolOutput(await callDependency(() => deps.listMetafieldDefinitions(readMetafieldDefinitionsListArgs(args))));
-        break;
-      }
-      case 'shopify.metafield_definitions.get': {
-        validateExactArgs(args, ['shop', 'ownerType', 'namespace', 'key']);
-        result = sanitizeToolOutput(await callDependency(() => deps.getMetafieldDefinition(readMetafieldDefinitionGetArgs(args))));
-        break;
-      }
-      case 'shopify.resource_metafields.list': {
-        validateExactArgs(args, ['shop', 'ownerId', 'namespace', 'key', 'first', 'after']);
-        result = sanitizeToolOutput(await callDependency(() => deps.listResourceMetafields(readResourceMetafieldsListArgs(args))));
-        break;
-      }
-      case 'shopify.metaobject_definitions.list': {
-        validateExactArgs(args, ['shop', 'type', 'first', 'after']);
-        result = sanitizeToolOutput(await callDependency(() => deps.listMetaobjectDefinitions(readMetaobjectDefinitionsListArgs(args))));
-        break;
-      }
-      case 'shopify.metaobject_definitions.get': {
-        validateExactArgs(args, ['shop', 'type']);
-        result = sanitizeToolOutput(await callDependency(() => deps.getMetaobjectDefinition({ shop: readRequiredString(args, 'shop'), type: readRequiredString(args, 'type') })));
-        break;
-      }
-      case 'shopify.metaobjects.list': {
-        validateExactArgs(args, ['shop', 'type', 'first', 'after']);
-        result = sanitizeToolOutput(await callDependency(() => deps.listMetaobjects(readMetaobjectsListArgs(args))));
-        break;
-      }
-      case 'shopify.metaobjects.get': {
-        validateExactArgs(args, ['shop', 'id']);
-        result = sanitizeToolOutput(await callDependency(() => deps.getMetaobject({ shop: readRequiredString(args, 'shop'), id: readRequiredString(args, 'id') })));
-        break;
-      }
-      default:
-        throw new McpToolError();
+    const definition = (MCP_DISPATCH_AUDIT_DEFINITIONS as Readonly<Record<string, McpDispatchAuditDefinition | undefined>>)[name];
+    if (definition === undefined) {
+      throw new McpToolError();
     }
+    if (name === 'shopify.health' || name === 'shopify.list_shops') {
+      validateExactArgs(args, []);
+    }
+    const result = await definition.handler(args, deps);
     await appendMcpAuditEventBestEffort(deps, auditEvent('success', undefined, undefined, result));
     return result;
   } catch (error) {
@@ -581,6 +449,10 @@ async function callDependency<T>(operation: () => Promise<T> | T): Promise<T> {
   }
 }
 
+async function callToolDependency<TArgs, TResult>(args: TArgs, operation: (args: TArgs) => Promise<TResult> | TResult): Promise<unknown> {
+  return sanitizeToolOutput(await callDependency(() => operation(args)));
+}
+
 async function appendMcpAuditEventBestEffort(deps: McpServerDependencies, event: AuditEventInput): Promise<void> {
   try {
     await deps.appendAuditEvent?.(event);
@@ -590,26 +462,15 @@ async function appendMcpAuditEventBestEffort(deps: McpServerDependencies, event:
 }
 
 function buildMcpAuditMetadata(name: string, args: unknown, reason?: string, errorCode?: SafeErrorCode, result?: unknown): Record<string, unknown> {
+  const definition = (MCP_DISPATCH_AUDIT_DEFINITIONS as Readonly<Record<string, McpDispatchAuditDefinition | undefined>>)[name];
+  const safeMetadata = definition !== undefined ? definition.auditMetadata(args, result) : {};
+
   return {
     source: 'mcp',
     actor: 'mcp',
     mode: 'read-only',
     toolName: sanitizeAuditString(name),
-    ...(isReportToolName(name) ? readAuditFormat(args) : {}),
-    ...(name === 'shopify.bulk.start' ? readAuditTemplate(args) : {}),
-    ...(name === 'shopify.bulk.result' ? readAuditResultLimits(args) : {}),
-    ...(name === 'shopify.report_inventory' ? readAuditThreshold(args) : {}),
-    ...(name === 'shopify.customers.list' || name === 'shopify.collections.list' || name === 'shopify.locations.list' || name === 'shopify.discounts.list' || name === 'shopify.marketing_events.list' || name === 'shopify.markets.list' || name === 'shopify.metafield_definitions.list' || name === 'shopify.resource_metafields.list' || name === 'shopify.metaobject_definitions.list' || name === 'shopify.metaobjects.list' ? readAuditBoundedList(args) : {}),
-    ...(name === 'shopify.metafield_definitions.list' || name === 'shopify.resource_metafields.list' ? readAuditMetafieldFilters(args) : {}),
-    ...(name === 'shopify.metafield_definitions.get' ? readAuditMetafieldGet(args) : {}),
-    ...(name === 'shopify.metaobject_definitions.list' || name === 'shopify.metaobjects.list' ? readAuditMetaobjectList(args) : {}),
-    ...(name === 'shopify.metaobject_definitions.get' ? readAuditMetaobjectDefinitionGet(args) : {}),
-    ...(name === 'shopify.metaobjects.get' ? readAuditMetaobjectGet(args) : {}),
-    ...(name === 'shopify.discounts.get' ? readAuditDiscountGet(args) : {}),
-    ...(name === 'shopify.inventory.levels.list' ? readAuditInventoryLevelsList(args) : {}),
-    ...(name === 'shopify.orders.get' ? readAuditOrderGet(args) : {}),
-    ...(name === 'shopify.fulfillment_orders.list' ? readAuditFulfillmentOrdersList(args) : {}),
-    ...(reason === undefined ? readMarketsLocalizationAuditResult(name, result) : {}),
+    ...safeMetadata,
     ...(reason === undefined ? {} : { reason: sanitizeAuditString(reason) }),
     ...(errorCode === undefined ? {} : { errorCode }),
   };
@@ -692,10 +553,6 @@ function logMcpLifecycle(
   } catch {
     // Lifecycle diagnostics must never affect JSON-RPC serving or shutdown.
   }
-}
-
-function isReportToolName(name: string): boolean {
-  return name === 'shopify.report_products' || name === 'shopify.report_orders' || name === 'shopify.report_inventory' || name === 'shopify.analytics.shopifyql.summary';
 }
 
 function readAuditShop(args: unknown): { readonly shop?: string } {

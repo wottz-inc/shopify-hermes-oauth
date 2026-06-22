@@ -3,7 +3,8 @@ import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchBulkOperationResult as fetchBulkOperationResultCore, getCurrentBulkOperation as getCurrentBulkOperationCore } from '../src/bulk/operations.js';
-import { callTool, listTools, McpToolError, startStdioMcpServer, type McpHealthResult, type McpLifecycleEvent, type McpServerDependencies } from '../src/mcp/server.js';
+import { callTool, listTools, McpToolError, MCP_DISPATCH_AUDIT_DEFINITIONS, startStdioMcpServer, validateMcpDispatchAuditDefinitions, type McpHealthResult, type McpLifecycleEvent, type McpServerDependencies } from '../src/mcp/server.js';
+import { CAPABILITY_REGISTRY } from '../src/capabilities.js';
 import { InventoryReportError } from '../src/reports/inventory.js';
 import { ShopifyqlAnalyticsError } from '../src/reports/shopifyql-analytics.js';
 import { MissingShopifyScopesError } from '../src/shopify/scopes.js';
@@ -277,6 +278,41 @@ describe('curated MCP server', () => {
       'shopify.metaobjects.list',
       'shopify.metaobjects.get',
     ]);
+  });
+
+  it('keeps MCP dispatch and audit definitions synchronized with registry MCP surfaces', () => {
+    expect(validateMcpDispatchAuditDefinitions()).toEqual([]);
+    expect(Object.keys(MCP_DISPATCH_AUDIT_DEFINITIONS)).toEqual(listTools().map((tool) => tool.name));
+
+    const definitionsWithoutHandler = {
+      ...MCP_DISPATCH_AUDIT_DEFINITIONS,
+      'shopify.report_products': { auditMetadata: MCP_DISPATCH_AUDIT_DEFINITIONS['shopify.report_products'].auditMetadata },
+    };
+    expect(validateMcpDispatchAuditDefinitions(CAPABILITY_REGISTRY, definitionsWithoutHandler)).toContain(
+      'shopify.report_products is missing an MCP dispatch handler.',
+    );
+
+    const definitionsWithoutAudit = {
+      ...MCP_DISPATCH_AUDIT_DEFINITIONS,
+      'shopify.report_products': { handler: MCP_DISPATCH_AUDIT_DEFINITIONS['shopify.report_products'].handler },
+    };
+    expect(validateMcpDispatchAuditDefinitions(CAPABILITY_REGISTRY, definitionsWithoutAudit)).toContain(
+      'shopify.report_products is missing an MCP audit metadata extractor.',
+    );
+
+    const definitionsMissingTool = Object.fromEntries(
+      Object.entries(MCP_DISPATCH_AUDIT_DEFINITIONS).filter(([toolName]) => toolName !== 'shopify.report_products'),
+    );
+    expect(validateMcpDispatchAuditDefinitions(CAPABILITY_REGISTRY, definitionsMissingTool)).toContain(
+      'shopify.report_products is missing an MCP dispatch/audit definition.',
+    );
+
+    expect(validateMcpDispatchAuditDefinitions(CAPABILITY_REGISTRY, {
+      ...MCP_DISPATCH_AUDIT_DEFINITIONS,
+      'shopify.not_in_registry': MCP_DISPATCH_AUDIT_DEFINITIONS['shopify.report_products'],
+    })).toContain(
+      'shopify.not_in_registry has an MCP dispatch/audit definition but is not exposed by the capability registry.',
+    );
   });
 
   it('dispatches allowed tools to service dependencies with structured token-free outputs', async () => {
@@ -966,6 +1002,54 @@ describe('curated MCP server', () => {
     expect(serializedAudit).not.toContain('ada@example.test');
     expect(serializedAudit).not.toContain('+15551234567');
     expect(serializedAudit).not.toContain('email:ada@example.test');
+  });
+
+  it('keeps dependency-thrown MCP argument-looking errors generic while preserving local argument validation detail', async () => {
+    const auditEvents: unknown[] = [];
+    const deps = {
+      ...createDeps(),
+      appendAuditEvent: (event: unknown) => { auditEvents.push(event); },
+      reportProducts: () => {
+        throw new McpToolError('Invalid upstream response: ada@example.test shpat_secret');
+      },
+    };
+
+    await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', format: 'json' }, deps)).rejects.toThrow('Tool call failed.');
+    await expect(callTool('shopify.list_shops', {}, {
+      ...deps,
+      tokenStore: {
+        listTokens: () => {
+          throw new McpToolError('Invalid token store record: ada@example.test shpat_list_secret');
+        },
+      },
+    })).rejects.toThrow('Tool call failed.');
+    await expect(callTool('shopify.report_products', { shop: 'alpha.myshopify.com', format: 'xml' }, deps)).rejects.toThrow('Invalid report format.');
+
+    expect(auditEvents).toEqual([
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'failure',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'json', reason: 'Tool call failed.', errorCode: 'MCP_TOOL_CALL_FAILED' },
+      },
+      {
+        action: 'mcp.tool',
+        result: 'failure',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.list_shops', reason: 'Tool call failed.', errorCode: 'MCP_TOOL_CALL_FAILED' },
+      },
+      {
+        action: 'mcp.tool',
+        shop: 'alpha.myshopify.com',
+        result: 'failure',
+        metadata: { source: 'mcp', actor: 'mcp', mode: 'read-only', toolName: 'shopify.report_products', format: 'markdown', reason: 'Invalid report format.', errorCode: 'MCP_TOOL_CALL_FAILED' },
+      },
+    ]);
+    const serializedAudit = JSON.stringify(auditEvents);
+    expect(serializedAudit).not.toContain('Invalid upstream response');
+    expect(serializedAudit).not.toContain('Invalid token store record');
+    expect(serializedAudit).not.toContain('ada@example.test');
+    expect(serializedAudit).not.toContain('shpat_secret');
+    expect(serializedAudit).not.toContain('shpat_list_secret');
   });
 
   it('surfaces inventory max query cost report errors as safe MCP tool failures with a remediation hint', async () => {
