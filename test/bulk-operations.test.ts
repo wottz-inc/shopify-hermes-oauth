@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   BULK_OPERATION_TEMPLATES,
+  BULK_RESULT_HANDLE_TTL_MS,
   BulkOperationError,
+  createBulkResultHandleStore,
   fetchBulkOperationResult,
   getBulkOperationTemplate,
   getCurrentBulkOperation,
@@ -174,13 +176,95 @@ describe('curated bulk operations', () => {
       throw new Error('Missing bulk result handle');
     }
 
-    vi.advanceTimersByTime(15 * 60 * 1000 + 1);
+    vi.advanceTimersByTime(BULK_RESULT_HANDLE_TTL_MS + 1);
     await expect(fetchBulkOperationResult({
       fetch: () => Promise.resolve(new Response('{"id":"should-not-fetch"}\n', { status: 200 })),
       url: handle,
     })).rejects.toMatchObject({
       code: 'BULK_OPERATION_RESULT_URL_INVALID',
     });
+  });
+
+  it('evicts the oldest opaque bulk result handles when the handle store reaches its cap', async () => {
+    const handleStore = createBulkResultHandleStore({ maxHandles: 2 });
+    let callCount = 0;
+    const client = {
+      query: () => {
+        callCount += 1;
+        return Promise.resolve({
+          data: {
+            currentBulkOperation: {
+              id: `gid://shopify/BulkOperation/${callCount.toString(10)}`,
+              status: 'COMPLETED',
+              url: `https://cdn.shopify.com/result-${callCount.toString(10)}.jsonl?signature=secret-${callCount.toString(10)}`,
+            },
+          },
+        });
+      },
+    };
+
+    const first = (await getCurrentBulkOperation({ client, handleStore })).bulkOperation?.urlHandle;
+    const second = (await getCurrentBulkOperation({ client, handleStore })).bulkOperation?.urlHandle;
+    const third = (await getCurrentBulkOperation({ client, handleStore })).bulkOperation?.urlHandle;
+    expect(first).toMatch(/^bulk-result:/u);
+    expect(second).toMatch(/^bulk-result:/u);
+    expect(third).toMatch(/^bulk-result:/u);
+    if (first === undefined || second === undefined || third === undefined) {
+      throw new Error('Missing bulk result handle');
+    }
+
+    const fetch = vi.fn<typeof globalThis.fetch>((url) => Promise.resolve(new Response(JSON.stringify({ url }) + '\n', { status: 200 })));
+    await expect(fetchBulkOperationResult({ fetch, url: first, handleStore })).rejects.toMatchObject({
+      code: 'BULK_OPERATION_RESULT_URL_INVALID',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    await expect(fetchBulkOperationResult({ fetch, url: second, handleStore })).resolves.toMatchObject({
+      url: 'https://cdn.shopify.com/result-2.jsonl',
+    });
+    await expect(fetchBulkOperationResult({ fetch, url: third, handleStore })).resolves.toMatchObject({
+      url: 'https://cdn.shopify.com/result-3.jsonl',
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      'https://cdn.shopify.com/result-2.jsonl?signature=secret-2',
+      'https://cdn.shopify.com/result-3.jsonl?signature=secret-3',
+    ]);
+  });
+
+  it('keeps opaque bulk result handles isolated to the store that minted them', async () => {
+    const mintingStore = createBulkResultHandleStore();
+    const freshStore = createBulkResultHandleStore();
+    const client = {
+      query: () => Promise.resolve({
+        data: {
+          currentBulkOperation: {
+            id: 'gid://shopify/BulkOperation/21',
+            status: 'COMPLETED',
+            url: 'https://storage.googleapis.com/shopify-bulk/result.jsonl?X-Goog-Signature=secret',
+          },
+        },
+      }),
+    };
+
+    const status = await getCurrentBulkOperation({ client, handleStore: mintingStore });
+    const handle = status.bulkOperation?.urlHandle;
+    expect(status.bulkOperation?.url).toBe('https://storage.googleapis.com/shopify-bulk/result.jsonl');
+    expect(handle).toMatch(/^bulk-result:/u);
+    if (handle === undefined) {
+      throw new Error('Missing bulk result handle');
+    }
+
+    const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(new Response('{"id":"from-original-store"}\n', { status: 200 })));
+    await expect(fetchBulkOperationResult({ fetch, url: handle, handleStore: freshStore })).rejects.toMatchObject({
+      code: 'BULK_OPERATION_RESULT_URL_INVALID',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    await expect(fetchBulkOperationResult({ fetch, url: handle, handleStore: mintingStore })).resolves.toMatchObject({
+      url: 'https://storage.googleapis.com/shopify-bulk/result.jsonl',
+      lines: [{ id: 'from-original-store' }],
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://storage.googleapis.com/shopify-bulk/result.jsonl?X-Goog-Signature=secret');
   });
 
   it('rejects unknown opaque bulk result handles without fetching', async () => {
@@ -280,6 +364,86 @@ describe('curated bulk operations', () => {
       pollCount: 3,
       timedOut: true,
     });
+  });
+
+  it('keeps waitForBulkOperation handles in the injected handle store', async () => {
+    const handleStore = createBulkResultHandleStore();
+    const otherStore = createBulkResultHandleStore();
+    const client = {
+      query: () => Promise.resolve({
+        data: {
+          currentBulkOperation: {
+            id: 'gid://shopify/BulkOperation/40',
+            status: 'COMPLETED',
+            url: 'https://cdn.shopify.com/wait-result.jsonl?signature=secret',
+          },
+        },
+      }),
+    };
+
+    const result = await waitForBulkOperation({ client, handleStore });
+    const handle = result.bulkOperation?.urlHandle;
+    expect(handle).toMatch(/^bulk-result:/u);
+    if (handle === undefined) {
+      throw new Error('Missing bulk result handle');
+    }
+
+    const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(new Response('{"id":"from-wait"}\n', { status: 200 })));
+    await expect(fetchBulkOperationResult({ fetch, url: handle, handleStore })).resolves.toMatchObject({
+      url: 'https://cdn.shopify.com/wait-result.jsonl',
+      lines: [{ id: 'from-wait' }],
+    });
+    await expect(fetchBulkOperationResult({ fetch, url: handle, handleStore: otherStore })).rejects.toMatchObject({
+      code: 'BULK_OPERATION_RESULT_URL_INVALID',
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the injected handle store for cancel precheck result URLs', async () => {
+    const handleStore = createBulkResultHandleStore();
+    const otherStore = createBulkResultHandleStore();
+    let capturedHandle: string | undefined;
+    const client = {
+      query: (_query: string, _variables: unknown, options?: { readonly operationName?: string }) => {
+        if (options?.operationName === 'CurrentBulkOperation') {
+          return Promise.resolve({
+            data: {
+              currentBulkOperation: {
+                id: 'gid://shopify/BulkOperation/41',
+                status: 'RUNNING',
+                url: 'https://cdn.shopify.com/cancel-precheck.jsonl?signature=secret',
+              },
+            },
+          });
+        }
+        return Promise.resolve({ data: { bulkOperationCancel: { bulkOperation: { id: 'gid://shopify/BulkOperation/41', status: 'CANCELING' }, userErrors: [] } } });
+      },
+    };
+    const originalRegister = handleStore.register.bind(handleStore);
+    const observingStore = {
+      register: (url: string) => {
+        capturedHandle = originalRegister(url);
+        return capturedHandle;
+      },
+      resolve: handleStore.resolve.bind(handleStore),
+    };
+
+    await expect(cancelBulkOperation({ client, id: 'gid://shopify/BulkOperation/41', handleStore: observingStore })).resolves.toEqual({
+      bulkOperation: { id: 'gid://shopify/BulkOperation/41', status: 'CANCELING' },
+    });
+    expect(capturedHandle).toMatch(/^bulk-result:/u);
+    if (capturedHandle === undefined) {
+      throw new Error('Missing bulk result handle');
+    }
+
+    const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(new Response('{"id":"from-cancel-precheck"}\n', { status: 200 })));
+    await expect(fetchBulkOperationResult({ fetch, url: capturedHandle, handleStore })).resolves.toMatchObject({
+      url: 'https://cdn.shopify.com/cancel-precheck.jsonl',
+    });
+    await expect(fetchBulkOperationResult({ fetch, url: capturedHandle, handleStore: otherStore })).rejects.toMatchObject({
+      code: 'BULK_OPERATION_RESULT_URL_INVALID',
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('does not cancel a different or already terminal bulk operation', async () => {
