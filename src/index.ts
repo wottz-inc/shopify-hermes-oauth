@@ -34,8 +34,12 @@ export type { SafeErrorCode, SafeOperationError } from './safe-errors.js';
 
 export {
   BULK_OPERATION_TEMPLATES,
+  BULK_RESULT_HANDLE_PREFIX,
+  BULK_RESULT_HANDLE_TTL_MS,
+  MAX_BULK_RESULT_HANDLES,
   BulkOperationError,
   cancelBulkOperation,
+  createBulkResultHandleStore,
   fetchBulkOperationResult,
   getBulkOperationTemplate,
   getCurrentBulkOperation,
@@ -50,6 +54,8 @@ export type {
   BulkOperationTemplate,
   BulkOperationTemplateId,
   BulkOperationWaitResult,
+  BulkResultHandleStore,
+  BulkResultHandleStoreOptions,
 } from './bulk/operations.js';
 
 export { InMemoryOAuthStateStore, OAuthStateError } from './oauth/state-store.js';

@@ -276,7 +276,7 @@ The MCP allowlist includes template-only read-oriented Shopify Admin GraphQL bul
 - `shopify.bulk.result` — fetch a bounded JSONL preview using an opaque `bulk-result:` handle minted by this process and returned by status/cancel responses, with explicit `maxLines` / `maxBytes` limits. Raw signed Shopify result URLs are intentionally rejected over MCP; any direct raw-URL preview path is CLI/operator-only and must never echo query strings.
 - `shopify.bulk.cancel` — cancel a running read-only bulk operation by BulkOperation GID.
 
-These tools do not expose arbitrary raw GraphQL input. Result previews are bounded and sanitized before returning through MCP structured content. Opaque result handles are process-local, expire after 15 minutes, and are capped to avoid retaining signed result URLs indefinitely.
+These tools do not expose arbitrary raw GraphQL input. Result previews are bounded and sanitized before returning through MCP structured content. Opaque result handles are in-memory capabilities scoped to the current Node.js process: they are not persisted, are lost on server restart or deployment, cannot be resolved by another process/handle store, expire after 15 minutes, and are capped at 256 retained handles per process (older/expired handles are evicted) to avoid retaining signed result URLs indefinitely.
 
 ## Nested connection limits
 

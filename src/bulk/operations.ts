@@ -6,10 +6,9 @@ import { isJsonPlainRecord } from '../util/json.js';
 const MAX_RESULT_PREVIEW_BYTES = 1_000_000;
 const MAX_RESULT_PREVIEW_LINES = 100;
 const SHOPIFY_BULK_RESULT_HOSTS = new Set(['storage.googleapis.com', 'cdn.shopify.com']);
-const BULK_RESULT_HANDLE_PREFIX = 'bulk-result:';
-const BULK_RESULT_HANDLE_TTL_MS = 15 * 60 * 1000;
-const MAX_BULK_RESULT_HANDLES = 256;
-const bulkResultUrlsByHandle = new Map<string, { readonly url: string; readonly expiresAt: number }>();
+export const BULK_RESULT_HANDLE_PREFIX = 'bulk-result:';
+export const BULK_RESULT_HANDLE_TTL_MS = 15 * 60 * 1000;
+export const MAX_BULK_RESULT_HANDLES = 256;
 
 export type BulkOperationTemplateId = 'products-basic' | 'orders-basic' | 'inventory-items-basic';
 export type BulkOperationStatus = 'CREATED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELING' | 'CANCELED' | 'EXPIRED';
@@ -54,6 +53,17 @@ export interface BulkOperationWaitResult {
   readonly bulkOperation?: BulkOperationRecord;
   readonly pollCount: number;
   readonly timedOut: boolean;
+}
+
+export interface BulkResultHandleStore {
+  register(url: string): string;
+  resolve(handle: string): string;
+}
+
+export interface BulkResultHandleStoreOptions {
+  readonly ttlMs?: number;
+  readonly maxHandles?: number;
+  readonly now?: () => number;
 }
 
 export class BulkOperationError extends Error {
@@ -172,6 +182,37 @@ const CANCEL_BULK_OPERATION_MUTATION = `mutation BulkOperationCancel($id: ID!) {
   }
 }`;
 
+const defaultBulkResultHandleStore = createBulkResultHandleStore();
+
+export function createBulkResultHandleStore(options: BulkResultHandleStoreOptions = {}): BulkResultHandleStore {
+  const urlsByHandle = new Map<string, { readonly url: string; readonly expiresAt: number }>();
+  const ttlMs = clampPositiveInteger(options.ttlMs, BULK_RESULT_HANDLE_TTL_MS);
+  const maxHandles = clampPositiveInteger(options.maxHandles, MAX_BULK_RESULT_HANDLES);
+  const now = options.now ?? (() => Date.now());
+
+  return {
+    register(url: string): string {
+      const timestamp = now();
+      for (const [handle, entry] of urlsByHandle) {
+        if (entry.expiresAt <= timestamp || urlsByHandle.size >= maxHandles) {
+          urlsByHandle.delete(handle);
+        }
+      }
+      const handle = `${BULK_RESULT_HANDLE_PREFIX}${randomUUID()}`;
+      urlsByHandle.set(handle, { url, expiresAt: timestamp + ttlMs });
+      return handle;
+    },
+    resolve(handle: string): string {
+      const entry = urlsByHandle.get(handle);
+      if (entry === undefined || entry.expiresAt <= now()) {
+        urlsByHandle.delete(handle);
+        throw new BulkOperationError('Bulk operation result handle is unknown or expired.', 'BULK_OPERATION_RESULT_URL_INVALID');
+      }
+      return entry.url;
+    },
+  };
+}
+
 export function getBulkOperationTemplate(templateId: string): BulkOperationTemplate | undefined {
   return BULK_OPERATION_TEMPLATES.find((template) => template.id === templateId);
 }
@@ -188,13 +229,13 @@ export async function startBulkOperation(input: { readonly client: BulkOperation
   return { templateId: template.id, bulkOperation: parseBulkOperation(payload.bulkOperation) };
 }
 
-export async function getCurrentBulkOperation(input: { readonly client: BulkOperationClient }): Promise<{ readonly bulkOperation?: BulkOperationRecord }> {
+export async function getCurrentBulkOperation(input: { readonly client: BulkOperationClient; readonly handleStore?: BulkResultHandleStore }): Promise<{ readonly bulkOperation?: BulkOperationRecord }> {
   const response = await input.client.query(CURRENT_BULK_OPERATION_QUERY, undefined, { operationName: 'CurrentBulkOperation' });
   const data = readData(response);
   if (data.currentBulkOperation === null || data.currentBulkOperation === undefined) {
     return {};
   }
-  return { bulkOperation: parseBulkOperation(data.currentBulkOperation) };
+  return { bulkOperation: parseBulkOperation(data.currentBulkOperation, input.handleStore ?? defaultBulkResultHandleStore) };
 }
 
 export async function waitForBulkOperation(input: {
@@ -203,6 +244,7 @@ export async function waitForBulkOperation(input: {
   readonly pollIntervalMs?: number;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
+  readonly handleStore?: BulkResultHandleStore;
 }): Promise<BulkOperationWaitResult> {
   const timeoutMs = clampPositiveInteger(input.timeoutMs, 60_000);
   const pollIntervalMs = clampPositiveInteger(input.pollIntervalMs, 2_000);
@@ -212,7 +254,7 @@ export async function waitForBulkOperation(input: {
   let pollCount = 0;
 
   for (;;) {
-    const status = await getCurrentBulkOperation({ client: input.client });
+    const status = await getCurrentBulkOperation({ client: input.client, handleStore: input.handleStore });
     pollCount += 1;
     if (status.bulkOperation === undefined || isTerminalBulkOperationStatus(status.bulkOperation.status)) {
       return { ...status, pollCount, timedOut: false };
@@ -224,11 +266,11 @@ export async function waitForBulkOperation(input: {
   }
 }
 
-export async function cancelBulkOperation(input: { readonly client: BulkOperationClient; readonly id: string }): Promise<{ readonly bulkOperation: BulkOperationRecord }> {
+export async function cancelBulkOperation(input: { readonly client: BulkOperationClient; readonly id: string; readonly handleStore?: BulkResultHandleStore }): Promise<{ readonly bulkOperation: BulkOperationRecord }> {
   if (!/^gid:\/\/shopify\/BulkOperation\/\d+$/u.test(input.id)) {
     throw new BulkOperationError('Bulk operation id is invalid.', 'BULK_OPERATION_INVALID_RESPONSE');
   }
-  const current = await getCurrentBulkOperation({ client: input.client });
+  const current = await getCurrentBulkOperation({ client: input.client, handleStore: input.handleStore });
   if (current.bulkOperation?.id !== input.id || isTerminalBulkOperationStatus(current.bulkOperation.status)) {
     throw new BulkOperationError('Bulk operation cancel is only allowed for the current non-terminal bulk operation.', 'BULK_OPERATION_INVALID_RESPONSE');
   }
@@ -243,6 +285,7 @@ export async function fetchBulkOperationResult(input: {
   readonly url: string;
   readonly maxLines?: number;
   readonly maxBytes?: number;
+  readonly handleStore?: BulkResultHandleStore;
   /**
    * Direct operator/CLI preview escape hatch for raw Shopify bulk result HTTPS URLs.
    * MCP callers must use opaque bulk-result handles minted by this process and must
@@ -252,7 +295,7 @@ export async function fetchBulkOperationResult(input: {
 }): Promise<{ readonly url: string; readonly lines: readonly unknown[]; readonly lineCount: number; readonly truncated: boolean }> {
   const maxLines = readPreviewLimit(input.maxLines, MAX_RESULT_PREVIEW_LINES);
   const maxBytes = readPreviewLimit(input.maxBytes, MAX_RESULT_PREVIEW_BYTES);
-  const url = parseBulkResultUrl(resolveBulkResultUrlInput(input.url, input.allowRawUrlForOperatorPreview === true));
+  const url = parseBulkResultUrl(resolveBulkResultUrlInput(input.url, input.allowRawUrlForOperatorPreview === true, input.handleStore ?? defaultBulkResultHandleStore));
 
   const response = await input.fetch(url.toString(), { redirect: 'error' });
   if (!response.ok) {
@@ -318,19 +361,14 @@ function safeResultUrlForOutput(url: URL): string {
   return `${url.origin}${url.pathname}`;
 }
 
-function resolveBulkResultUrlInput(value: string, allowRawUrlForOperatorPreview: boolean): string {
+function resolveBulkResultUrlInput(value: string, allowRawUrlForOperatorPreview: boolean, handleStore: BulkResultHandleStore): string {
   if (!value.startsWith(BULK_RESULT_HANDLE_PREFIX)) {
     if (!allowRawUrlForOperatorPreview) {
       throw new BulkOperationError('Raw bulk operation result URLs require explicit operator preview opt-in.', 'BULK_OPERATION_RESULT_URL_INVALID');
     }
     return value;
   }
-  const entry = bulkResultUrlsByHandle.get(value);
-  if (entry === undefined || entry.expiresAt <= Date.now()) {
-    bulkResultUrlsByHandle.delete(value);
-    throw new BulkOperationError('Bulk operation result handle is unknown or expired.', 'BULK_OPERATION_RESULT_URL_INVALID');
-  }
-  return entry.url;
+  return handleStore.resolve(value);
 }
 
 function readPayload(response: unknown, field: 'bulkOperationRunQuery' | 'bulkOperationCancel'): Record<string, unknown> {
@@ -360,7 +398,7 @@ function throwIfUserErrors(value: unknown): void {
   throw new BulkOperationError(`Shopify bulk operation failed: ${messages.length === 0 ? 'unknown user error' : messages.join('; ')}`, 'BULK_OPERATION_USER_ERROR');
 }
 
-function parseBulkOperation(value: unknown): BulkOperationRecord {
+function parseBulkOperation(value: unknown, handleStore: BulkResultHandleStore = defaultBulkResultHandleStore): BulkOperationRecord {
   if (!isJsonPlainRecord(value) || typeof value.id !== 'string' || !isBulkOperationStatus(value.status)) {
     throw new BulkOperationError('Shopify bulk operation response included an invalid bulk operation.', 'BULK_OPERATION_INVALID_RESPONSE');
   }
@@ -372,8 +410,8 @@ function parseBulkOperation(value: unknown): BulkOperationRecord {
     ...optionalStringField(value, 'completedAt'),
     ...optionalNumberField(value, 'objectCount'),
     ...optionalNumberField(value, 'fileSize'),
-    ...optionalResultUrlField(value, 'url'),
-    ...optionalResultUrlField(value, 'partialDataUrl'),
+    ...optionalResultUrlField(value, 'url', handleStore),
+    ...optionalResultUrlField(value, 'partialDataUrl', handleStore),
   };
 }
 
@@ -394,26 +432,14 @@ function optionalStringField(record: Record<string, unknown>, key: keyof BulkOpe
   return typeof value === 'string' && value.length > 0 ? { [key]: value } : {};
 }
 
-function optionalResultUrlField(record: Record<string, unknown>, key: 'url' | 'partialDataUrl'): Record<string, string> {
+function optionalResultUrlField(record: Record<string, unknown>, key: 'url' | 'partialDataUrl', handleStore: BulkResultHandleStore): Record<string, string> {
   const value = record[key];
   if (typeof value !== 'string' || value.length === 0) {
     return {};
   }
   const url = parseBulkResultUrl(value);
-  const handle = registerBulkResultUrl(url.toString());
+  const handle = handleStore.register(url.toString());
   return { [key]: safeResultUrlForOutput(url), [`${key}Handle`]: handle };
-}
-
-function registerBulkResultUrl(url: string): string {
-  const now = Date.now();
-  for (const [handle, entry] of bulkResultUrlsByHandle) {
-    if (entry.expiresAt <= now || bulkResultUrlsByHandle.size >= MAX_BULK_RESULT_HANDLES) {
-      bulkResultUrlsByHandle.delete(handle);
-    }
-  }
-  const handle = `${BULK_RESULT_HANDLE_PREFIX}${randomUUID()}`;
-  bulkResultUrlsByHandle.set(handle, { url, expiresAt: now + BULK_RESULT_HANDLE_TTL_MS });
-  return handle;
 }
 
 function optionalNumberField(record: Record<string, unknown>, key: keyof BulkOperationRecord): Record<string, number> {
