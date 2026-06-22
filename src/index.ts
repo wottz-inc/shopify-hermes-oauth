@@ -318,7 +318,7 @@ export type {
   OAuthTokenStore,
 } from './server.js';
 
-export const version = '0.1.0';
+export { packageVersion as version } from './version.js';
 
 export function hello(): string {
   return 'shopify-hermes-oauth ready';

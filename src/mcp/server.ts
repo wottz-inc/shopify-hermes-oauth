@@ -18,6 +18,7 @@ import { summarizeShopMetadata, type AllowedShopMetadata } from '../shops/metada
 import { type StoredShopToken, type TokenStore } from '../tokens/local-token-store.js';
 import { hasGraphqlLikeSearchSyntax, isValidOpaqueCursor } from '../input-validation.js';
 import { isJsonPlainRecord as isRecord } from '../util/json.js';
+import { packageVersion } from '../version.js';
 
 export type { JsonSchema, McpToolDefinition, McpToolName } from '../capabilities.js';
 
@@ -858,7 +859,7 @@ async function handleJsonRpcMessage(line: string, deps: McpServerDependencies): 
   try {
     switch (request.method) {
       case 'initialize':
-        return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'shopify-hermes-oauth', version: '0.1.0' }, capabilities: { tools: {} } } };
+        return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'shopify-hermes-oauth', version: packageVersion }, capabilities: { tools: {} } } };
       case 'tools/list':
         return { jsonrpc: '2.0', id, result: { tools: listTools() } };
       case 'tools/call': {

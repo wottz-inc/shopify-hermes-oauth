@@ -36,6 +36,7 @@ import { compareShopifyScopes, MissingShopifyScopesError, missingShopifyScopes, 
 import { verifyShop, type VerifyShopResult } from './shops/verify.js';
 import { LocalJsonTokenStore, normalizeTokenStoreShopDomain, parseLocalJsonTokenStoreFile, type StoredShopToken } from './tokens/local-token-store.js';
 import { getWebhookSubscription, listWebhookSubscriptions } from './webhooks/subscriptions.js';
+import { packageVersion } from './version.js';
 
 const REQUIRED_CONFIG_KEYS = [
   'SHOPIFY_HERMES_CLIENT_ID',
@@ -1271,7 +1272,7 @@ export function localHermesSkillContent(): string {
     "---",
     "name: shopify-hermes-oauth",
     "description: Safe Shopify OAuth connector for Hermes: setup, health checks, store verification, read-only reports, MCP tools, and when to prefer the direct-token shopify skill.",
-    "version: 0.1.0",
+    `version: ${packageVersion}`,
     "author: Nous Research",
     "license: MIT",
     "metadata:",
