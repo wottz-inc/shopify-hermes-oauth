@@ -1,3 +1,4 @@
+import { createGraphqlResponseNormalizer } from '../graphql/normalization.js';
 import { hasGraphqlLikeSearchSyntax, isValidOpaqueCursor } from '../input-validation.js';
 
 const DEFAULT_PAGE_SIZE = 25;
@@ -215,6 +216,8 @@ export class DiscountsMarketingSurfaceError extends Error {
   }
 }
 
+const graphql = createGraphqlResponseNormalizer((message) => new DiscountsMarketingSurfaceError(message));
+
 export async function listDiscounts(options: ListDiscountsOptions): Promise<DiscountsListResult> {
   const variables = readListVariables(options.first, options.after, options.query, 'Discount query is invalid.');
   const response = await options.client.query(DISCOUNTS_QUERY, variables, { operationName: 'Discounts' }) as Record<string, unknown>;
@@ -355,26 +358,9 @@ function summarizeMarketingEvents(events: readonly MarketingEventSummary[]): Mar
   return { marketingEventCount: events.length, byChannel, withBudgetCount: events.filter((event) => event.budget !== undefined).length };
 }
 
-function requireConnection(value: unknown, label: string): { readonly edges: readonly unknown[]; readonly pageInfo: Record<string, unknown> } {
-  if (!isRecord(value) || !Array.isArray(value.edges) || !isRecord(value.pageInfo)) {
-    throw new DiscountsMarketingSurfaceError(`Shopify Admin GraphQL response did not include expected ${label} connection.`);
-  }
-  return { edges: value.edges, pageInfo: value.pageInfo };
-}
-
-function readNode(edge: unknown, label: string): Record<string, unknown> {
-  if (!isRecord(edge) || !isRecord(edge.node)) {
-    throw new DiscountsMarketingSurfaceError(`Shopify Admin GraphQL response included an invalid ${label} edge.`);
-  }
-  return edge.node;
-}
-
-function normalizePageInfo(pageInfo: Record<string, unknown>): PageInfo {
-  if (typeof pageInfo.hasNextPage !== 'boolean') {
-    throw new DiscountsMarketingSurfaceError('Shopify Admin GraphQL pageInfo was invalid.');
-  }
-  return { hasNextPage: pageInfo.hasNextPage, ...(typeof pageInfo.endCursor === 'string' ? { endCursor: pageInfo.endCursor } : {}) };
-}
+function requireConnection(value: unknown, label: string): { readonly edges: readonly unknown[]; readonly pageInfo: Record<string, unknown> } { return graphql.requireConnection(value, label); }
+function readNode(edge: unknown, label: string): Record<string, unknown> { return graphql.readNode(edge, label); }
+function normalizePageInfo(pageInfo: Record<string, unknown>): PageInfo { return graphql.normalizePageInfo(pageInfo); }
 
 function optionalString(node: Record<string, unknown>, key: string): Record<string, string> {
   return typeof node[key] === 'string' ? { [key]: node[key] } : {};
@@ -384,29 +370,7 @@ function optionalNumber(node: Record<string, unknown>, key: string): Record<stri
   return typeof node[key] === 'number' && Number.isFinite(node[key]) ? { [key]: node[key] } : {};
 }
 
-function readString(value: unknown, label: string): string {
-  if (typeof value !== 'string') {
-    throw new DiscountsMarketingSurfaceError(`Shopify Admin GraphQL response included invalid ${label}.`);
-  }
-  return value;
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!isRecord(value)) {
-    throw new DiscountsMarketingSurfaceError(`Shopify Admin GraphQL response included invalid ${label}.`);
-  }
-  return value;
-}
-
-function readPath(value: unknown, path: readonly string[]): unknown {
-  let current = value;
-  for (const key of path) {
-    if (!isRecord(current)) return undefined;
-    current = current[key];
-  }
-  return current;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+function readString(value: unknown, label: string): string { return graphql.readString(value, label); }
+function requireRecord(value: unknown, label: string): Record<string, unknown> { return graphql.requireRecord(value, label); }
+const readPath = graphql.readPath;
+const isRecord = graphql.isRecord;
